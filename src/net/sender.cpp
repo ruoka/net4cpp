@@ -25,8 +25,8 @@ std::streambuf* distribute(const std::string& group, const std::string& service,
         if(status < 0)
             continue;
 
-        const auto error = net::connect(s, address.ai_addr, address.ai_addrlen);
-        if(error)
+        status = net::connect(s, address.ai_addr, address.ai_addrlen);
+        if(status < 0)
             continue;
 
         return new stream_buffer<udp_buffer_size>{std::move(s)};
