@@ -21,7 +21,7 @@ std::streambuf* distribute(const std::string& group, const std::string& service,
             continue;
 
         unsigned ttl_{ttl};
-        const auto status = net::setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL, &ttl_, sizeof ttl_);
+        auto status = net::setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL, &ttl_, sizeof ttl_);
         if(status < 0)
             continue;
 
