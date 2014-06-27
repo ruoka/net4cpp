@@ -40,6 +40,8 @@ using ::read;
 
 using ::write;
 
+using ::close;
+
 using timeval = ::timeval;
 
 using fd_set = ::fd_set;

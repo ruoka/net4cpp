@@ -20,7 +20,7 @@ socket::socket(socket&& s)
 
 socket::~socket()
 {
-    if(m_fd != -1) ::close(m_fd);
+    if(m_fd != -1) net::close(m_fd);
 }
 
 bool socket::wait_for(const std::chrono::milliseconds& timeout) const
