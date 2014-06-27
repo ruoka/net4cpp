@@ -8,6 +8,8 @@
 using namespace std;
 using namespace net;
 
+static mutex m;
+
 TEST(AcceptorAndConnectorTest,runTwoThreads)
 {
     int s{0};
@@ -23,8 +25,9 @@ TEST(AcceptorAndConnectorTest,runTwoThreads)
             ostream os{ator.accept()};
             for(auto i : test)
             {
-                clog << "ator: " << i << endl;
                 os << i << endl;
+                unique_lock<mutex> l{m};
+                clog << "ator: " << i << endl;
             }
         }
     );
@@ -40,8 +43,9 @@ TEST(AcceptorAndConnectorTest,runTwoThreads)
             {
                 int ii;
                 is >> ii;
-                clog << "ctor: " << ii << endl;
                 ASSERT_EQ(i,ii);
+                unique_lock<mutex> l{m};
+                clog << "ctor: " << ii << endl;
             }
         }
     );

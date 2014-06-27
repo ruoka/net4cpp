@@ -8,7 +8,7 @@
 using namespace std;
 using namespace net;
 
-mutex m;
+static mutex m;
 
 TEST(ReceiverAndSenderTest,runTwoThreads)
 {
