@@ -16,7 +16,7 @@ void receiver::leave()
     return net::leave(m_group, m_service);
 }
 
-std::streambuf* join(const std::string& group, const std::string& service, bool loop, unsigned ttl)
+std::streambuf* join(const std::string& group, const std::string& service, bool loop)
 {
     const net::address_info distribute_address{group, "", SOCK_DGRAM};
     const net::address_info local_address{"", service, SOCK_DGRAM, AI_PASSIVE, distribute_address->ai_family};
@@ -33,11 +33,6 @@ std::streambuf* join(const std::string& group, const std::string& service, bool 
 
         char loop_{loop ? '1' : '0'};
         status = net::setsockopt(s, IPPROTO_IP, IP_MULTICAST_LOOP, &loop_, sizeof loop_);
-        if(status < 0)
-            continue;
-
-        unsigned ttl_{ttl};
-        status = net::setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL, &ttl_, sizeof ttl_);
         if(status < 0)
             continue;
 

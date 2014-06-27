@@ -34,6 +34,6 @@ private:
     std::string m_service;    
 };
 
-std::streambuf* distribute(const std::string& group, const std::string& service);
+std::streambuf* distribute(const std::string& group, const std::string& service, unsigned ttl = 1);
 
 } // namespace net

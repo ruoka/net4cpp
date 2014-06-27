@@ -36,7 +36,7 @@ private:
     std::string m_service;
 };
 
-std::streambuf* join(const std::string& group, const std::string& service, bool loop = true, unsigned ttl = 1);
+std::streambuf* join(const std::string& group, const std::string& service, bool loop = true);
 
 void leave(const std::string& group, const std::string& service);
 
