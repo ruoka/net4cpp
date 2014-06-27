@@ -15,12 +15,12 @@ try
     clog << "Distributing: " << sder.group() << '.' << sder.service() << endl;
     while(cin && os)
     {
-        string echo;
-        getline(cin,echo);
-        os << echo << endl;
+        string msg;
+        getline(cin, msg);
+        os << msg << endl;
     }
     if(errno)
-        throw std::system_error{errno, std::system_category(), "Errno"};
+        throw system_error{errno, system_category(), "Errno"};
 }
 catch(exception& e)
 {
