@@ -12,7 +12,7 @@ try
 {
     sender sder{"228.0.0.4","54321"};
     ostream os{sder.distribute()};
-    clog << "Distributing: " << sder.group() << '.' << sder.service() << endl;
+    clog << "Ssender: " << sder.group() << '.' << sder.service() << endl;
     while(cin && os)
     {
         string msg;
@@ -22,7 +22,7 @@ try
     if(errno)
         throw system_error{errno, system_category(), "Errno"};
 }
-catch(exception& e)
+catch(const exception& e)
 {
     clog << "Exception: " << e.what() << endl;
 }
