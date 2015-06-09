@@ -35,7 +35,7 @@ protected:
     int_type overflow(int_type c = traits_type::eof())
     {
         const auto error = sync();
-		if(error < 0)
+        if(error < 0)
             return traits_type::eof();
         if(traits_type::eq_int_type(c, traits_type::eof()))
             return traits_type::not_eof(c);
@@ -51,21 +51,21 @@ protected:
         {
             const auto bytes_written = net::write(m_socket, buf, pptr() - buf);
             //const auto bytes_written = ::sendto(m_socket, buf, pptr() - buf, 0, nullptr, 0);
-			if(bytes_written < 1)
-			    return -1;
+            if(bytes_written < 1)
+                return -1;
             buf += bytes_written;
         }
         setp(&m_output_sequence[0], &m_output_sequence[sizeof m_output_sequence]);
-		return 0;
+        return 0;
     }
 
 private:
 
-	socket m_socket;
+    socket m_socket;
 
-	char_type m_input_sequence[N];
+    char_type m_input_sequence[N];
 
-	char_type m_output_sequence[N];
+    char_type m_output_sequence[N];
 };
 
 } // namespace net
