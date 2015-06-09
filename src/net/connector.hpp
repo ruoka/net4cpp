@@ -19,22 +19,22 @@ public:
 
     const std::string& host() const
     {
-		return m_host;
+        return m_host;
     }
 
     const std::string& service() const
     {
-		return m_service;
+        return m_service;
     }
 
     const std::chrono::milliseconds& timeout() const
     {
-		return m_timeout;
+        return m_timeout;
     }
 
     void timeout(const std::chrono::milliseconds& timeout)
     {
-		m_timeout = timeout;
+        m_timeout = timeout;
     }
 
 private:
