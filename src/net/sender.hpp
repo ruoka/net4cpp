@@ -19,12 +19,12 @@ public:
 
     const std::string& group() const
     {
-		return m_group;
+        return m_group;
     }
 
     const std::string& service() const
     {
-		return m_service;
+        return m_service;
     }
 
 private:
