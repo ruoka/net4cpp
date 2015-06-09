@@ -10,7 +10,7 @@ try
 {
     receiver rver{"228.0.0.4","54321"};
     istream is{rver.join()};
-    clog << "Joined: " << rver.group() << '.' << rver.service() << endl;
+    clog << "Rreceiver: " << rver.group() << '.' << rver.service() << endl;
     while(cout && is)
     {
         string msg;
@@ -20,7 +20,7 @@ try
     if(errno)
         throw system_error{errno, system_category(), "Errno"};
 }
-catch(exception& e)
+catch(const exception& e)
 {
     clog << e.what() << endl;
 }
