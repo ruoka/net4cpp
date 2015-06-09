@@ -63,7 +63,7 @@ TEST(ReceiverAndSenderTest,runManyThreads)
 
     vector<thread> threads;
 
-    for(int i = 100; --i; i > 0)
+    for(int i = 100; i > 0; --i)
         threads.push_back(thread{
             [&test]{
                 receiver rver{"228.0.0.4", "54321"};
