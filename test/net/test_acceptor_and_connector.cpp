@@ -27,7 +27,7 @@ TEST(AcceptorAndConnectorTest,runTwoThreads)
             {
                 os << i << endl;
                 unique_lock<mutex> l{m};
-                clog << "Acceptor: " << i << endl;
+                clog << "Acceptor:  " << i << endl;
             }
         }
     );
