@@ -13,7 +13,7 @@ static mutex m;
 TEST(AcceptorAndConnectorTest,runTwoThreads)
 {
     int s{0};
-    std::array<int,1000> test;
+    array<int,1000> test;
     for(auto& i : test)
         i = ++s;
 
