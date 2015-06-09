@@ -70,7 +70,7 @@ TEST(ConnectorTest,commandLine)
             clog << echo << endl;
         }
     }
-    catch(exception& e)
+    catch(const exception& e)
     {
         clog << "Exception: " << e.what() << endl;
     }
