@@ -1,4 +1,3 @@
-#include <thread>
 #include <iostream>
 #include <system_error>
 #include <gtest/gtest.h>
