@@ -22,6 +22,10 @@ TEST(AcceptorAndConnectorTest,runTwoThreads)
         [&test]()
         {
             acceptor ator{"localhost", "54321"};
+            {
+                unique_lock<mutex> l{m};
+                clog << "Accepting... " << ator.host() << '.' << ator.service() << endl;
+            }
             ostream os{ator.accept()};
             for(auto i : test)
             {
@@ -37,11 +41,11 @@ TEST(AcceptorAndConnectorTest,runTwoThreads)
         [&test]()
         {
             connector ctor{"localhost", "54321"};
-            istream is{ctor.connect()};
             {
                 unique_lock<mutex> l{m};
-                clog << "Listening..." << endl;
+                clog << "Connecting... " << ctor.host() << '.' << ctor.service() << endl;
             }
+            istream is{ctor.connect()};
             for(auto i : test)
             {
                 int ii;
