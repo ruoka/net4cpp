@@ -24,7 +24,7 @@ TEST(AcceptorAndConnectorTest,runTwoThreads)
             acceptor ator{"localhost", "54321"};
             {
                 unique_lock<mutex> l{m};
-                clog << "Accepting... " << ator.host() << '.' << ator.service() << endl;
+                clog << "Accepting...  " << ator.host() << '.' << ator.service() << endl;
             }
             ostream os{ator.accept()};
             for(auto i : test)
