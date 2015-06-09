@@ -12,7 +12,7 @@ try
 {
     sender sder{"228.0.0.4","54321"};
     ostream os{sder.distribute()};
-    clog << "Ssender: " << sder.group() << '.' << sder.service() << endl;
+    clog << "Sender: " << sder.group() << '.' << sder.service() << endl;
     while(cin && os)
     {
         string msg;
