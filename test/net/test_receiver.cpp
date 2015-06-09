@@ -10,7 +10,7 @@ try
 {
     receiver rver{"228.0.0.4","54321"};
     istream is{rver.join()};
-    clog << "Rreceiver: " << rver.group() << '.' << rver.service() << endl;
+    clog << "Receiver: " << rver.group() << '.' << rver.service() << endl;
     while(cout && is)
     {
         string msg;
