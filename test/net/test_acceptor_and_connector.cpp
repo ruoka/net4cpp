@@ -38,7 +38,10 @@ TEST(AcceptorAndConnectorTest,runTwoThreads)
         {
             connector ctor{"localhost", "54321"};
             istream is{ctor.connect()};
-            clog << "Listening..." << endl;
+            {
+                unique_lock<mutex> l{m};
+                clog << "Listening..." << endl;
+            }
             for(auto i : test)
             {
                 int ii;
