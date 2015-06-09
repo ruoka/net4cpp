@@ -31,7 +31,7 @@ TEST(ReceiverAndSenderTest,runTwoThreads)
                 is >> ii;
                 ASSERT_EQ(i,ii);
                 unique_lock<mutex> l{m};
-                clog << "lter: " << ii << endl;
+                clog << "Receiver: " << ii << endl;
             }
         }
     };
@@ -45,7 +45,7 @@ TEST(ReceiverAndSenderTest,runTwoThreads)
                 this_thread::sleep_for(1ms);
                 os << i << endl;
                 unique_lock<mutex> l{m};
-                clog << "mter: " << i << endl;
+                clog << "Sender: " << i << endl;
             }
         }
     };
@@ -78,7 +78,7 @@ TEST(ReceiverAndSenderTest,runManyThreads)
                     is >> ii;
                     ASSERT_EQ(i,ii);
                     unique_lock<mutex> l{m};
-                    clog << "lter: " << ii << endl;
+                    clog << "Receiver: " << ii << endl;
                 }
             }
         }
@@ -93,7 +93,7 @@ TEST(ReceiverAndSenderTest,runManyThreads)
                 this_thread::sleep_for(1ms);
                 os << i << endl;
                 unique_lock<mutex> l{m};                
-                clog << "mter: " << i << endl;
+                clog << "Sender: " << i << endl;
             }
         }
     }
