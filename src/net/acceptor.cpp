@@ -28,7 +28,7 @@ m_sockets{}
         if(status < 0)
             continue;
 
-        status = listen(s, 5);
+        status = net::listen(s, 5);
         if(status < 0)
             continue;
 
