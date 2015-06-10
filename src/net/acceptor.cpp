@@ -43,14 +43,13 @@ acceptor::acceptor(const std::string& service) : acceptor("localhost", service) 
 
 std::streambuf* acceptor::accept()
 {
-    const auto sfd = wait();
+    const auto fd = wait();
 
-    const auto cfd = net::accept(sfd, nullptr, nullptr);
-
-    if(cfd < 0)
+    net::socket s = net::accept(fd, nullptr, nullptr);
+    if(!s)
         throw std::system_error{errno, std::system_category()};
 
-    return new stream_buffer<tcp_buffer_size>{cfd};
+    return new stream_buffer<tcp_buffer_size>{std::move(s)};
 }
 
 std::streambuf* acceptor::accept(std::string& peer, std::string& service_or_port)
