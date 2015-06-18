@@ -13,8 +13,8 @@ std::streambuf* sender::distribute()
 
 std::streambuf* distribute(const std::string& group, const std::string& service, unsigned ttl)
 {
-    const net::address_info distribute_address{group, service, SOCK_DGRAM};
-    for(const auto& address : distribute_address)
+    const net::address_info distribution_address{group, service, SOCK_DGRAM};
+    for(const auto& address : distribution_address)
     {
         net::socket s{address.ai_family, address.ai_socktype, address.ai_protocol};
         if(!s)
