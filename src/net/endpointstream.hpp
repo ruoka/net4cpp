@@ -1,6 +1,6 @@
 #pragma once
 
-#include <iostream>
+#include <istream>
 #include <memory>
 
 namespace net

@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 #include "net/endpointstream.hpp"
+#include "net/sender.hpp"
+#include "net/receiver.hpp"
 #include "net/connector.hpp"
 
 using namespace net;
@@ -7,12 +9,12 @@ using namespace std;
 
 TEST(IEndpointStreamUnitTest,testConstruct)
 {
-    auto is{connect("www.google.fi","http")};
+    auto is{join("228.0.0.4","54321")};
 }
 
 TEST(OEndpointStreamUnitTest,testConstruct)
 {
-    auto os{connect("www.google.fi","http")};
+    auto os{distribute("228.0.0.4","54321")};
 }
 
 TEST(EndpointStreamUnitTest,testConstruct)
