@@ -38,6 +38,4 @@ private:
 
 std::streambuf* join(const std::string& group, const std::string& service, bool loop = true);
 
-void leave(const std::string& group, const std::string& service);
-
 } // namespace net
