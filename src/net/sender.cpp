@@ -32,7 +32,7 @@ std::streambuf* distribute(const std::string& group, const std::string& service,
         return new stream_buffer<udp_buffer_size>{std::move(s)};
     }
 
-    throw std::system_error{errno, std::system_category(), "Multicaster could not connect"};
+    throw std::system_error{errno, std::system_category(), "Sender connect failed"};
 }
 
 } // namespace net
