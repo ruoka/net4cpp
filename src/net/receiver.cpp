@@ -13,7 +13,7 @@ std::streambuf* receiver::join()
 
 void receiver::leave()
 {
-    return net::leave(m_group, m_service);
+    assert(false); // FIXME
 }
 
 std::streambuf* join(const std::string& group, const std::string& service, bool loop)
@@ -77,11 +77,6 @@ std::streambuf* join(const std::string& group, const std::string& service, bool 
     }
 
     throw std::system_error{errno, std::system_category()};
-}
-
-void leave(const std::string& group, const std::string& service)
-{
-    assert(false); // FIXME
 }
 
 } // namespace net
