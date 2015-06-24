@@ -1,7 +1,7 @@
 #include <system_error>
 #include "net/connector.hpp"
 #include "net/address_info.hpp"
-#include "net/stream_buffer.hpp"
+#include "net/endpointbuf.hpp"
 
 namespace net
 {
@@ -31,7 +31,7 @@ std::streambuf* connect(const std::string& host, const std::string& service, con
         if(status < 0)
             continue;
 
-        return new stream_buffer<tcp_buffer_size>{std::move(s)};
+        return new endpointbuf<tcp_buffer_size>{std::move(s)};
     }
 
     throw std::system_error{errno, std::system_category()};

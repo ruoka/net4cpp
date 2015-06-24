@@ -1,7 +1,7 @@
 #include <cassert>
 #include "net/receiver.hpp"
 #include "net/address_info.hpp"
-#include "net/stream_buffer.hpp"
+#include "net/endpointbuf.hpp"
 
 namespace net
 {
@@ -73,7 +73,7 @@ std::streambuf* join(const std::string& group, const std::string& service, bool 
             assert(false);
         }
 
-        return new stream_buffer<udp_buffer_size>{std::move(s)};
+        return new endpointbuf<udp_buffer_size>{std::move(s)};
     }
 
     throw std::system_error{errno, std::system_category()};

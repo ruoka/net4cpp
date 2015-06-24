@@ -1,7 +1,7 @@
 #include <system_error>
 #include "net/sender.hpp"
 #include "net/address_info.hpp"
-#include "net/stream_buffer.hpp"
+#include "net/endpointbuf.hpp"
 
 namespace net
 {
@@ -29,7 +29,7 @@ std::streambuf* distribute(const std::string& group, const std::string& service,
         if(status < 0)
             continue;
 
-        return new stream_buffer<udp_buffer_size>{std::move(s)};
+        return new endpointbuf<udp_buffer_size>{std::move(s)};
     }
 
     throw std::system_error{errno, std::system_category()};
