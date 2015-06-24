@@ -22,12 +22,12 @@ TEST(EndpointStreamUnitTest,testConstruct)
     auto s = connect("www.google.fi","http");
 
     s << "GET / HTTP/1.1\r\n"
-        << "Host: www.google.com\r\n"
-        << "Connection: close\r\n"
-        << "Accept: text/plain, text/html\r\n"
-        << "Accept-Charset: utf-8\r\n"
-        << "\r\n"
-        << flush;
+      << "Host: www.google.com\r\n"
+      << "Connection: close\r\n"
+      << "Accept: text/plain, text/html\r\n"
+      << "Accept-Charset: utf-8\r\n"
+      << "\r\n"
+      << flush;
 
     while(s)
     {
@@ -37,4 +37,3 @@ TEST(EndpointStreamUnitTest,testConstruct)
     }
     clog << flush;
 }
-
