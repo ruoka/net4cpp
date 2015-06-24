@@ -10,7 +10,7 @@ TEST(SenderTest,commandLine)
 try
 {
     sender sder{"228.0.0.4","54321"};
-    ostream os{sder.distribute()};
+    auto os = sder.distribute();
     clog << "Sender: " << sder.group() << '.' << sder.service() << endl;
     while(cin && os)
     {

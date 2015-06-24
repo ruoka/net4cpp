@@ -2,7 +2,7 @@
 
 #include <string>
 #include <chrono>
-#include <iosfwd>
+#include "net/endpointstream.hpp"
 
 namespace net
 {
@@ -15,7 +15,7 @@ public:
 
     connector(const std::string& host, const std::string& service);
 
-    std::streambuf* connect() const;
+    endpointstream connect() const;
 
     const std::string& host() const
     {
@@ -46,8 +46,8 @@ private:
     std::chrono::milliseconds m_timeout;
 };
 
-std::streambuf* connect(const std::string& host,
-                        const std::string& service,
-                        const std::chrono::milliseconds& timeout = default_connect_timeout);
+endpointstream connect(const std::string& host,
+                         const std::string& service,
+                         const std::chrono::milliseconds& timeout = default_connect_timeout);
 
 } // namespace net

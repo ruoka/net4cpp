@@ -20,7 +20,7 @@ TEST(ReceiverAndSenderTest,runTwoThreads)
     thread t1{
         [&test]{
             receiver rver{"228.0.0.4", "54321"};
-            istream is{rver.join()};
+            auto is = rver.join();
             {
                 unique_lock<mutex> l{m};
                 clog << "Listening: " << rver.group() << '.' << rver.service() << endl;
@@ -39,7 +39,7 @@ TEST(ReceiverAndSenderTest,runTwoThreads)
     thread t2{
         [&test]{
             sender sder{"228.0.0.4", "54321"};
-            ostream os{sder.distribute()};
+            auto os = sder.distribute();
             for(auto i : test)
             {
                 this_thread::sleep_for(1ms);
@@ -67,7 +67,7 @@ TEST(ReceiverAndSenderTest,runManyThreads)
         threads.push_back(thread{
             [&test]{
                 receiver rver{"228.0.0.4", "54321"};
-                istream is{rver.join()};
+                auto is = rver.join();
                 {
                     unique_lock<mutex> l{m};
                     clog << "Listening: " << rver.group() << '.' << rver.service() << endl;
@@ -87,7 +87,7 @@ TEST(ReceiverAndSenderTest,runManyThreads)
     threads.push_back(thread{
         [&test]{
             sender sder{"228.0.0.4", "54321"};
-            ostream os{sder.distribute()};
+            auto os = sder.distribute();
             for(auto i : test)
             {
                 this_thread::sleep_for(1ms);

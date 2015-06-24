@@ -1,7 +1,7 @@
 #pragma once
 
 #include <string>
-#include <iosfwd>
+#include "net/endpointstream.hpp"
 
 namespace net
 {
@@ -15,7 +15,7 @@ public:
     m_service{service}
     {};
 
-    std::streambuf* join();
+    iendpointstream join();
 
     void leave();
 
@@ -36,6 +36,6 @@ private:
     std::string m_service;
 };
 
-std::streambuf* join(const std::string& group, const std::string& service, bool loop = true);
+iendpointstream join(const std::string& group, const std::string& service, bool loop = true);
 
 } // namespace net

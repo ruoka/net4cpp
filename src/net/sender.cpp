@@ -6,12 +6,12 @@
 namespace net
 {
 
-std::streambuf* sender::distribute()
+oendpointstream sender::distribute()
 {
     return net::distribute(m_group, m_service);
 }
 
-std::streambuf* distribute(const std::string& group, const std::string& service, unsigned ttl)
+oendpointstream distribute(const std::string& group, const std::string& service, unsigned ttl)
 {
     const net::address_info distribution_address{group, service, SOCK_DGRAM};
     for(const auto& address : distribution_address)

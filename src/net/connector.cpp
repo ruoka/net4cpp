@@ -12,12 +12,12 @@ m_service{service},
 m_timeout{default_connect_timeout}
 {}
 
-std::streambuf* connector::connect() const
+endpointstream connector::connect() const
 {
     return net::connect(m_host, m_service, m_timeout);
 }
 
-std::streambuf* connect(const std::string& host, const std::string& service, const std::chrono::milliseconds& timeout)
+endpointstream connect(const std::string& host, const std::string& service, const std::chrono::milliseconds& timeout)
 {
     const net::address_info remote_address{host, service, SOCK_STREAM};
     for(const auto& address : remote_address)

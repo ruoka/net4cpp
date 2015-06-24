@@ -41,7 +41,7 @@ m_sockets{}
 
 acceptor::acceptor(const std::string& service) : acceptor("localhost", service) {}
 
-std::streambuf* acceptor::accept()
+endpointstream acceptor::accept()
 {
     const auto fd = wait();
 
@@ -52,7 +52,7 @@ std::streambuf* acceptor::accept()
     return new endpointbuf<tcp_buffer_size>{std::move(s)};
 }
 
-std::streambuf* acceptor::accept(std::string& peer, std::string& service_or_port)
+endpointstream acceptor::accept(std::string& peer, std::string& service_or_port)
 {
     const auto fd = wait();
 

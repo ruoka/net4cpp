@@ -22,7 +22,7 @@ TEST(AcceptorUnitTest,testTimeout)
 {
     acceptor ator{"1999"};
     ator.timeout(chrono::seconds{1});
-    ASSERT_THROW(iostream ios{ator.accept()}, system_error);
+    ASSERT_THROW(endpointstream eps{ator.accept()}, system_error);
 }
 
 TEST(AcceptorTest,commandLine)
@@ -30,13 +30,13 @@ TEST(AcceptorTest,commandLine)
     acceptor ator{"1999"};
     while(true)
     {
-        iostream ios{ator.accept()};
-        ios << "Welcome to Hello Yellow Echo Server!" << endl;
-        while(ios)
+        auto s = ator.accept();
+        s << "Welcome to Hello Yellow Echo Server!" << endl;
+        while(s)
         {
             string echo;
-            getline(ios,echo);
-            ios << echo << endl;
+            getline(s,echo);
+            s << echo << endl;
             clog << echo << endl;
         }
     }
