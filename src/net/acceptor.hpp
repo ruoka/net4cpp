@@ -3,7 +3,7 @@
 #include <string>
 #include <chrono>
 #include <list>
-#include <iosfwd>
+#include "net/endpointstream.hpp"
 #include "net/socket.hpp"
 
 namespace net
@@ -19,9 +19,9 @@ public:
 
     explicit acceptor(const std::string& service);
 
-    std::streambuf* accept();
+    endpointstream accept();
 
-    std::streambuf* accept(std::string& peer, std::string& service_or_port);
+    endpointstream accept(std::string& peer, std::string& service_or_port);
 
     const std::string& host() const
     {

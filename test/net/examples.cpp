@@ -9,20 +9,20 @@ using namespace net;
 TEST(ExampleHttpRequest,commandLine)
 try
 {
-    iostream ios{connect("www.google.com","http")};
+    auto s = connect("www.google.com","http");
 
-    ios << "GET / HTTP/1.1\r\n"
-        << "Host: www.google.com\r\n"
-        << "Connection: close\r\n"
-        << "Accept: text/plain, text/html\r\n"
-        << "Accept-Charset: utf-8\r\n"
-        << "\r\n"
-        << flush;
+    s << "GET / HTTP/1.1\r\n"
+      << "Host: www.google.com\r\n"
+      << "Connection: close\r\n"
+      << "Accept: text/plain, text/html\r\n"
+      << "Accept-Charset: utf-8\r\n"
+      << "\r\n"
+      << flush;
 
-    while(ios)
+    while(s)
     {
         char c;
-        ios >> noskipws >> c;
+        s >> noskipws >> c;
         clog << c;
     }
     clog << flush;
@@ -36,13 +36,13 @@ TEST(ExampleEchoServer,commandLine)
 try
 {
     acceptor ator{"::1", "2112"}; // IPv6 localhost 
-    iostream ios{ator.accept()};
+    auto s = ator.accept();
 
-    while(ios)
+    while(s)
     {
         string echo;
-        getline(ios, echo);
-        ios << echo << endl;
+        getline(s, echo);
+        s << echo << endl;
         clog << echo << endl;
     }
 }

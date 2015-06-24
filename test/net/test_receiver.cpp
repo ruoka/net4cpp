@@ -9,7 +9,7 @@ TEST(ReceiverTest,commandLine)
 try
 {
     receiver rver{"228.0.0.4","54321"};
-    istream is{rver.join()};
+    auto is = rver.join();
     clog << "Receiver: " << rver.group() << '.' << rver.service() << endl;
     while(cout && is)
     {

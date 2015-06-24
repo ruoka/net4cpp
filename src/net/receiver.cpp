@@ -1,12 +1,12 @@
 #include <cassert>
 #include "net/receiver.hpp"
 #include "net/address_info.hpp"
-#include "net/stream_buffer.hpp"
+#include "net/endpointbuf.hpp"
 
 namespace net
 {
 
-std::streambuf* receiver::join()
+iendpointstream receiver::join()
 {
     return net::join(m_group, m_service);
 }
@@ -16,7 +16,7 @@ void receiver::leave()
     assert(false); // FIXME
 }
 
-std::streambuf* join(const std::string& group, const std::string& service, bool loop)
+iendpointstream join(const std::string& group, const std::string& service, bool loop)
 {
     const net::address_info distribution_address{group, "", SOCK_DGRAM};
     const net::address_info local_address{"", service, SOCK_DGRAM, AI_PASSIVE, distribution_address->ai_family};
@@ -73,7 +73,7 @@ std::streambuf* join(const std::string& group, const std::string& service, bool 
             assert(false);
         }
 
-        return new stream_buffer<udp_buffer_size>{std::move(s)};
+        return new endpointbuf<udp_buffer_size>{std::move(s)};
     }
 
     throw std::system_error{errno, std::system_category()};

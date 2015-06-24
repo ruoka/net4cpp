@@ -24,54 +24,53 @@ TEST(ConnectorUnitTest,testTimeout)
     connector ctor{"localhost","1999"};
     ctor.timeout(chrono::seconds{3});
 
-    ASSERT_THROW(iostream ios{ctor.connect()}, system_error);
+    ASSERT_THROW(endpointstream eps{ctor.connect()}, system_error);
 }
 
 TEST(ConnectorUnitTest,testFailingToConnect)
 {
     connector ctor{"foo.bar","http"};
-    ASSERT_THROW(iostream ios{ctor.connect()}, system_error);
+    ASSERT_THROW(endpointstream eps{ctor.connect()}, system_error);
 }
 
 TEST(ConnectorUnitTest,testHttpRequest)
 {
     connector ctor{"www.google.com","http"};
 
-    iostream ios{ctor.connect()};
+    auto s = ctor.connect();
 
-    ios << "GET / HTTP/1.1\r\n"
-        << "Host: www.google.com\r\n"
-        << "Connection: close\r\n"
-        << "Accept: text/plain, text/html\r\n"
-        << "Accept-Charset: utf-8\r\n"
-        << "\r\n"
-        << flush;
+    s << "GET / HTTP/1.1\r\n"
+      << "Host: www.google.com\r\n"
+      << "Connection: close\r\n"
+      << "Accept: text/plain, text/html\r\n"
+      << "Accept-Charset: utf-8\r\n"
+      << "\r\n"
+      << flush;
 
-    while(ios)
+    while(s)
     {
         char c;
-        ios >> noskipws >> c;
+        s >> noskipws >> c;
         clog << c;
     }
 }
 
 TEST(ConnectorTest,commandLine)
+try
 {
-    try
+    connector ctor{"localhost","1999"};
+    auto s = ctor.connect();
+    while(cin && s)
     {
-        connector ctor{"localhost","1999"};
-        iostream ios{ctor.connect()};
-        while(cin && ios)
-        {
-            string echo;
-            getline(cin,echo);
-            ios << echo << endl;
-            getline(ios,echo);
-            clog << echo << endl;
-        }
-    }
-    catch(const exception& e)
-    {
-        clog << "Exception: " << e.what() << endl;
+        string echo;
+        getline(cin, echo);
+        s << echo << endl;
+        getline(s, echo);
+        clog << echo << endl;
     }
 }
+catch(const exception& e)
+{
+    cerr << "Exception: " << e.what() << endl;
+}
+

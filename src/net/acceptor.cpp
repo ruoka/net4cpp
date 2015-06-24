@@ -1,7 +1,7 @@
 #include <system_error>
 #include "net/acceptor.hpp"
 #include "net/address_info.hpp"
-#include "net/stream_buffer.hpp"
+#include "net/endpointbuf.hpp"
 
 namespace net
 {
@@ -41,7 +41,7 @@ m_sockets{}
 
 acceptor::acceptor(const std::string& service) : acceptor("localhost", service) {}
 
-std::streambuf* acceptor::accept()
+endpointstream acceptor::accept()
 {
     const auto fd = wait();
 
@@ -49,10 +49,10 @@ std::streambuf* acceptor::accept()
     if(!s)
         throw std::system_error{errno, std::system_category()};
 
-    return new stream_buffer<tcp_buffer_size>{std::move(s)};
+    return new endpointbuf<tcp_buffer_size>{std::move(s)};
 }
 
-std::streambuf* acceptor::accept(std::string& peer, std::string& service_or_port)
+endpointstream acceptor::accept(std::string& peer, std::string& service_or_port)
 {
     const auto fd = wait();
 
@@ -70,7 +70,7 @@ std::streambuf* acceptor::accept(std::string& peer, std::string& service_or_port
 
     peer.assign(hbuf);
     service_or_port.assign(sbuf);
-    return new stream_buffer<tcp_buffer_size>{std::move(s)};
+    return new endpointbuf<tcp_buffer_size>{std::move(s)};
 }
 
 int acceptor::wait()

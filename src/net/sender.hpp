@@ -1,7 +1,7 @@
 #pragma once
 
 #include <string>
-#include <iosfwd>
+#include "net/endpointstream.hpp"
 
 namespace net
 {
@@ -15,7 +15,7 @@ public:
     m_service{service}
     {};
 
-    std::streambuf* distribute();
+    oendpointstream distribute();
 
     const std::string& group() const
     {
@@ -34,6 +34,6 @@ private:
     std::string m_service;    
 };
 
-std::streambuf* distribute(const std::string& group, const std::string& service, unsigned ttl = 1);
+oendpointstream distribute(const std::string& group, const std::string& service, unsigned ttl = 1);
 
 } // namespace net

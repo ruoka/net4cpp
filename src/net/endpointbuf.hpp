@@ -10,11 +10,11 @@ const std::size_t tcp_buffer_size{4096};
 const std::size_t udp_buffer_size{512};
 
 template<std::size_t N>
-class stream_buffer : public std::streambuf
+class endpointbuf : public std::streambuf
 {
 public:
 
-    explicit stream_buffer(socket&& s) : m_socket{std::move(s)}, m_input_sequence{}, m_output_sequence{}
+    explicit endpointbuf(socket&& s) : m_socket{std::move(s)}, m_input_sequence{}, m_output_sequence{}
     {
         setg(&m_input_sequence[0], &m_input_sequence[sizeof m_input_sequence], &m_input_sequence[sizeof m_input_sequence]);
         setp(&m_output_sequence[0], &m_output_sequence[sizeof m_output_sequence]);

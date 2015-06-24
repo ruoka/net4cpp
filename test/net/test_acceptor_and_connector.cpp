@@ -1,6 +1,5 @@
 #include <array>
 #include <future>
-#include <iostream>
 #include <gtest/gtest.h>
 #include "net/acceptor.hpp"
 #include "net/connector.hpp"
@@ -26,7 +25,7 @@ TEST(AcceptorAndConnectorTest,runTwoThreads)
                 unique_lock<mutex> l{m};
                 clog << "Accepting...  " << ator.host() << '.' << ator.service() << endl;
             }
-            ostream os{ator.accept()};
+            endpointstream os{ator.accept()};
             for(auto i : test)
             {
                 os << i << endl;
@@ -45,7 +44,7 @@ TEST(AcceptorAndConnectorTest,runTwoThreads)
                 unique_lock<mutex> l{m};
                 clog << "Connecting... " << ctor.host() << '.' << ctor.service() << endl;
             }
-            istream is{ctor.connect()};
+            endpointstream is{ctor.connect()};
             for(auto i : test)
             {
                 int ii;
