@@ -6,7 +6,7 @@
 using namespace std;
 using namespace net;
 
-TEST(ExampleHttpRequest,commandLine)
+TEST(ExampleHttpRequest,CommandLine)
 try
 {
     auto s = connect("www.google.com","http");
@@ -32,7 +32,7 @@ catch(const exception& e)
     cerr << "Exception: " << e.what() << endl;
 }
 
-TEST(ExampleEchoServer,commandLine)
+TEST(ExampleEchoServer,CommandLine)
 try
 {
     acceptor ator{"::1", "2112"}; // IPv6 localhost 

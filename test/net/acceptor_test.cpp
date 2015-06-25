@@ -5,7 +5,7 @@
 using namespace std;
 using namespace net;
 
-TEST(AcceptorUnitTest,testConstruct)
+TEST(AcceptorTest,Construct)
 {
     acceptor ator{"localhost","54321"};
     ASSERT_EQ(ator.host(),"localhost");
@@ -13,19 +13,19 @@ TEST(AcceptorUnitTest,testConstruct)
     ASSERT_EQ(ator.timeout(),default_accept_timeout);
 }
 
-TEST(AcceptorUnitTest,testConstructFails)
+TEST(AcceptorTest,Fail2Construct)
 {
     ASSERT_THROW((acceptor{"google.com","http"}), system_error);
 }
 
-TEST(AcceptorUnitTest,testTimeout)
+TEST(AcceptorTest,Timeout)
 {
     acceptor ator{"1999"};
-    ator.timeout(chrono::seconds{1});
-    ASSERT_THROW(endpointstream eps{ator.accept()}, system_error);
+    ator.timeout(1s);
+    EXPECT_THROW(endpointstream eps{ator.accept()}, system_error);
 }
 
-TEST(AcceptorTest,commandLine)
+TEST(AcceptorTest,CommandLine)
 {
     acceptor ator{"1999"};
     while(true)
@@ -35,7 +35,7 @@ TEST(AcceptorTest,commandLine)
         while(s)
         {
             string echo;
-            getline(s,echo);
+            getline(s, echo);
             s << echo << endl;
             clog << echo << endl;
         }

@@ -10,7 +10,7 @@ using namespace net;
 
 static mutex m;
 
-TEST(ReceiverAndSenderTest,runTwoThreads)
+TEST(ReceiverAndSenderTest,RunTwoThreads)
 {
     int s{0};
     int test[1000];
@@ -29,9 +29,9 @@ TEST(ReceiverAndSenderTest,runTwoThreads)
             {
                 int ii;
                 is >> ii;
-                ASSERT_EQ(i,ii);
+                EXPECT_EQ(i,ii);
                 unique_lock<mutex> l{m};
-                clog << "Receiver: " << ii << endl;
+                //clog << "Receiver: " << ii << endl;
             }
         }
     };
@@ -42,10 +42,10 @@ TEST(ReceiverAndSenderTest,runTwoThreads)
             auto os = sder.distribute();
             for(auto i : test)
             {
-                this_thread::sleep_for(1ms);
+                this_thread::sleep_for(10ms);
                 os << i << endl;
                 unique_lock<mutex> l{m};
-                clog << "Sender: " << i << endl;
+                //clog << "Sender: " << i << endl;
             }
         }
     };
@@ -54,7 +54,7 @@ TEST(ReceiverAndSenderTest,runTwoThreads)
     t2.join();
 }
 
-TEST(ReceiverAndSenderTest,runManyThreads)
+TEST(ReceiverAndSenderTest,RunManyThreads)
 {
     int s{0};
     int test[1000];
@@ -70,15 +70,15 @@ TEST(ReceiverAndSenderTest,runManyThreads)
                 auto is = rver.join();
                 {
                     unique_lock<mutex> l{m};
-                    clog << "Listening: " << rver.group() << '.' << rver.service() << endl;
+                    //clog << "Listening: " << rver.group() << '.' << rver.service() << endl;
                 }
                 for(auto i : test)
                 {
                     int ii;
                     is >> ii;
-                    ASSERT_EQ(i,ii);
+                    EXPECT_EQ(i,ii);
                     unique_lock<mutex> l{m};
-                    clog << "Receiver: " << ii << endl;
+                    //clog << "Receiver: " << ii << endl;
                 }
             }
         }
@@ -90,10 +90,10 @@ TEST(ReceiverAndSenderTest,runManyThreads)
             auto os = sder.distribute();
             for(auto i : test)
             {
-                this_thread::sleep_for(1ms);
+                this_thread::sleep_for(10ms);
                 os << i << endl;
                 unique_lock<mutex> l{m};                
-                clog << "Sender: " << i << endl;
+                //clog << "Sender: " << i << endl;
             }
         }
     }

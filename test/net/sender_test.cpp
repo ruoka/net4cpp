@@ -6,7 +6,20 @@
 using namespace std;
 using namespace net;
 
-TEST(SenderTest,commandLine)
+TEST(SenderTest,Construct)
+{
+    sender sder{"228.0.0.4","test"};
+    ASSERT_EQ(sder.group(),"228.0.0.4");
+    ASSERT_EQ(sder.service(),"test");
+}
+
+TEST(SenderTest,Distribute)
+{
+    auto s = distribute("228.0.0.4", "54321", 3);
+    ASSERT_FALSE(!s);
+}
+
+TEST(SenderTest,CommandLine)
 try
 {
     sender sder{"228.0.0.4","54321"};
@@ -23,5 +36,5 @@ try
 }
 catch(const exception& e)
 {
-    clog << "Exception: " << e.what() << endl;
+    cerr << "Exception: " << e.what() << endl;
 }

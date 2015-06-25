@@ -30,7 +30,7 @@ TEST(AcceptorAndConnectorTest,runTwoThreads)
             {
                 os << i << endl;
                 unique_lock<mutex> l{m};
-                clog << "Acceptor:  " << i << endl;
+                //clog << "Acceptor:  " << i << endl;
             }
         }
     );
@@ -51,7 +51,7 @@ TEST(AcceptorAndConnectorTest,runTwoThreads)
                 is >> ii;
                 ASSERT_EQ(i,ii);
                 unique_lock<mutex> l{m};
-                clog << "Connector: " << ii << endl;
+                //clog << "Connector: " << ii << endl;
             }
         }
     );

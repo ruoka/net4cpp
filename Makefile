@@ -41,7 +41,7 @@ clean:
 
 .PHONY: test
 test: $(BINDIR)/test
-	$(BINDIR)/test --gtest_filter=-*.commandLine
+	$(BINDIR)/test --gtest_filter=-*.CommandLine
 
 .PHONY: dump
 dump:

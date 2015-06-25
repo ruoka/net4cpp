@@ -1,3 +1,4 @@
+#include <sstream>
 #include <gtest/gtest.h>
 #include "net/endpointstream.hpp"
 #include "net/sender.hpp"
@@ -7,17 +8,17 @@
 using namespace net;
 using namespace std;
 
-TEST(IEndpointStreamUnitTest,testConstruct)
+TEST(IEndpointStreamTest,Construct)
 {
     auto is{join("228.0.0.4","54321")};
 }
 
-TEST(OEndpointStreamUnitTest,testConstruct)
+TEST(OEndpointStreamTest,Construct)
 {
     auto os{distribute("228.0.0.4","54321")};
 }
 
-TEST(EndpointStreamUnitTest,testConstruct)
+TEST(EndpointStreamTest,HttpRequestAndResponse)
 {
     auto s = connect("www.google.fi","http");
 
@@ -29,11 +30,12 @@ TEST(EndpointStreamUnitTest,testConstruct)
       << "\r\n"
       << flush;
 
+    ostringstream os;
     while(s)
     {
         char c;
         s >> noskipws >> c;
-        clog << c;
+        os << c;
     }
-    clog << flush;
+    SUCCEED() << os.str();
 }
