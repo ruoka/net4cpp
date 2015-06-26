@@ -18,7 +18,7 @@ protected:
             i = ++s;
     }
 
-    array<int,1000> test;
+    array<int,100> test;
 
     mutex m;
 };
@@ -57,7 +57,7 @@ TEST_F(AcceptorAndConnectorTest,runTwoThreads)
                 is >> ii;
                 ASSERT_EQ(i,ii);
                 unique_lock<mutex> l{m};
-                clog << "Connector: " << ii << endl;
+                //clog << "Connector: " << ii << endl;
             }
         });
 

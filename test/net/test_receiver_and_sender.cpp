@@ -19,7 +19,7 @@ protected:
             i = ++s;
     }
 
-    array<int,1000> test;
+    array<int,100> test;
 
     mutex m;
 };
@@ -40,7 +40,7 @@ TEST_F(ReceiverAndSenderTest,RunTwoThreads)
                 is >> ii;
                 EXPECT_EQ(i,ii);
                 unique_lock<mutex> l{m};
-                clog << "Receiver: " << ii << endl;
+                //clog << "Receiver: " << ii << endl;
             }
         }};
 
@@ -55,7 +55,7 @@ TEST_F(ReceiverAndSenderTest,RunTwoThreads)
                 this_thread::sleep_for(1ms);
                 os << i << endl;
                 unique_lock<mutex> l{m};
-                clog << "Sender:   " << i << endl;
+                //clog << "Sender:   " << i << endl;
             }
         }};
 
@@ -82,7 +82,7 @@ TEST_F(ReceiverAndSenderTest,RunManyThreads)
                     is >> ii;
                     EXPECT_EQ(i,ii);
                     unique_lock<mutex> l{m};
-                    clog << "Receiver: " << ii << endl;
+                    //clog << "Receiver: " << ii << endl;
                 }
             }});
 
@@ -97,7 +97,7 @@ TEST_F(ReceiverAndSenderTest,RunManyThreads)
                 this_thread::sleep_for(1ms);
                 os << i << endl;
                 unique_lock<mutex> l{m};
-                clog << "Sender:   " << i << endl;
+                //clog << "Sender:   " << i << endl;
             }
         }});
 
