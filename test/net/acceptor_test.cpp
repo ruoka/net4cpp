@@ -1,6 +1,8 @@
-#include <gtest/gtest.h>
+#include <thread>
 #include <iostream>
+#include <gtest/gtest.h>
 #include "net/acceptor.hpp"
+#include "net/connector.hpp"
 
 using namespace std;
 using namespace net;
@@ -16,6 +18,29 @@ TEST(AcceptorTest,Construct)
 TEST(AcceptorTest,Fail2Construct)
 {
     ASSERT_THROW((acceptor{"google.com","http"}), system_error);
+}
+
+TEST(AcceptorTest,Accept)
+{
+    thread t1{[]{
+        acceptor ator{"localhost","50001"};
+        string host, port;
+        auto c = ator.accept(host, port);
+        ASSERT_EQ(host,"localhost");
+        ASSERT_GT(port,"50000");
+        ASSERT_LT(port,"65535");
+        clog << "Connection: " << host << "." << port << endl;
+    }};
+
+    this_thread::sleep_for(10ms);
+
+    thread t2{[]{
+        auto h = connect("localhost","50001");
+        ASSERT_FALSE(!h);
+    }};
+
+    t1.join();
+    t2.join();
 }
 
 TEST(AcceptorTest,Timeout)

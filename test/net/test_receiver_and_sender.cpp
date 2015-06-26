@@ -36,13 +36,15 @@ TEST(ReceiverAndSenderTest,RunTwoThreads)
         }
     };
 
+    this_thread::sleep_for(10ms);
+
     thread t2{
         [&test]{
             sender sder{"228.0.0.4", "54321"};
             auto os = sder.distribute();
             for(auto i : test)
             {
-                this_thread::sleep_for(10ms);
+                this_thread::sleep_for(1ms);
                 os << i << endl;
                 unique_lock<mutex> l{m};
                 //clog << "Sender: " << i << endl;
@@ -81,8 +83,9 @@ TEST(ReceiverAndSenderTest,RunManyThreads)
                     //clog << "Receiver: " << ii << endl;
                 }
             }
-        }
-        );
+        });
+
+    this_thread::sleep_for(10ms);
 
     threads.push_back(thread{
         [&test]{
@@ -90,9 +93,9 @@ TEST(ReceiverAndSenderTest,RunManyThreads)
             auto os = sder.distribute();
             for(auto i : test)
             {
-                this_thread::sleep_for(10ms);
+                this_thread::sleep_for(1ms);
                 os << i << endl;
-                unique_lock<mutex> l{m};                
+                unique_lock<mutex> l{m};
                 //clog << "Sender: " << i << endl;
             }
         }

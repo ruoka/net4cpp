@@ -49,5 +49,5 @@ dump:
 	@echo $(TESTS)
 	@echo $(OBJECTS)
 	@echo $(DEPENDENCIES)
-	
+
 -include $(DEPENDENCIES)

@@ -47,7 +47,7 @@ private:
 };
 
 endpointstream connect(const std::string& host,
-                         const std::string& service,
-                         const std::chrono::milliseconds& timeout = default_connect_timeout);
+                       const std::string& service,
+                       const std::chrono::milliseconds& timeout = default_connect_timeout);
 
 } // namespace net
