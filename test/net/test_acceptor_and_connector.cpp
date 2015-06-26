@@ -7,19 +7,27 @@
 using namespace std;
 using namespace net;
 
-static mutex m;
-
-TEST(AcceptorAndConnectorTest,runTwoThreads)
+class AcceptorAndConnectorTest : public ::testing::Test
 {
-    int s{0};
-    array<int,1000> test;
-    for(auto& i : test)
-        i = ++s;
+protected:
 
+    void SetUp()
+    {
+        int s{0};
+        for(auto& i : test)
+            i = ++s;
+    }
+
+    array<int,1000> test;
+
+    mutex m;
+};
+
+TEST_F(AcceptorAndConnectorTest,runTwoThreads)
+{
     auto f1 = async(
         launch::async,
-        [&test]()
-        {
+        [&]{
             acceptor ator{"localhost", "54321"};
             {
                 unique_lock<mutex> l{m};
@@ -32,13 +40,11 @@ TEST(AcceptorAndConnectorTest,runTwoThreads)
                 unique_lock<mutex> l{m};
                 //clog << "Acceptor:  " << i << endl;
             }
-        }
-    );
+        });
 
     auto f2 = async(
         launch::async,
-        [&test]()
-        {
+        [&]{
             connector ctor{"localhost", "54321"};
             {
                 unique_lock<mutex> l{m};
@@ -51,10 +57,9 @@ TEST(AcceptorAndConnectorTest,runTwoThreads)
                 is >> ii;
                 ASSERT_EQ(i,ii);
                 unique_lock<mutex> l{m};
-                //clog << "Connector: " << ii << endl;
+                clog << "Connector: " << ii << endl;
             }
-        }
-    );
+        });
 
     f1.get();
     f2.get();
