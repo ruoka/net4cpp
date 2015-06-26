@@ -74,7 +74,7 @@ TEST_F(ReceiverAndSenderTest,RunManyThreads)
                 auto is = rver.join();
                 {
                     unique_lock<mutex> l{m};
-                    clog << "Listening: " << rver.group() << '.' << rver.service() << endl;
+                    //clog << "Listening: " << rver.group() << '.' << rver.service() << endl;
                 }
                 for(auto i : test)
                 {

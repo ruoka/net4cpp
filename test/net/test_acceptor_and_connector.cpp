@@ -33,7 +33,7 @@ TEST_F(AcceptorAndConnectorTest,runTwoThreads)
                 unique_lock<mutex> l{m};
                 clog << "Accepting...  " << ator.host() << '.' << ator.service() << endl;
             }
-            endpointstream os{ator.accept()};
+            auto os = ator.accept();
             for(auto i : test)
             {
                 os << i << endl;
@@ -50,7 +50,7 @@ TEST_F(AcceptorAndConnectorTest,runTwoThreads)
                 unique_lock<mutex> l{m};
                 clog << "Connecting... " << ctor.host() << '.' << ctor.service() << endl;
             }
-            endpointstream is{ctor.connect()};
+            auto is = ctor.connect();
             for(auto i : test)
             {
                 int ii;
