@@ -26,13 +26,13 @@ iendpointstream join(const std::string& group, const std::string& service, bool 
         if(!s)
             continue;
 
-        auto reuse{1};
+        auto reuse = 1;
         auto status = net::setsockopt(s, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof reuse);
         if(status < 0)
             continue;
 
-        auto loop_{loop ? '1' : '0'};
-        status = net::setsockopt(s, IPPROTO_IP, IP_MULTICAST_LOOP, &loop_, sizeof loop_);
+        auto looop = loop ? '1' : '0';
+        status = net::setsockopt(s, IPPROTO_IP, IP_MULTICAST_LOOP, &looop, sizeof looop);
         if(status < 0)
             continue;
 

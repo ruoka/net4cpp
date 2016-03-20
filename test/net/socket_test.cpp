@@ -12,7 +12,7 @@ TEST(SocketTest,Construct1)
     ASSERT_FALSE(!s);
     int fd = s;
     ASSERT_GT(fd,0);
-    auto yes{1};
+    auto yes = 1;
     auto e = net::setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes);
     ASSERT_EQ(e,0);
 }
@@ -23,7 +23,7 @@ TEST(SocketTest,Construct2)
     ASSERT_FALSE(!s);
     int fd = s;
     ASSERT_EQ(fd,2112);
-    auto yes{1};
+    auto yes = 1;
     auto e = net::setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes);
     ASSERT_EQ(e,-1);
 }

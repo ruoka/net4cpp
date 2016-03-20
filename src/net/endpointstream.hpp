@@ -1,10 +1,15 @@
 #pragma once
 
-#include <istream>
+#include <iostream>
+#include <ostream>
 #include <memory>
 
 namespace net
 {
+
+using std::endl;
+
+using std::flush;
 
 class iendpointstream : public std::istream
 {
@@ -61,4 +66,3 @@ private:
 };
 
 } // namespace net
-

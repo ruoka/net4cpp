@@ -10,12 +10,12 @@ using namespace std;
 
 TEST(IEndpointStreamTest,Construct)
 {
-    auto is{join("228.0.0.4","54321")};
+    auto is = join("228.0.0.4","54321");
 }
 
 TEST(OEndpointStreamTest,Construct)
 {
-    auto os{distribute("228.0.0.4","54321")};
+    auto os = distribute("228.0.0.4","54321");
 }
 
 TEST(EndpointStreamTest,HttpRequestAndResponse)

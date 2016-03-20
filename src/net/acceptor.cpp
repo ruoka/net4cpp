@@ -19,7 +19,7 @@ m_sockets{}
         if(!s)
             continue;
 
-        auto yes{1};
+        auto yes = 1;
         auto status = net::setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes);
         if(status < 0)
             continue;

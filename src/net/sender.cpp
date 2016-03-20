@@ -20,8 +20,8 @@ oendpointstream distribute(const std::string& group, const std::string& service,
         if(!s)
             continue;
 
-        unsigned ttl_{ttl};
-        auto status = net::setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL, &ttl_, sizeof ttl_);
+        auto t2l = ttl;
+        auto status = net::setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL, &t2l, sizeof t2l);
         if(status < 0)
             continue;
 
