@@ -15,22 +15,22 @@ class acceptor
 {
 public:
 
-    acceptor(const std::string& host, const std::string& service);
+    acceptor(const std::string& host, const std::string& service_or_port);
 
     explicit acceptor(const std::string& service);
 
     endpointstream accept();
 
-    endpointstream accept(std::string& peer, std::string& service_or_port);
+    endpointstream accept(std::string& peer, std::string& port);
 
     const std::string& host() const
     {
         return m_host;
     }
 
-    const std::string& service() const
+    const std::string& service_or_port() const
     {
-        return m_service;
+        return m_service_or_port;
     }
 
     const std::chrono::milliseconds& timeout() const
@@ -49,7 +49,7 @@ private:
 
     std::string m_host;
 
-    std::string m_service;
+    std::string m_service_or_port;
 
     std::chrono::milliseconds m_timeout;
 

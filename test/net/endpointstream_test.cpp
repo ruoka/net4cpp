@@ -8,7 +8,7 @@
 using namespace net;
 using namespace std;
 
-TEST(IEndpointStreamTest,Construct)
+TEST(NetIEndpointStreamTest,Construct)
 {
     auto is = join("228.0.0.4","54321");
 }

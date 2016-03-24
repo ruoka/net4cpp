@@ -6,7 +6,7 @@
 using namespace std;
 using namespace net;
 
-TEST(SocketTest,Construct1)
+TEST(NetSocketTest,Construct1)
 {
     const net::socket s{AF_INET, SOCK_STREAM};
     ASSERT_FALSE(!s);
@@ -17,7 +17,7 @@ TEST(SocketTest,Construct1)
     ASSERT_EQ(e,0);
 }
 
-TEST(SocketTest,Construct2)
+TEST(NetSocketTest,Construct2)
 {
     const net::socket s{2112};
     ASSERT_FALSE(!s);
@@ -28,7 +28,7 @@ TEST(SocketTest,Construct2)
     ASSERT_EQ(e,-1);
 }
 
-TEST(SocketTest,Move)
+TEST(NetSocketTest,Move)
 {
     net::socket s1{AF_INET, SOCK_DGRAM};
     ASSERT_FALSE(!s1);
@@ -43,7 +43,7 @@ TEST(SocketTest,Move)
     ASSERT_EQ(fd1,-1);
 }
 
-TEST(SocketTest,WaitFor)
+TEST(NetSocketTest,WaitFor)
 {
     const net::socket s{AF_INET, SOCK_STREAM};
     auto b = s.wait_for(1s);

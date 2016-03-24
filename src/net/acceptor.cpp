@@ -6,13 +6,13 @@
 namespace net
 {
 
-acceptor::acceptor(const std::string& host, const std::string& service) :
+acceptor::acceptor(const std::string& host, const std::string& service_or_port) :
 m_host{host},
-m_service{service},
+m_service_or_port{service_or_port},
 m_timeout{default_accept_timeout},
 m_sockets{}
 {
-    const net::address_info local_address{m_host, m_service, SOCK_STREAM, AI_PASSIVE};
+    const net::address_info local_address{m_host, m_service_or_port, SOCK_STREAM, AI_PASSIVE};
     for(const auto& address : local_address)
     {
         net::socket s{address.ai_family, address.ai_socktype, address.ai_protocol};
@@ -52,7 +52,7 @@ endpointstream acceptor::accept()
     return new endpointbuf<tcp_buffer_size>{std::move(s)};
 }
 
-endpointstream acceptor::accept(std::string& peer, std::string& service_or_port)
+endpointstream acceptor::accept(std::string& peer, std::string& port)
 {
     const auto fd = wait();
 
@@ -69,7 +69,7 @@ endpointstream acceptor::accept(std::string& peer, std::string& service_or_port)
         throw std::system_error{errno, std::system_category()};
 
     peer.assign(hbuf);
-    service_or_port.assign(sbuf);
+    port.assign(sbuf);
     return new endpointbuf<tcp_buffer_size>{std::move(s)};
 }
 

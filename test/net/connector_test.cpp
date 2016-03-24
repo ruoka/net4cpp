@@ -7,15 +7,15 @@
 using namespace std;
 using namespace net;
 
-TEST(ConnectorTest,Construct)
+TEST(NetConnectorTest,Construct)
 {
     connector ctor{"google.com","http"};
     ASSERT_EQ(ctor.host(),"google.com");
-    ASSERT_EQ(ctor.service(),"http");
+    ASSERT_EQ(ctor.service_or_port(),"http");
     ASSERT_EQ(ctor.timeout(),default_connect_timeout);
 }
 
-TEST(ConnectorTest,Connect)
+TEST(NetConnectorTest,Connect)
 {
     EXPECT_NO_THROW({
         auto s = connect("google.com","http");
@@ -23,7 +23,7 @@ TEST(ConnectorTest,Connect)
     });
 }
 
-TEST(ConnectorTest,Timeout)
+TEST(NetConnectorTest,Timeout)
 {
     const net::address_info address{"localhost", "1999", SOCK_STREAM, AI_PASSIVE};
     const net::socket s{address->ai_family, address->ai_socktype, address->ai_protocol};
@@ -33,13 +33,13 @@ TEST(ConnectorTest,Timeout)
     ASSERT_THROW(endpointstream eps{ctor.connect()}, system_error);
 }
 
-TEST(ConnectorTest,Fail2Connect)
+TEST(NetConnectorTest,Fail2Connect)
 {
     connector ctor{"foo.bar","http"};
     ASSERT_THROW(endpointstream eps{ctor.connect()}, system_error);
 }
 
-TEST(ConnectorTest,CommandLine)
+TEST(NetConnectorTest,CommandLine)
 try
 {
     connector ctor{"localhost","1999"};
