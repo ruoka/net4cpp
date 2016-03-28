@@ -10,7 +10,7 @@ TEST(NetSenderTest,Construct)
 {
     sender sder{"228.0.0.4","test"};
     ASSERT_EQ(sder.group(),"228.0.0.4");
-    ASSERT_EQ(sder.service(),"test");
+    ASSERT_EQ(sder.service_or_port(),"test");
 }
 
 TEST(NetSenderTest,Distribute)
@@ -24,7 +24,7 @@ try
 {
     sender sder{"228.0.0.4","54321"};
     auto os = sder.distribute();
-    clog << "Sender: " << sder.group() << '.' << sder.service() << endl;
+    clog << "Sender: " << sder.group() << '.' << sder.service_or_port() << endl;
     while(cin && os)
     {
         string msg;
@@ -37,4 +37,10 @@ try
 catch(const exception& e)
 {
     cerr << "Exception: " << e.what() << endl;
+}
+
+TEST(NetSenderTest,UDP)
+{
+    auto s = distribute("localhost", "syslog");
+    ASSERT_FALSE(!s);
 }

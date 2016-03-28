@@ -6,7 +6,7 @@ namespace net
 {
 
 const std::size_t tcp_buffer_size{4096};
-    
+
 const std::size_t udp_buffer_size{512};
 
 template<std::size_t N>
@@ -47,16 +47,28 @@ protected:
     int sync()
     {
         const char_type* buf = &m_output_sequence[0];
+        auto retry = 0;
         while(buf < pptr())
         {
             const auto bytes_written = net::write(m_socket, buf, pptr() - buf);
             //const auto bytes_written = ::sendto(m_socket, buf, pptr() - buf, 0, nullptr, 0);
             if(bytes_written < 1)
-                return -1;
+            {
+                if(++retry < 3) continue;
+                else return -1;
+            }
             buf += bytes_written;
         }
         setp(&m_output_sequence[0], &m_output_sequence[sizeof m_output_sequence]);
         return 0;
+    }
+
+    std::streampos seekoff (std::streamoff off, std::ios_base::seekdir way, std::ios_base::openmode which)
+    {
+        if(off == 0 && way == std::ios_base::cur && which == std::ios_base::out)
+            return {pptr() - pbase()};
+        else
+            return {-1};
     }
 
 private:

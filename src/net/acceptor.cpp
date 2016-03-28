@@ -36,7 +36,7 @@ m_sockets{}
     }
 
     if(m_sockets.empty())
-        throw std::system_error{errno, std::system_category(), "Acceptor could not be bound"};
+        throw std::system_error{errno, std::system_category(), "socket could not be bound"};
 }
 
 acceptor::acceptor(const std::string& service) : acceptor("localhost", service) {}
@@ -81,12 +81,13 @@ int acceptor::wait()
 
     if(m_timeout.count())
     {
-        const auto  s = m_timeout.count() / 1000;
-        const auto us = (m_timeout.count() % 1000) * 1000;
-        net::timeval tv{static_cast<std::time_t>(s), static_cast<int>(us)};
+        net::timeval tv{
+            static_cast<decltype(tv.tv_sec)>(m_timeout.count() / 1000),
+            static_cast<decltype(tv.tv_usec)>(m_timeout.count() % 1000 * 1000)
+        };
         const auto result = net::select(FD_SETSIZE, &fds, nullptr, nullptr, &tv);
         if(!result)
-            throw std::system_error{errno, std::system_category(), "Acceptor timeouted"};
+            throw std::system_error{errno, std::system_category(), "accept timeouted"};
     }
     else
         net::select(FD_SETSIZE, &fds, nullptr, nullptr, nullptr);
@@ -94,7 +95,7 @@ int acceptor::wait()
     for(const auto& fd : m_sockets)
         if(FD_ISSET(fd,&fds)) return fd;
 
-    throw std::system_error{errno, std::system_category(), "Acceptor failed"};
+    throw std::system_error{errno, std::system_category(), "accept failed"};
 }
 
 } // namespace net
