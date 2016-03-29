@@ -1,6 +1,6 @@
 CXX = clang++
 
-CXXFLAGS = -std=c++1z -stdlib=libc++ -I./src/ -I$(GTESTDIR)/include/ -MMD# -D DEBUG=1
+CXXFLAGS = -std=c++1z -stdlib=libc++ -I$(SRCDIR) -I$(GTESTDIR)/include/ -MMD# -D DEBUG=1
 
 LDFLAGS =  -stdlib=libc++ $(GTESTDIR)/make/gtest_main.a
 
