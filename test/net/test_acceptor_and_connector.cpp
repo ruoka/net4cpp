@@ -7,7 +7,7 @@
 using namespace std;
 using namespace net;
 
-class AcceptorAndConnectorTest : public ::testing::Test
+class NetAcceptorAndConnectorTest : public ::testing::Test
 {
 protected:
 
@@ -23,7 +23,7 @@ protected:
     mutex m;
 };
 
-TEST_F(AcceptorAndConnectorTest,runTwoThreads)
+TEST_F(NetAcceptorAndConnectorTest,RunTwoThreads)
 {
     auto f1 = async(
         launch::async,
@@ -31,14 +31,14 @@ TEST_F(AcceptorAndConnectorTest,runTwoThreads)
             acceptor ator{"localhost", "54321"};
             {
                 unique_lock<mutex> l{m};
-                clog << "Accepting...  " << ator.host() << '.' << ator.service() << endl;
+                SUCCEED() << "Accepting...  " << ator.host() << '.' << ator.service_or_port() << endl;
             }
             auto os = ator.accept();
             for(auto i : test)
             {
                 os << i << endl;
                 unique_lock<mutex> l{m};
-                //clog << "Acceptor:  " << i << endl;
+                SUCCEED() << "Acceptor:  " << i << endl;
             }
         });
 
@@ -48,7 +48,7 @@ TEST_F(AcceptorAndConnectorTest,runTwoThreads)
             connector ctor{"localhost", "54321"};
             {
                 unique_lock<mutex> l{m};
-                clog << "Connecting... " << ctor.host() << '.' << ctor.service() << endl;
+                SUCCEED() << "Connecting... " << ctor.host() << '.' << ctor.service_or_port() << endl;
             }
             auto is = ctor.connect();
             for(auto i : test)
@@ -57,7 +57,7 @@ TEST_F(AcceptorAndConnectorTest,runTwoThreads)
                 is >> ii;
                 ASSERT_EQ(i,ii);
                 unique_lock<mutex> l{m};
-                //clog << "Connector: " << ii << endl;
+                SUCCEED() << "Connector: " << ii << endl;
             }
         });
 

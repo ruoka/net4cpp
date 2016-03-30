@@ -6,25 +6,25 @@
 using namespace std;
 using namespace net;
 
-TEST(SenderTest,Construct)
+TEST(NetSenderTest,Construct)
 {
     sender sder{"228.0.0.4","test"};
     ASSERT_EQ(sder.group(),"228.0.0.4");
-    ASSERT_EQ(sder.service(),"test");
+    ASSERT_EQ(sder.service_or_port(),"test");
 }
 
-TEST(SenderTest,Distribute)
+TEST(NetSenderTest,Distribute)
 {
     auto s = distribute("228.0.0.4", "54321", 3);
     ASSERT_FALSE(!s);
 }
 
-TEST(SenderTest,CommandLine)
+TEST(NetSenderTest,CommandLine)
 try
 {
     sender sder{"228.0.0.4","54321"};
     auto os = sder.distribute();
-    clog << "Sender: " << sder.group() << '.' << sder.service() << endl;
+    clog << "Sender: " << sder.group() << '.' << sder.service_or_port() << endl;
     while(cin && os)
     {
         string msg;
@@ -37,4 +37,10 @@ try
 catch(const exception& e)
 {
     cerr << "Exception: " << e.what() << endl;
+}
+
+TEST(NetSenderTest,UDP)
+{
+    auto s = distribute("localhost", "syslog");
+    ASSERT_FALSE(!s);
 }

@@ -7,50 +7,50 @@
 using namespace std;
 using namespace net;
 
-TEST(AcceptorTest,Construct)
+TEST(NetAcceptorTest,Construct)
 {
     acceptor ator{"localhost","54321"};
-    ASSERT_EQ(ator.host(),"localhost");
-    ASSERT_EQ(ator.service(),"54321");
-    ASSERT_EQ(ator.timeout(),default_accept_timeout);
+    EXPECT_EQ(ator.host(),"localhost");
+    EXPECT_EQ(ator.service_or_port(),"54321");
+    EXPECT_EQ(ator.timeout(),default_accept_timeout);
 }
 
-TEST(AcceptorTest,Fail2Construct)
+TEST(NetAcceptorTest,Fail2Construct)
 {
-    ASSERT_THROW((acceptor{"google.com","http"}), system_error);
+    EXPECT_THROW((acceptor{"google.com","http"}), system_error);
 }
 
-TEST(AcceptorTest,Accept)
+TEST(NetAcceptorTest,Accept)
 {
     thread t1{[]{
         acceptor ator{"localhost","50001"};
         string host, port;
         auto c = ator.accept(host, port);
-        ASSERT_EQ(host,"localhost");
-        ASSERT_GT(port,"50000");
-        ASSERT_LT(port,"65535");
-        clog << "Connection: " << host << "." << port << endl;
+        EXPECT_EQ(host,"localhost");
+        EXPECT_GT(port,"49152");
+        EXPECT_LT(port,"65535");
+        SUCCEED() << "Connection: " << host << "." << port << endl;
     }};
 
     this_thread::sleep_for(10ms);
 
     thread t2{[]{
         auto h = connect("localhost","50001");
-        ASSERT_FALSE(!h);
+        EXPECT_FALSE(!h);
     }};
 
     t1.join();
     t2.join();
 }
 
-TEST(AcceptorTest,Timeout)
+TEST(NetAcceptorTest,Timeout)
 {
     acceptor ator{"1999"};
     ator.timeout(1s);
     EXPECT_THROW(endpointstream eps{ator.accept()}, system_error);
 }
 
-TEST(AcceptorTest,CommandLine)
+TEST(NetAcceptorTest,CommandLine)
 {
     acceptor ator{"1999"};
     while(true)

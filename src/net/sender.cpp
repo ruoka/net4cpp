@@ -3,17 +3,16 @@
 #include "net/address_info.hpp"
 #include "net/endpointbuf.hpp"
 
-namespace net
-{
+namespace net {
 
 oendpointstream sender::distribute()
 {
-    return net::distribute(m_group, m_service);
+    return net::distribute(m_group, m_service_or_port);
 }
 
-oendpointstream distribute(const std::string& group, const std::string& service, unsigned ttl)
+oendpointstream distribute(const std::string& group, const std::string& service_or_port, unsigned ttl)
 {
-    const net::address_info distribution_address{group, service, SOCK_DGRAM};
+    const net::address_info distribution_address{group, service_or_port, SOCK_DGRAM};
     for(const auto& address : distribution_address)
     {
         net::socket s{address.ai_family, address.ai_socktype, address.ai_protocol};

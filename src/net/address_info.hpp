@@ -4,8 +4,7 @@
 #include <system_error>
 #include "net/network.hpp"
 
-namespace net
-{
+namespace net {
 
 class addrinfo_iterator
 {
@@ -38,11 +37,11 @@ class address_info
 {
 public:
 
-    address_info(const std::string& node, const std::string& service, int socktype, int flags = AI_ALL, int family = AF_UNSPEC) : m_addrinfo{nullptr}
+    address_info(const std::string& node, const std::string& service_or_port, int socktype, int flags = AI_ALL, int family = AF_UNSPEC) : m_addrinfo{nullptr}
     {
         const addrinfo hints{flags,family,socktype,0,0,nullptr,nullptr,nullptr};
-        const auto error = ::getaddrinfo(node.c_str(), service.c_str(), &hints, &m_addrinfo);
-        if(error) throw std::system_error{error, std::system_category(), "Address resolution failed"};
+        const auto error = ::getaddrinfo(node.c_str(), service_or_port.c_str(), &hints, &m_addrinfo);
+        if(error) throw std::system_error{error, std::system_category(), "address resolution failed"};
     }
 
     ~address_info()

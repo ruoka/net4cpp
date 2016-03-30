@@ -8,7 +8,7 @@
 using namespace std;
 using namespace net;
 
-class ReceiverAndSenderTest : public ::testing::Test
+class NetReceiverAndSenderTest : public ::testing::Test
 {
 protected:
 
@@ -24,7 +24,7 @@ protected:
     mutex m;
 };
 
-TEST_F(ReceiverAndSenderTest,RunTwoThreads)
+TEST_F(NetReceiverAndSenderTest,RunTwoThreads)
 {
     thread t1{
         [&]{
@@ -32,7 +32,7 @@ TEST_F(ReceiverAndSenderTest,RunTwoThreads)
             auto is = rver.join();
             {
                 unique_lock<mutex> l{m};
-                clog << "Listening: " << rver.group() << '.' << rver.service() << endl;
+                SUCCEED() << "Listening: " << rver.group() << '.' << rver.service() << endl;
             }
             for(auto i : test)
             {
@@ -40,7 +40,7 @@ TEST_F(ReceiverAndSenderTest,RunTwoThreads)
                 is >> ii;
                 EXPECT_EQ(i,ii);
                 unique_lock<mutex> l{m};
-                //clog << "Receiver: " << ii << endl;
+                //clog << "NetReceiver: " << ii << endl;
             }
         }};
 
@@ -63,7 +63,7 @@ TEST_F(ReceiverAndSenderTest,RunTwoThreads)
     t2.join();
 }
 
-TEST_F(ReceiverAndSenderTest,RunManyThreads)
+TEST_F(NetReceiverAndSenderTest,RunManyThreads)
 {
     vector<thread> threads;
 
@@ -82,7 +82,7 @@ TEST_F(ReceiverAndSenderTest,RunManyThreads)
                     is >> ii;
                     EXPECT_EQ(i,ii);
                     unique_lock<mutex> l{m};
-                    //clog << "Receiver: " << ii << endl;
+                    //clog << "receiver: " << ii << endl;
                 }
             }});
 
