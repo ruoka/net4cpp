@@ -52,7 +52,7 @@ catch(const exception& e)
 }
 ```
 
-##syslog Stream Example
+##Syslog Stream Example
 
 ```cpp
 #include "net/syslogstream.hpp"
