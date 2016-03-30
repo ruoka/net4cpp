@@ -4,7 +4,7 @@
 using namespace std;
 using namespace net;
 
-TEST(AddressInfoTest,Construct)
+TEST(NetAddressInfoTest,Construct)
 {
     net::address_info ai{"localhost", "54321", SOCK_STREAM};
     auto b = begin(ai);

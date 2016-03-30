@@ -3,23 +3,22 @@
 #include "net/address_info.hpp"
 #include "net/endpointbuf.hpp"
 
-namespace net
-{
+namespace net {
 
-connector::connector(const std::string& host, const std::string& service) :
+connector::connector(const std::string& host, const std::string& service_or_port) :
 m_host{host},
-m_service{service},
+m_service_or_port{service_or_port},
 m_timeout{default_connect_timeout}
 {}
 
 endpointstream connector::connect() const
 {
-    return net::connect(m_host, m_service, m_timeout);
+    return net::connect(m_host, m_service_or_port, m_timeout);
 }
 
-endpointstream connect(const std::string& host, const std::string& service, const std::chrono::milliseconds& timeout)
+endpointstream connect(const std::string& host, const std::string& service_or_port, const std::chrono::milliseconds& timeout)
 {
-    const net::address_info remote_address{host, service, SOCK_STREAM};
+    const net::address_info remote_address{host, service_or_port, SOCK_STREAM};
     for(const auto& address : remote_address)
     {
         net::socket s{address.ai_family, address.ai_socktype, address.ai_protocol};

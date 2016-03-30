@@ -5,20 +5,20 @@
 using namespace std;
 using namespace net;
 
-TEST(ReceiverTest,Construct)
+TEST(NetReceiverTest,Construct)
 {
     receiver rver{"228.0.0.4","test"};
     ASSERT_EQ(rver.group(),"228.0.0.4");
     ASSERT_EQ(rver.service(),"test");
 }
 
-TEST(ReceiverTest,Join)
+TEST(NetReceiverTest,Join)
 {
     auto s = join("228.0.0.4", "54321");
     ASSERT_FALSE(!s);
 }
 
-TEST(ReceiverTest,CommandLine)
+TEST(NetReceiverTest,CommandLine)
 try
 {
     receiver rver{"228.0.0.4","54321"};
