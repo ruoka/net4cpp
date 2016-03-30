@@ -3,10 +3,9 @@
 #include "std/utility.hpp"
 #include "net/sender.hpp"
 
-namespace net
-{
-namespace syslog
-{
+namespace net {
+namespace syslog {
+
     enum class facility : int
     {
         user   = 1,
@@ -19,6 +18,7 @@ namespace syslog
         local6 = 22,
         local7 = 23
     };
+
     enum class severity : int
     {
          emergency = 0,
@@ -38,7 +38,8 @@ namespace syslog
     const auto hostname = gethostname();
 
     const auto pid = getpid();
-};
+
+} // namespace syslog
 
 class syslogstream : public oendpointstream
 {
@@ -75,26 +76,21 @@ public:
 
     void header()
     {
+        // <PRI> Feb 22 21:12 localhost syslog[2112]:
+        using namespace std;
+        using namespace std::chrono;
+
         if(m_level >= m_severity)
         {
-            using namespace std;
-            using namespace std::chrono;
-            years YY;
-            months MM;
-            days DD;
-            hours hh;
-            minutes mm;
-            seconds ss;
-            milliseconds ff;
-            std::tie(YY,MM,DD,hh,mm,ss,ff) = convert(system_clock::now());
-            m_parent << '<' << 8 * (int)m_facility + (int)m_severity << '>' // <PRI>
-                     << MM << ' '                                           // TIMESTAMP
-                     << setw(2) << setfill(' ') << DD.count() << ' '
-                     << setw(2) << setfill('0') << hh.count() << ':'
-                     << setw(2) << setfill('0') << mm.count() << ':'
-                     << setw(2) << setfill('0') << ss.count() << ' '
-                     << syslog::hostname << ' '                             // HOSTNAME
-                     << m_tag << '[' << syslog::pid << ']' << ':' << ' ';   // TAG[PID]:
+            const auto timestamp = convert(system_clock::now());
+            m_parent << '<' << 8 * (int)m_facility + (int)m_severity << '>'       // <PRI>
+                     << to_string(get<months>(timestamp)) << ' '                  // TIMESTAMP
+                     << setw(2) << setfill(' ') << get<days>(timestamp) << ' '
+                     << setw(2) << setfill('0') << get<hours>(timestamp) << ':'
+                     << setw(2) << setfill('0') << get<minutes>(timestamp) << ':'
+                     << setw(2) << setfill('0') << get<seconds>(timestamp) << ' '
+                     << syslog::hostname << ' '                                   // HOSTNAME
+                     << m_tag << '[' << syslog::pid << ']' << ':' << ' ';         // TAG[PID]:
         }
     }
 

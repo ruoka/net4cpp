@@ -3,8 +3,7 @@
 #include "net/address_info.hpp"
 #include "net/endpointbuf.hpp"
 
-namespace net
-{
+namespace net {
 
 oendpointstream sender::distribute()
 {

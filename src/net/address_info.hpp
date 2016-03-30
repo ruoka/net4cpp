@@ -4,8 +4,7 @@
 #include <system_error>
 #include "net/network.hpp"
 
-namespace net
-{
+namespace net {
 
 class addrinfo_iterator
 {

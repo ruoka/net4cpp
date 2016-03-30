@@ -15,8 +15,7 @@
 #define IPV6_DROP_MEMBERSHIP IPV6_LEAVE_GROUP
 #endif
 
-namespace net
-{
+namespace net {
 
 using ::getsockopt;
 

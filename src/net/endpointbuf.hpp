@@ -2,8 +2,7 @@
 #include "net/socket.hpp"
 #include "net/network.hpp"
 
-namespace net
-{
+namespace net {
 
 const std::size_t tcp_buffer_size{4096};
 

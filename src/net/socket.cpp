@@ -1,8 +1,7 @@
 #include "net/socket.hpp"
 #include "net/network.hpp"
 
-namespace net
-{
+namespace net {
 
 socket::socket(int domain, int type, int protocol) : m_fd{-1}
 {

@@ -2,8 +2,7 @@
 
 #include <chrono>
 
-namespace net
-{
+namespace net {
 
 class socket
 {

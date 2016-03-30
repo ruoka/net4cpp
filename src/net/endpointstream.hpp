@@ -4,8 +4,7 @@
 #include <ostream>
 #include <memory>
 
-namespace net
-{
+namespace net {
 
 using std::endl;
 

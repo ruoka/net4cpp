@@ -3,8 +3,7 @@
 #include "net/address_info.hpp"
 #include "net/endpointbuf.hpp"
 
-namespace net
-{
+namespace net {
 
 acceptor::acceptor(const std::string& host, const std::string& service_or_port) :
 m_host{host},

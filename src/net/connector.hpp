@@ -4,8 +4,7 @@
 #include <chrono>
 #include "net/endpointstream.hpp"
 
-namespace net
-{
+namespace net {
 
 const std::chrono::seconds default_connect_timeout{3};
 
@@ -17,12 +16,12 @@ public:
 
     endpointstream connect() const;
 
-    const std::string& host() const
+    const auto& host() const
     {
         return m_host;
     }
 
-    const std::string& service_or_port() const
+    const auto& service_or_port() const
     {
         return m_service_or_port;
     }

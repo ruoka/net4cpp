@@ -3,8 +3,8 @@
 #include "net/network.hpp"
 #include "syslogstream.hpp"
 
-namespace net::syslog
-{
+namespace net::syslog {
+
     int getpid()
     {
         return ::getpid();
