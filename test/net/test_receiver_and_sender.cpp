@@ -28,18 +28,18 @@ TEST_F(NetReceiverAndSenderTest,RunTwoThreads)
 {
     thread t1{
         [&]{
-            receiver rver{"228.0.0.4", "54321"};
+            auto rver = receiver{"228.0.0.4", "54321"};
             auto is = rver.join();
             {
-                unique_lock<mutex> l{m};
+                auto l = unique_lock<mutex>{m};
                 SUCCEED() << "Listening: " << rver.group() << '.' << rver.service() << endl;
             }
             for(auto i : test)
             {
-                int ii;
+                auto ii = 0;
                 is >> ii;
                 EXPECT_EQ(i,ii);
-                unique_lock<mutex> l{m};
+                auto l = unique_lock<mutex>{m};
                 //clog << "NetReceiver: " << ii << endl;
             }
         }};
@@ -48,13 +48,13 @@ TEST_F(NetReceiverAndSenderTest,RunTwoThreads)
 
     thread t2{
         [&]{
-            sender sder{"228.0.0.4", "54321"};
+            auto sder = sender{"228.0.0.4", "54321"};
             auto os = sder.distribute();
             for(auto i : test)
             {
                 this_thread::sleep_for(1ms);
                 os << i << endl;
-                unique_lock<mutex> l{m};
+                auto l = unique_lock<mutex>{m};
                 //clog << "Sender:   " << i << endl;
             }
         }};
@@ -65,23 +65,23 @@ TEST_F(NetReceiverAndSenderTest,RunTwoThreads)
 
 TEST_F(NetReceiverAndSenderTest,RunManyThreads)
 {
-    vector<thread> threads;
+    auto threads = vector<thread>{};
 
     for(auto i = 100; i > 0; --i)
         threads.push_back(thread{
             [&]{
-                receiver rver{"228.0.0.4", "54321"};
+                auto rver = receiver{"228.0.0.4", "54321"};
                 auto is = rver.join();
                 {
-                    unique_lock<mutex> l{m};
+                auto l = unique_lock<mutex>{m};
                     //clog << "Listening: " << rver.group() << '.' << rver.service() << endl;
                 }
                 for(auto i : test)
                 {
-                    int ii;
+                    auto ii = 0;
                     is >> ii;
                     EXPECT_EQ(i,ii);
-                    unique_lock<mutex> l{m};
+                auto l = unique_lock<mutex>{m};
                     //clog << "receiver: " << ii << endl;
                 }
             }});
@@ -90,13 +90,13 @@ TEST_F(NetReceiverAndSenderTest,RunManyThreads)
 
     threads.push_back(thread{
         [&]{
-            sender sder{"228.0.0.4", "54321"};
+            auto sder = sender{"228.0.0.4", "54321"};
             auto os = sder.distribute();
             for(auto i : test)
             {
                 this_thread::sleep_for(1ms);
                 os << i << endl;
-                unique_lock<mutex> l{m};
+                auto l = unique_lock<mutex>{m};
                 //clog << "Sender:   " << i << endl;
             }
         }});

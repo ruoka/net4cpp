@@ -19,7 +19,7 @@ TEST(NetSocketTest,Construct1)
 
 TEST(NetSocketTest,Construct2)
 {
-    const net::socket s{2112};
+    const auto s = net::socket{2112};
     ASSERT_FALSE(!s);
     int fd = s;
     ASSERT_EQ(fd,2112);
@@ -30,22 +30,22 @@ TEST(NetSocketTest,Construct2)
 
 TEST(NetSocketTest,Move)
 {
-    net::socket s1{AF_INET, SOCK_DGRAM};
+    auto s1 = net::socket{AF_INET, SOCK_DGRAM};
     ASSERT_FALSE(!s1);
     int fd1 = s1;
-    ASSERT_GT(fd1,0);
-    const net::socket s2{std::move(s1)};
+    ASSERT_GT(fd1, 0);
+    const auto s2 = net::socket{std::move(s1)};
     ASSERT_TRUE(!s1);
     ASSERT_FALSE(!s2);
     int fd2 = s2;
-    ASSERT_EQ(fd2,fd1);
+    ASSERT_EQ(fd2, fd1);
     fd1 = s1;
-    ASSERT_EQ(fd1,-1);
+    ASSERT_EQ(fd1, -1);
 }
 
 TEST(NetSocketTest,WaitFor)
 {
-    const net::socket s{AF_INET, SOCK_STREAM};
+    const auto s = net::socket{AF_INET, SOCK_STREAM};
     auto b = s.wait_for(1s);
     ASSERT_FALSE(b);
 }

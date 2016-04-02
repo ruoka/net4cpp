@@ -7,7 +7,7 @@ using namespace net;
 
 TEST(NetReceiverTest,Construct)
 {
-    receiver rver{"228.0.0.4","test"};
+    auto rver = receiver{"228.0.0.4","test"};
     ASSERT_EQ(rver.group(),"228.0.0.4");
     ASSERT_EQ(rver.service(),"test");
 }
@@ -21,12 +21,12 @@ TEST(NetReceiverTest,Join)
 TEST(NetReceiverTest,CommandLine)
 try
 {
-    receiver rver{"228.0.0.4","54321"};
+    auto rver = receiver{"228.0.0.4","54321"};
     auto is = rver.join();
     clog << "Receiver: " << rver.group() << '.' << rver.service() << endl;
     while(cout && is)
     {
-        string msg;
+        auto msg = ""s;
         getline(is, msg);
         clog << msg << endl;
     }

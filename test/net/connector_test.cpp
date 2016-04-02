@@ -9,44 +9,44 @@ using namespace net;
 
 TEST(NetConnectorTest,Construct)
 {
-    connector ctor{"google.com","http"};
-    ASSERT_EQ(ctor.host(),"google.com");
-    ASSERT_EQ(ctor.service_or_port(),"http");
-    ASSERT_EQ(ctor.timeout(),default_connect_timeout);
+    const auto ctor = connector{"google.com","http"};
+    ASSERT_EQ(ctor.host(), "google.com");
+    ASSERT_EQ(ctor.service_or_port(), "http");
+    ASSERT_EQ(ctor.timeout(), default_connect_timeout);
 }
 
 TEST(NetConnectorTest,Connect)
 {
     EXPECT_NO_THROW({
-        auto s = connect("google.com","http");
+        const auto s = connect("google.com","http");
         ASSERT_FALSE(!s);
     });
 }
 
 TEST(NetConnectorTest,Timeout)
 {
-    const net::address_info address{"localhost", "1999", SOCK_STREAM, AI_PASSIVE};
-    const net::socket s{address->ai_family, address->ai_socktype, address->ai_protocol};
+    const auto address = net::address_info{"localhost", "1999", SOCK_STREAM, AI_PASSIVE};
+    const auto s = net::socket{address->ai_family, address->ai_socktype, address->ai_protocol};
     net::bind(s, address->ai_addr, address->ai_addrlen);
-    connector ctor{"localhost","1999"};
+    auto ctor = connector{"localhost", "1999"};
     ctor.timeout(3s);
     ASSERT_THROW(endpointstream eps{ctor.connect()}, system_error);
 }
 
 TEST(NetConnectorTest,Fail2Connect)
 {
-    connector ctor{"foo.bar","http"};
-    ASSERT_THROW(endpointstream eps{ctor.connect()}, system_error);
+    auto ctor = connector{"foo.bar", "http"};
+    ASSERT_THROW(ctor.connect(), system_error);
 }
 
 TEST(NetConnectorTest,CommandLine)
 try
 {
-    connector ctor{"localhost","1999"};
+    auto ctor = connector{"localhost", "1999"};
     auto s = ctor.connect();
     while(cin && s)
     {
-        string echo;
+        auto echo = ""s;
         getline(cin, echo);
         s << echo << endl;
         getline(s, echo);

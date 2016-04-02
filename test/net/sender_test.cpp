@@ -8,7 +8,7 @@ using namespace net;
 
 TEST(NetSenderTest,Construct)
 {
-    sender sder{"228.0.0.4","test"};
+    auto sder = sender{"228.0.0.4","test"};
     ASSERT_EQ(sder.group(),"228.0.0.4");
     ASSERT_EQ(sder.service_or_port(),"test");
 }
@@ -22,12 +22,12 @@ TEST(NetSenderTest,Distribute)
 TEST(NetSenderTest,CommandLine)
 try
 {
-    sender sder{"228.0.0.4","54321"};
+    auto sder = sender{"228.0.0.4","54321"};
     auto os = sder.distribute();
     clog << "Sender: " << sder.group() << '.' << sder.service_or_port() << endl;
     while(cin && os)
     {
-        string msg;
+        auto msg = ""s;
         getline(cin, msg);
         os << msg << endl;
     }

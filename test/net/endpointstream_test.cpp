@@ -30,7 +30,7 @@ TEST(EndpointStreamTest,HttpRequestAndResponse)
       << "\r\n"
       << flush;
 
-    ostringstream os;
+    auto os = ostringstream{};
     while(s)
     {
         char c;

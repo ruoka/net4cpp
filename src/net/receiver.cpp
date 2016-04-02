@@ -17,8 +17,8 @@ void receiver::leave()
 
 iendpointstream join(const std::string& group, const std::string& service, bool loop)
 {
-    const net::address_info distribution_address{group, "", SOCK_DGRAM};
-    const net::address_info local_address{"", service, SOCK_DGRAM, AI_PASSIVE, distribution_address->ai_family};
+    const auto distribution_address = net::address_info{group, "", SOCK_DGRAM};
+    const auto local_address = net::address_info{"", service, SOCK_DGRAM, AI_PASSIVE, distribution_address->ai_family};
     for(const auto& address : local_address)
     {
         net::socket s{address.ai_family, address.ai_socktype, address.ai_protocol};
@@ -41,28 +41,22 @@ iendpointstream join(const std::string& group, const std::string& service, bool 
 
         if(address.ai_family == AF_INET)
         {
-            net::ip_mreq mreq;
-
+            auto mreq = net::ip_mreq{};
             std::memcpy(&mreq.imr_multiaddr,
-                &reinterpret_cast<const net::sockaddr_in*>(distribution_address->ai_addr)->sin_addr,
-                sizeof mreq.imr_multiaddr);
-
+                        &reinterpret_cast<const net::sockaddr_in*>(distribution_address->ai_addr)->sin_addr,
+                        sizeof mreq.imr_multiaddr);
             mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-
             status = net::setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof mreq);
             if(status < 0)
                 continue;
         }
         else if (address.ai_family == AF_INET6)
         {
-            net::ipv6_mreq mreq;
-
+            auto mreq = net::ipv6_mreq{};
             std::memcpy(&mreq.ipv6mr_multiaddr,
-                &reinterpret_cast<const net::sockaddr_in6*>(distribution_address->ai_addr)->sin6_addr,
-                sizeof mreq.ipv6mr_multiaddr);
-
+                        &reinterpret_cast<const net::sockaddr_in6*>(distribution_address->ai_addr)->sin6_addr,
+                        sizeof mreq.ipv6mr_multiaddr);
             mreq.ipv6mr_interface = 0;
-
             status = net::setsockopt(s, IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP, &mreq, sizeof mreq);
             if(status < 0)
                 continue;
@@ -71,10 +65,8 @@ iendpointstream join(const std::string& group, const std::string& service, bool 
         {
             assert(false);
         }
-
         return new endpointbuf<udp_buffer_size>{std::move(s)};
     }
-
     throw std::system_error{errno, std::system_category()};
 }
 

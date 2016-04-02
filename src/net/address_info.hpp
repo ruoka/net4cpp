@@ -39,9 +39,14 @@ public:
 
     address_info(const std::string& node, const std::string& service_or_port, int socktype, int flags = AI_ALL, int family = AF_UNSPEC) : m_addrinfo{nullptr}
     {
-        const addrinfo hints{flags,family,socktype,0,0,nullptr,nullptr,nullptr};
+        const auto hints = net::addrinfo{flags,family,socktype,0,0,nullptr,nullptr,nullptr};
         const auto error = ::getaddrinfo(node.c_str(), service_or_port.c_str(), &hints, &m_addrinfo);
         if(error) throw std::system_error{error, std::system_category(), "address resolution failed"};
+    }
+
+    address_info(address_info&& ai) : m_addrinfo{ai.m_addrinfo}
+    {
+        ai.m_addrinfo = nullptr;
     }
 
     ~address_info()
@@ -71,7 +76,6 @@ public:
 
 private:
     address_info(address_info&) = delete;
-    address_info(address_info&& s) = delete;
     address_info& operator = (const address_info&) = delete;
     address_info& operator = (const address_info&&) = delete;
     addrinfo* m_addrinfo;

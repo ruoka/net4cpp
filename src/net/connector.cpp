@@ -18,10 +18,10 @@ endpointstream connector::connect() const
 
 endpointstream connect(const std::string& host, const std::string& service_or_port, const std::chrono::milliseconds& timeout)
 {
-    const net::address_info remote_address{host, service_or_port, SOCK_STREAM};
+    auto remote_address = net::address_info{host, service_or_port, SOCK_STREAM};
     for(const auto& address : remote_address)
     {
-        net::socket s{address.ai_family, address.ai_socktype, address.ai_protocol};
+        auto s = net::socket{address.ai_family, address.ai_socktype, address.ai_protocol};
         if(!s)
             continue;
 

@@ -13,7 +13,7 @@ protected:
 
     void SetUp()
     {
-        int s{0};
+        auto s = 0;
         for(auto& i : test)
             i = ++s;
     }
@@ -28,16 +28,16 @@ TEST_F(NetAcceptorAndConnectorTest,RunTwoThreads)
     auto f1 = async(
         launch::async,
         [&]{
-            acceptor ator{"localhost", "54321"};
+            auto ator = acceptor{"localhost", "54321"};
             {
-                unique_lock<mutex> l{m};
+                auto l = unique_lock<mutex>{m};
                 SUCCEED() << "Accepting...  " << ator.host() << '.' << ator.service_or_port() << endl;
             }
             auto os = ator.accept();
             for(auto i : test)
             {
                 os << i << endl;
-                unique_lock<mutex> l{m};
+                auto l = unique_lock<mutex>{m};
                 SUCCEED() << "Acceptor:  " << i << endl;
             }
         });
@@ -45,18 +45,18 @@ TEST_F(NetAcceptorAndConnectorTest,RunTwoThreads)
     auto f2 = async(
         launch::async,
         [&]{
-            connector ctor{"localhost", "54321"};
+            auto ctor = connector{"localhost", "54321"};
             {
-                unique_lock<mutex> l{m};
+                auto l = unique_lock<mutex>{m};
                 SUCCEED() << "Connecting... " << ctor.host() << '.' << ctor.service_or_port() << endl;
             }
             auto is = ctor.connect();
             for(auto i : test)
             {
-                int ii;
+                auto ii = 0;
                 is >> ii;
                 ASSERT_EQ(i,ii);
-                unique_lock<mutex> l{m};
+                auto l = unique_lock<mutex>{m};
                 SUCCEED() << "Connector: " << ii << endl;
             }
         });

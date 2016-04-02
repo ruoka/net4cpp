@@ -6,12 +6,12 @@ Network library based on C++14 standard
 ```cpp
 try
 {
-    acceptor ator{"::1", "2112"}; // IPv6 localhost
+    auto ator = acceptor{"::1", "2112"}; // IPv6 localhost
     auto s = ator.accept();
 
     while(s)
     {
-        string echo;
+        auto echo = ""s;
         getline(s, echo);
         s << echo << endl;
         clog << echo << endl;
@@ -40,7 +40,7 @@ try
 
     while(s)
     {
-        char c;
+        auto c = ' ';
         s >> noskipws >> c;
         clog << c;
     }

@@ -12,7 +12,7 @@ oendpointstream sender::distribute()
 
 oendpointstream distribute(const std::string& group, const std::string& service_or_port, unsigned ttl)
 {
-    const net::address_info distribution_address{group, service_or_port, SOCK_DGRAM};
+    const auto distribution_address = net::address_info{group, service_or_port, SOCK_DGRAM};
     for(const auto& address : distribution_address)
     {
         net::socket s{address.ai_family, address.ai_socktype, address.ai_protocol};
