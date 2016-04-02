@@ -1,8 +1,8 @@
 #include <cerrno>
 #include "net/network.hpp"
 
-namespace net {
-
+namespace net
+{
 // This is C style low-level function that implements connect that supports timeouts
 int connect(int fd, const net::sockaddr* address, net::socklen_t address_len, const std::chrono::milliseconds& timeout)
 {
@@ -32,17 +32,19 @@ int connect(int fd, const net::sockaddr* address, net::socklen_t address_len, co
         return -1;
 
     // Wait for the connect to complete or timeout using select
-    net::fd_set readfds, writefds;
+    auto readfds = net::fd_set{};
     FD_ZERO(&readfds);
     FD_SET(fd, &readfds);
+    auto writefds = net::fd_set{};
     FD_ZERO(&writefds);
     FD_SET(fd, &writefds);
 
     if(timeout.count())
     {
-        const auto  s = timeout.count() / 1000;
-        const auto us = (timeout.count() % 1000) * 1000;
-        net::timeval tv{static_cast<std::time_t>(s), static_cast<int>(us)};
+        net::timeval tv {
+            static_cast<decltype(tv.tv_sec)>(timeout.count() / 1000),
+            static_cast<decltype(tv.tv_usec)>(timeout.count() % 1000 * 1000)
+        };
         error = net::select(FD_SETSIZE, &readfds, &writefds, nullptr, &tv);
         // Return 0 means that select/connect timeouted
         if(error == 0)
@@ -58,8 +60,8 @@ int connect(int fd, const net::sockaddr* address, net::socklen_t address_len, co
         return -1;
 
     // Get the return code from the connect
-    int result;
-    net::socklen_t result_len{sizeof result};
+    auto result = 0;
+    auto result_len = net::socklen_t{sizeof result};
     error = net::getsockopt(fd, SOL_SOCKET, SO_ERROR, &result, &result_len);
     if(error < 0)
         return -1;

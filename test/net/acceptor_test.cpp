@@ -9,7 +9,7 @@ using namespace net;
 
 TEST(NetAcceptorTest,Construct)
 {
-    acceptor ator{"localhost","54321"};
+    auto ator = acceptor{"localhost","54321"};
     EXPECT_EQ(ator.host(),"localhost");
     EXPECT_EQ(ator.service_or_port(),"54321");
     EXPECT_EQ(ator.timeout(),default_accept_timeout);
@@ -22,9 +22,11 @@ TEST(NetAcceptorTest,Fail2Construct)
 
 TEST(NetAcceptorTest,Accept)
 {
-    thread t1{[]{
-        acceptor ator{"localhost","50001"};
-        string host, port;
+    auto t1 = thread {
+    []{
+        auto ator = acceptor{"localhost","50001"};
+        auto host = ""s;
+        auto port = ""s;
         auto c = ator.accept(host, port);
         EXPECT_EQ(host,"localhost");
         EXPECT_GT(port,"49152");
@@ -34,7 +36,8 @@ TEST(NetAcceptorTest,Accept)
 
     this_thread::sleep_for(10ms);
 
-    thread t2{[]{
+    auto t2 = thread {
+    []{
         auto h = connect("localhost","50001");
         EXPECT_FALSE(!h);
     }};
@@ -45,21 +48,21 @@ TEST(NetAcceptorTest,Accept)
 
 TEST(NetAcceptorTest,Timeout)
 {
-    acceptor ator{"1999"};
+    auto ator = acceptor{"1999"};
     ator.timeout(1s);
     EXPECT_THROW(endpointstream eps{ator.accept()}, system_error);
 }
 
 TEST(NetAcceptorTest,CommandLine)
 {
-    acceptor ator{"1999"};
+    auto ator = acceptor{"1999"};
     while(true)
     {
         auto s = ator.accept();
         s << "Welcome to Hello Yellow Echo Server!" << endl;
         while(s)
         {
-            string echo;
+            auto echo = ""s;
             getline(s, echo);
             s << echo << endl;
             clog << echo << endl;

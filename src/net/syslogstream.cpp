@@ -14,7 +14,7 @@ namespace net::syslog {
     {
         char buffer[NI_MAXHOST];
         ::gethostname(buffer,NI_MAXHOST);
-        return {buffer};
+        return buffer;
     }
 
 } // namespace net::global

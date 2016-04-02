@@ -24,7 +24,7 @@ socket::~socket()
 
 bool socket::wait_for(const std::chrono::milliseconds& timeout) const
 {
-    net::fd_set fds;
+    auto fds = net::fd_set{};
     FD_ZERO(&fds);
     FD_SET(m_fd, &fds);
     net::timeval tv{

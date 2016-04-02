@@ -3,7 +3,8 @@
 #include "net/address_info.hpp"
 #include "net/endpointbuf.hpp"
 
-namespace net {
+namespace net
+{
 
 acceptor::acceptor(const std::string& host, const std::string& service_or_port) :
 m_host{host},
@@ -11,10 +12,10 @@ m_service_or_port{service_or_port},
 m_timeout{default_accept_timeout},
 m_sockets{}
 {
-    const net::address_info local_address{m_host, m_service_or_port, SOCK_STREAM, AI_PASSIVE};
+    const auto local_address = net::address_info{m_host, m_service_or_port, SOCK_STREAM, AI_PASSIVE};
     for(const auto& address : local_address)
     {
-        net::socket s{address.ai_family, address.ai_socktype, address.ai_protocol};
+        auto s = net::socket{address.ai_family, address.ai_socktype, address.ai_protocol};
         if(!s)
             continue;
 
@@ -55,8 +56,8 @@ endpointstream acceptor::accept(std::string& peer, std::string& port)
 {
     const auto fd = wait();
 
-    net::sockaddr_storage sas;
-    net::socklen_t saslen = sizeof sas;
+    auto sas = net::sockaddr_storage{};
+    auto saslen = net::socklen_t{sizeof sas};
     net::socket s = net::accept(fd, reinterpret_cast<net::sockaddr*>(&sas), &saslen);
     if(!s)
         throw std::system_error{errno, std::system_category()};
@@ -74,13 +75,13 @@ endpointstream acceptor::accept(std::string& peer, std::string& port)
 
 int acceptor::wait()
 {
-    net::fd_set fds;
+    auto fds = net::fd_set{};
     FD_ZERO(&fds);
     for(const auto& fd : m_sockets) FD_SET(fd,&fds);
 
     if(m_timeout.count())
     {
-        net::timeval tv{
+        net::timeval tv {
             static_cast<decltype(tv.tv_sec)>(m_timeout.count() / 1000),
             static_cast<decltype(tv.tv_usec)>(m_timeout.count() % 1000 * 1000)
         };

@@ -28,10 +28,10 @@ constexpr auto convert(const years& ys, const months& ms, const days& ds)
     const auto m = static_cast<unsigned>(ms.count());
     const auto d = static_cast<unsigned>(ds.count());
     y -= m <= 2;
-    const int era = (y >= 0 ? y : y-399) / 400;
-    const unsigned yoe = static_cast<unsigned>(y - era * 400);      // [0, 399]
-    const unsigned doy = (153*(m + (m > 2 ? -3 : 9)) + 2)/5 + d-1;  // [0, 365]
-    const unsigned doe = yoe * 365 + yoe/4 - yoe/100 + doy;         // [0, 146096]
+    const auto era = (y >= 0 ? y : y-399) / 400;
+    const auto yoe = static_cast<unsigned>(y - era * 400);      // [0, 399]
+    const auto doy = (153*(m + (m > 2 ? -3 : 9)) + 2)/5 + d-1;  // [0, 365]
+    const auto doe = yoe * 365 + yoe/4 - yoe/100 + doy;         // [0, 146096]
     return system_clock::time_point{days{era * 146097 + doe - 719468}};
 }
 
@@ -92,7 +92,7 @@ inline auto to_string(const chrono::time_point<T>& tp) noexcept
     // YYYY-MM-DDThh:mm:ss.fffZ
     using namespace chrono;
     const auto timestamp = convert(tp);
-    ostringstream os;
+    auto os = ostringstream{};
     os << setw(4) << setfill('0') << get<years>(timestamp)        << '-'
        << setw(2) << setfill('0') << get<months>(timestamp)       << '-'
        << setw(2) << setfill('0') << get<days>(timestamp)         << 'T'
@@ -107,13 +107,13 @@ inline auto stotp(const string& str)
 {
     // YYYY-MM-DDThh:mm:ss.fffZ
     using namespace chrono;
-    const years YY{stoi(str.substr(0,4))};
-    const months MM{stoi(str.substr(5,2))};
-    const days DD{stoi(str.substr(8,2))};
-    const hours hh{stoi(str.substr(11,2))};
-    const minutes mm{stoi(str.substr(14,2))};
-    const seconds ss{stoi(str.substr(17,2))};
-    const milliseconds ff{stoi(str.substr(20,3))};
+    const auto YY = years{stoi(str.substr(0,4))};
+    const auto MM = months{stoi(str.substr(5,2))};
+    const auto DD = days{stoi(str.substr(8,2))};
+    const auto hh = hours{stoi(str.substr(11,2))};
+    const auto mm = minutes{stoi(str.substr(14,2))};
+    const auto ss = seconds {stoi(str.substr(17,2))};
+    const auto ff = milliseconds{stoi(str.substr(20,3))};
     auto tp = convert(YY,MM,DD);
     tp += hh; tp += mm; tp += ss; tp += ff;
     return tp;
@@ -121,15 +121,15 @@ inline auto stotp(const string& str)
 
 inline auto to_string(bool b) noexcept
 {
-    std::stringstream ss;
+    auto ss = std::ostringstream{};
     ss << std::boolalpha << b;
     return ss.str();
 }
 
 inline auto stob(const string& str) noexcept
 {
-    bool b;
-    stringstream ss;
+    auto b = bool{};
+    auto ss = std::stringstream{};
     ss << str;
     ss >> boolalpha >> b;
     if(!ss) throw std::invalid_argument{"No conversion to bool could be done for '"s + str + "'"s};
