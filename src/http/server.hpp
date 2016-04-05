@@ -57,9 +57,9 @@ namespace http {
             return m_router[path]["DELETE"s];
         }
 
-        void start()
+        void listen(const std::string& serice_or_port = "http"s)
         {
-            auto acceptor = net::acceptor{"localhost"s, "8080"s};
+            auto acceptor = net::acceptor{"localhost"s, serice_or_port};
             while(true)
             {
                 auto client = acceptor.accept();

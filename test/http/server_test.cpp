@@ -40,5 +40,5 @@ TEST(HttpServer,Setup)
 
     server.destroy("/"s).response(view::destroy);
 
-    server.start();
+    server.listen("8080"s);
 }
