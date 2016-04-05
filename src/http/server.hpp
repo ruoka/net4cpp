@@ -8,20 +8,20 @@ using namespace string_literals;
 
 namespace http {
 
-    class renderer
+    class controller
     {
     public:
 
         using callback = function<string()>;
 
-        void response(callback cb)
-        {
-            m_callback = cb;
-        }
-
         void response(const string& view)
         {
             m_callback = [&view](){return view;};
+        }
+
+        void response(callback cb)
+        {
+            m_callback = cb;
         }
 
         std::string render()
@@ -37,24 +37,24 @@ namespace http {
     {
     public:
 
-        renderer& get(const string& path)
+        controller& get(const string& path)
         {
-            return m_path["GET"s][path];
+            return m_router[path]["GET"s];
         }
 
-        renderer& post(const string& path)
+        controller& post(const string& path)
         {
-            return m_path["POST"s][path];
+            return m_router[path]["POST"s];
         }
 
-        renderer& put(const string& path)
+        controller& put(const string& path)
         {
-            return m_path["PUT"s][path];
+            return m_router[path]["PUT"s];
         }
 
-        renderer& destroy(const string& path)
+        controller& destroy(const string& path)
         {
-            return m_path["DELETE"s][path];
+            return m_router[path]["DELETE"s];
         }
 
         void start()
@@ -76,13 +76,15 @@ namespace http {
                        << "Location: http://localhost:8080\r\n"
                        << "Date: Mon, 04 Apr 2016 21:10:17 GMT\r\n"s
                        << "Connection: close\r\n\r\n"
-                       << m_path[method][path].render() << "\r\n\r\n" << flush;
+                       << m_router[path][method].render() << "\r\n\r\n" << flush;
             }
         }
 
     private:
 
-        unordered_map<string,unordered_map<string,renderer>> m_path;
+        using router = unordered_map<string,unordered_map<string,controller>>;
+
+        router m_router;
     };
 
 } // namespace http

@@ -10,11 +10,17 @@ u8R"(<!DOCTYPE html>
 <title>Test</title>
 </head>
 <body>
-<p>Hello world!</p>
+<p>index.html</p>
 </body>
 </html>)"s;
 
 auto json = u8R"( {"foo" : 1, "bar" : false} )"s;
+
+auto post = u8R"(<p>POST response</p>)"s;
+
+auto put = u8R"(<p>PUT response</p>)"s;
+
+auto destroy = u8R"(<p>DELETE response</p>)"s;
 
 } // namespace view
 
@@ -28,11 +34,11 @@ TEST(HttpServer,Setup)
 
     server.get("/vk"s).response([](){return "Kaius Ruokonen"s;});
 
-    server.post("/vk"s).response([](){return "Kaius Ruokonen"s;});
+    server.post("/vk"s).response(view::post);
 
-    server.put("/"s).response(view::index);
+    server.put("/"s).response(view::put);
 
-    server.destroy("").response(view::index);
+    server.destroy("/"s).response(view::destroy);
 
     server.start();
 }
