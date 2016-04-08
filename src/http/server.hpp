@@ -12,11 +12,11 @@ namespace http {
     {
     public:
 
-        using callback = function<string()>;
+        using callback = function<const string&()>;
 
         void response(const string& view)
         {
-            m_callback = [&view](){return view;};
+            m_callback = [&](){return view;};
         }
 
         void response(callback cb)
@@ -63,20 +63,30 @@ namespace http {
             while(true)
             {
                 auto client = acceptor.accept();
-                auto method = ""s, path = ""s, line = "xxx"s;
-                client >> method >> path;
-                clog << method << ' ' << path << ' ';
-                while(client && line.length() > 1)
+                while(client)
                 {
-                    getline(client, line);
-                    clog << line << endl;
+                    auto method = ""s, path = ""s, line = "xxx"s;
+                    client >> method >> path;
+                    clog << method << ' ' << path << ' ';
+
+                    while(client && line.length() > 2)
+                    {
+                        getline(client, line);
+                        clog << line << endl;
+                    }
+
+                    auto content = m_router[path][method].render();
+
+                    client << "HTTP/1.1 200 OK\r\n"
+                           << "Date: Mon, 11 Apr 2016 22:10:17 GMT\r\n"s
+                           << "Server: http://localhost:8080/vk\r\n"
+                           << "Access-Control-Allow-Origin: *\r\n"
+                           << "Access-Control-Allow-Methods: POST, GET, PUT, DELETE\r\n"
+                           << "Content-Type: text/html; charset=UTF-8\r\n"
+                           << "Content-Length: " << content.length() << "\r\n"
+                           << "\r\n"
+                           << content << flush;
                 }
-                client << "HTTP/1.1 200 OK\r\n"
-                       << "Content-Type: text/html; charset=UTF-8\r\n"
-                       << "Location: http://localhost:8080\r\n"
-                       << "Date: Mon, 04 Apr 2016 21:10:17 GMT\r\n"s
-                       << "Connection: close\r\n\r\n"
-                       << m_router[path][method].render() << "\r\n\r\n" << flush;
             }
         }
 
