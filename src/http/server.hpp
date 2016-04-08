@@ -1,9 +1,10 @@
-#include <ostream>
 #include <functional>
+#include <thread>
 #include <unordered_map>
 #include "net/acceptor.hpp"
 
 using namespace std;
+using namespace chrono;
 using namespace string_literals;
 
 namespace http {
@@ -60,37 +61,45 @@ namespace http {
         void listen(const std::string& serice_or_port = "http"s)
         {
             auto acceptor = net::acceptor{"localhost"s, serice_or_port};
+            acceptor.timeout(1h);
             while(true)
             {
-                auto client = acceptor.accept();
-                while(client)
-                {
-                    auto method = ""s, path = ""s, line = "xxx"s;
-                    client >> method >> path;
-                    clog << method << ' ' << path << ' ';
-
-                    while(client && line.length() > 2)
-                    {
-                        getline(client, line);
-                        clog << line << endl;
-                    }
-
-                    auto content = m_router[path][method].render();
-
-                    client << "HTTP/1.1 200 OK\r\n"
-                           << "Date: Mon, 11 Apr 2016 22:10:17 GMT\r\n"s
-                           << "Server: http://localhost:8080/vk\r\n"
-                           << "Access-Control-Allow-Origin: *\r\n"
-                           << "Access-Control-Allow-Methods: POST, GET, PUT, DELETE\r\n"
-                           << "Content-Type: text/html; charset=UTF-8\r\n"
-                           << "Content-Length: " << content.length() << "\r\n"
-                           << "\r\n"
-                           << content << flush;
-                }
+                auto connection = acceptor.accept();
+                auto worker = thread{[&](){handle(std::move(connection));}};
+                worker.detach();
             }
         }
 
     private:
+
+        void handle(net::endpointstream connection)
+        {
+            while(connection)
+            {
+                auto method = ""s, path = ""s, line = "xxx"s;
+                connection >> method >> path;
+
+                clog << method << ' ' << path << ' ';
+
+                while(connection && line.length() > 2)
+                {
+                    getline(connection, line);
+                    clog << line << '\n';
+                }
+
+                const auto content = m_router[path][method].render();
+
+                connection << "HTTP/1.1 200 OK\r\n"
+                       << "Date: Mon, 11 Apr 2016 22:10:17 GMT\r\n"s // FIXME
+                       << "Server: http://localhost:8080/vk\r\n"
+                       << "Access-Control-Allow-Origin: *\r\n"
+                       << "Access-Control-Allow-Methods: POST, GET, PUT, DELETE\r\n"
+                       << "Content-Type: text/html; charset=UTF-8\r\n"
+                       << "Content-Length: " << content.length() << "\r\n"
+                       << "\r\n"
+                       << content << flush;
+            }
+        }
 
         using router = unordered_map<string,unordered_map<string,controller>>;
 

@@ -54,15 +54,10 @@ TEST(HttpServer,Setup)
     auto server = http::server{};
 
     server.get("/"s).response(view::index);
-
     server.get("/vk"s).response(view::get);
-
     server.post("/vk"s).response(view::post);
-
     server.put("/vk"s).response(view::put);
-
     server.destroy("/vk"s).response(view::destroy);
-
     server.get("/json"s).response(view::json);
 
     server.listen("8080"s);
