@@ -1,6 +1,7 @@
 #include <functional>
 #include <thread>
 #include <unordered_map>
+#include "std/extension.hpp"
 #include "net/acceptor.hpp"
 
 using namespace std;
@@ -90,8 +91,8 @@ namespace http {
                 const auto content = m_router[path][method].render();
 
                 connection << "HTTP/1.1 200 OK\r\n"
-                       << "Date: Mon, 11 Apr 2016 22:10:17 GMT\r\n"s // FIXME
-                       << "Server: http://localhost:8080/vk\r\n"
+                       << "Date: " << std::to_rfc1123(system_clock::now()) << "\r\n"
+                       << "Server: http://localhost:8080" << path << "\r\n" // FIXME
                        << "Access-Control-Allow-Origin: *\r\n"
                        << "Access-Control-Allow-Methods: POST, GET, PUT, DELETE\r\n"
                        << "Content-Type: text/html; charset=UTF-8\r\n"

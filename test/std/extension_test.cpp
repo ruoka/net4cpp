@@ -45,6 +45,45 @@ TEST(StdExtension,Months2String)
     ASSERT_EQ("Dec"s, std::to_string(months{12}));
 }
 
+TEST(StdExtension,Days2String)
+{
+    ASSERT_EQ("Wed"s, std::to_string(days{-1}));
+    ASSERT_EQ("Thu"s, std::to_string(days{0}));
+    ASSERT_EQ("Fri"s, std::to_string(days{1}));
+    ASSERT_EQ("Sat"s, std::to_string(days{2}));
+    ASSERT_EQ("Sun"s, std::to_string(days{3}));
+    ASSERT_EQ("Mon"s, std::to_string(days{4}));
+    ASSERT_EQ("Tue"s, std::to_string(days{5}));
+    ASSERT_EQ("Wed"s, std::to_string(days{6}));
+    ASSERT_EQ("Thu"s, std::to_string(days{7}));
+    ASSERT_EQ("Fri"s, std::to_string(days{8}));
+    ASSERT_EQ("Sat"s, std::to_string(days{9}));
+    ASSERT_EQ("Sun"s, std::to_string(days{10}));
+    ASSERT_EQ("Mon"s, std::to_string(days{11}));
+    ASSERT_EQ("Tue"s, std::to_string(days{12}));
+    ASSERT_EQ("Wed"s, std::to_string(days{13}));
+}
+
+TEST(StdExtension,TimePoint2RFC1123)
+{
+    ASSERT_EQ("Thu, 01 Jan 1970 00:00:00 GMT"s, std::to_rfc1123(system_clock::time_point{0us}));
+    ASSERT_EQ("Thu, 01 Jan 1970 00:00:00 GMT"s, std::to_rfc1123(system_clock::time_point{1ms}));
+    ASSERT_EQ("Thu, 01 Jan 1970 00:00:01 GMT"s, std::to_rfc1123(system_clock::time_point{1s}));
+    ASSERT_EQ("Thu, 01 Jan 1970 00:01:00 GMT"s, std::to_rfc1123(system_clock::time_point{1min}));
+    ASSERT_EQ("Thu, 01 Jan 1970 01:00:00 GMT"s, std::to_rfc1123(system_clock::time_point{1h}));
+    ASSERT_EQ("Thu, 01 Jan 1970 12:00:00 GMT"s, std::to_rfc1123(system_clock::time_point{12h}));
+}
+
+TEST(StdExtension,TimePoint2ISO8601)
+{
+    ASSERT_EQ("1970-01-01T00:00:00.000Z"s, std::to_iso8601(system_clock::time_point{0us}));
+    ASSERT_EQ("1970-01-01T00:00:00.001Z"s, std::to_iso8601(system_clock::time_point{1ms}));
+    ASSERT_EQ("1970-01-01T00:00:01.000Z"s, std::to_iso8601(system_clock::time_point{1s}));
+    ASSERT_EQ("1970-01-01T00:01:00.000Z"s, std::to_iso8601(system_clock::time_point{1min}));
+    ASSERT_EQ("1970-01-01T01:00:00.000Z"s, std::to_iso8601(system_clock::time_point{1h}));
+    ASSERT_EQ("1970-01-01T12:00:00.000Z"s, std::to_iso8601(system_clock::time_point{12h}));
+}
+
 TEST(StdExtension,TimePoint2String)
 {
     ASSERT_EQ("1970-01-01T00:00:00.000Z"s, std::to_string(system_clock::time_point{0us}));
