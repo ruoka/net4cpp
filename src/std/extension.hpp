@@ -80,15 +80,43 @@ inline auto& operator << (std::ostream& os, const duration<T,R>& d) noexcept
 
 } // namespace chrono
 
-static const std::string number2name[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+static const std::string number2month[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
 constexpr auto& to_string(const chrono::months& m)
 {
-    return number2name[m.count()];
+    const auto n = m.count();
+    return number2month[n];
+}
+
+static const std::string number2weekday[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+
+constexpr auto& to_string(const chrono::days& d)
+{
+    const auto z = d.count();
+    const auto n = ( z >= -4 ? (z+4) % 7 : (z+5) % 7 + 6);
+    return number2weekday[n];
 }
 
 template<typename T>
-inline auto to_string(const chrono::time_point<T>& tp) noexcept
+inline auto to_rfc1123(const chrono::time_point<T>& tp) noexcept
+{
+    // Sun, 06 Nov 1994 08:49:37 GMT
+    using namespace chrono;
+    const auto timestamp = convert(tp);
+    auto os = ostringstream{};
+    os << to_string(duration_cast<days>(tp.time_since_epoch())) << ',' << ' '
+       << setw(2) << setfill('0') << get<days>(timestamp)       << ' '
+       << to_string(get<months>(timestamp))                     << ' '
+       << setw(4) << setfill('0') << get<years>(timestamp)      << ' '
+       << setw(2) << setfill('0') << get<hours>(timestamp)      << ':'
+       << setw(2) << setfill('0') << get<minutes>(timestamp)    << ':'
+       << setw(2) << setfill('0') << get<seconds>(timestamp)    << ' '
+       << "GMT";
+    return os.str();
+}
+
+template<typename T>
+inline auto to_iso8601(const chrono::time_point<T>& tp) noexcept
 {
     // YYYY-MM-DDThh:mm:ss.fffZ
     using namespace chrono;
@@ -102,6 +130,12 @@ inline auto to_string(const chrono::time_point<T>& tp) noexcept
        << setw(2) << setfill('0') << get<seconds>(timestamp)      << '.'
        << setw(3) << setfill('0') << get<milliseconds>(timestamp) << 'Z';
     return os.str();
+}
+
+template<typename T>
+inline auto to_string(const chrono::time_point<T>& tp) noexcept
+{
+    return to_iso8601(tp);
 }
 
 inline auto stotp(const string& str)
