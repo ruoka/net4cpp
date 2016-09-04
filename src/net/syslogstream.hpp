@@ -1,5 +1,6 @@
 #pragma once
 
+#include <mutex>
 #include "std/extension.hpp"
 #include "net/sender.hpp"
 
@@ -51,17 +52,12 @@ public:
         m_severity{syslog::severity::debug},
         m_level{syslog::severity::debug},
         m_tag{"syslogstream"},
-        m_parent{*this}
+        m_parent{this}
     {}
 
     void facility(syslog::facility f)
     {
         m_facility = f;
-    }
-
-    void severity(syslog::severity s)
-    {
-        m_severity = s;
     }
 
     void level(syslog::severity s)
@@ -74,6 +70,12 @@ public:
         m_tag = tag;
     }
 
+    void severity(syslog::severity s)
+    {
+        m_mutex.lock();
+        m_severity = s;
+    }
+
     void header()
     {
         // <PRI> Feb 22 21:12 localhost syslog[2112]:
@@ -83,22 +85,15 @@ public:
         if(m_level >= m_severity)
         {
             const auto timestamp = convert(system_clock::now());
-            m_parent << '<' << 8 * (int)m_facility + (int)m_severity << '>'       // <PRI>
-                     << to_string(get<months>(timestamp)) << ' '                  // TIMESTAMP
-                     << setw(2) << setfill(' ') << get<days>(timestamp) << ' '
-                     << setw(2) << setfill('0') << get<hours>(timestamp) << ':'
-                     << setw(2) << setfill('0') << get<minutes>(timestamp) << ':'
-                     << setw(2) << setfill('0') << get<seconds>(timestamp) << ' '
-                     << syslog::hostname << ' '                                   // HOSTNAME
-                     << m_tag << '[' << syslog::pid << ']' << ':' << ' ';         // TAG[PID]:
+            (*m_parent) << '<' << 8 * (int)m_facility + (int)m_severity << '>'       // <PRI>
+                        << to_string(get<months>(timestamp)) << ' '                  // TIMESTAMP
+                        << setw(2) << setfill(' ') << get<days>(timestamp) << ' '
+                        << setw(2) << setfill('0') << get<hours>(timestamp) << ':'
+                        << setw(2) << setfill('0') << get<minutes>(timestamp) << ':'
+                        << setw(2) << setfill('0') << get<seconds>(timestamp) << ' '
+                        << syslog::hostname << ' '                                   // HOSTNAME
+                        << m_tag << '[' << syslog::pid << ']' << ':' << ' ';         // TAG[PID]:
         }
-    }
-
-    auto& flush()
-    {
-        if(m_level >= m_severity)
-            m_parent.flush();
-        return *this;
     }
 
     auto& operator<< (syslogstream& (*pf)(syslogstream&))
@@ -112,7 +107,22 @@ public:
     auto& operator<< (const T& t)
     {
         if(m_level >= m_severity)
-            m_parent << t;
+            (*m_parent) << t;
+        return *this;
+    }
+
+    std::ostream* tie (std::ostream* tiestr)
+    {
+        auto prevstr = m_parent;
+        m_parent = tiestr;
+        return prevstr;
+    }
+
+    auto& flush()
+    {
+        if(m_level >= m_severity)
+            m_parent->put('\n').flush();
+        m_mutex.unlock();
         return *this;
     }
 
@@ -126,7 +136,9 @@ private:
 
     std::string m_tag;
 
-    oendpointstream& m_parent;
+    std::ostream* m_parent;
+
+    std::mutex m_mutex;
 };
 
 inline auto& error(syslogstream& sl)

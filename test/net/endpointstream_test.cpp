@@ -8,26 +8,26 @@
 using namespace net;
 using namespace std;
 
-TEST(NetIEndpointStreamTest,Construct)
+TEST(NetEndpointStreamTest,Construct1)
 {
     auto is = join("228.0.0.4","54321");
 }
 
-TEST(OEndpointStreamTest,Construct)
+TEST(NetEndpointStreamTest,Construct2)
 {
     auto os = distribute("228.0.0.4","54321");
 }
 
-TEST(EndpointStreamTest,HttpRequestAndResponse)
+TEST(NetEndpointStreamTest,HttpRequestAndResponse)
 {
     auto s = connect("www.google.fi","http");
 
-    s << "GET / HTTP/1.1\r\n"
-      << "Host: www.google.com\r\n"
-      << "Connection: close\r\n"
-      << "Accept: text/plain, text/html\r\n"
-      << "Accept-Charset: utf-8\r\n"
-      << "\r\n"
+    s << "GET / HTTP/1.1"                << crlf
+      << "Host: www.google.com"          << crlf
+      << "Connection: close"             << crlf
+      << "Accept: text/plain, text/html" << crlf
+      << "Accept-Charset: utf-8"         << crlf
+      << crlf
       << flush;
 
     auto os = ostringstream{};
@@ -38,4 +38,5 @@ TEST(EndpointStreamTest,HttpRequestAndResponse)
         os << c;
     }
     SUCCEED() << os.str();
+    cout << os.str();;
 }

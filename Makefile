@@ -1,8 +1,8 @@
 CXX = clang++
 
-CXXFLAGS = -std=c++1z -stdlib=libc++ -I$(SRCDIR) -I$(GTESTDIR)/include/ -MMD# -D DEBUG=1
+CXXFLAGS = -I$(SRCDIR) -std=c++1z -stdlib=libc++ -MMD# -D DEBUG=1
 
-LDFLAGS =  -stdlib=libc++ $(GTESTDIR)/make/gtest_main.a
+LDFLAGS = -stdlib=libc++
 
 SRCDIR = src
 
@@ -14,27 +14,45 @@ BINDIR = bin
 
 GTESTDIR = ../googletest/googletest
 
-SOURCES := $(wildcard $(SRCDIR)/*.cpp) $(wildcard $(SRCDIR)/*/*.cpp) $(wildcard $(SRCDIR)/*/*/*.cpp)
+GTESTLIB = $(GTESTDIR)/make/gtest_main.a
 
-TESTS := $(wildcard $(TESTDIR)/*.cpp) $(wildcard $(TESTDIR)/*/*.cpp) $(wildcard $(TESTDIR)/*/*/*.cpp)
 
-OBJECTS := $(SOURCES:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o) $(TESTS:$(TESTDIR)/%.cpp=$(OBJDIR)/$(TESTDIR)/%.o)
+#TARGETS = $(addprefix $(BINDIR)/, yyz)
 
-DEPENDENCIES := $(OBJECTS:$(OBJDIR)/%.o=$(OBJDIR)/%.d)
+#MAINS	= $(TARGETS:$(BINDIR)/%=$(SRCDIR)/%.cpp)
+
+SOURCES = $(filter-out $(MAINS), $(wildcard $(SRCDIR)/*.cpp $(SRCDIR)/*/*.cpp $(SRCDIR)/*/*/*.cpp))
+
+OBJECTS = $(SOURCES:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o)
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.cpp
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(TARGETS): $(OBJECTS)
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(@:$(BINDIR)/%=$(SRCDIR)/%.cpp) $(OBJECTS) -MF $(@:$(BINDIR)/%=$(OBJDIR)/%.d) -o $@
+
+
+GTEST_TARGET = $(BINDIR)/test
+
+GTEST_SOURCES = $(wildcard $(TESTDIR)/*.cpp $(TESTDIR)/*/*.cpp $(TESTDIR)/*/*/*.cpp $(TESTDIR)/*/*/*/*.cp)
+
+GTEST_OBJECTS = $(GTEST_SOURCES:$(TESTDIR)/%.cpp=$(OBJDIR)/$(TESTDIR)/%.o)
+
 $(OBJDIR)/$(TESTDIR)/%.o: $(TESTDIR)/%.cpp
 	@mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(CXX) -I$(GTESTDIR)/include/ $(CXXFLAGS) -c $< -o $@
 
-$(BINDIR)/test: $(OBJECTS)
+$(GTEST_TARGET): $(OBJECTS) $(GTEST_OBJECTS)
 	@mkdir -p $(@D)
-	$(CXX) $(LDFLAGS) $(OBJECTS) -o $@
+	$(CXX) $(LDFLAGS) $(OBJECTS) $(GTEST_OBJECTS) $(GTESTLIB) -o $@
 
-all: $(BINDIR)/test
+
+DEPENDENCIES = $(MAINS:$(SRCDIR)/%.cpp=$(OBJDIR)/%.d) $(SOURCES:$(SRCDIR)/%.cpp=$(OBJDIR)/%.d) $(GTEST_SOURCES:$(TESTDIR)/%.cpp=$(OBJDIR)/%.d)
+
+
+all: $(TARGETS) $(GTEST_TARGET)
 
 .PHONY: clean
 clean:
@@ -42,14 +60,18 @@ clean:
 	@rm -rf $(BINDIR)
 
 .PHONY: test
-test: $(BINDIR)/test
-	$(BINDIR)/test --gtest_filter=-*.CommandLine:FdbServerTest.*
+test: $(GTEST_TARGET)
+	$(GTEST_TARGET) --gtest_filter=-*.CommandLine:DbServerTest.*
 
 .PHONY: dump
 dump:
+	@echo $(TARGETS)
+	@echo $(MAINS)
 	@echo $(SOURCES)
-	@echo $(TESTS)
 	@echo $(OBJECTS)
+	@echo $(GTEST_TARGET)
+	@echo $(GTEST_SOURCES)
+	@echo $(GTEST_OBJECTS)
 	@echo $(DEPENDENCIES)
 
 -include $(DEPENDENCIES)
