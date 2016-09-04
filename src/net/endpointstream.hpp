@@ -64,4 +64,16 @@ private:
     std::unique_ptr<std::streambuf> m_buf;
 };
 
+inline std::ostream& sp(std::ostream& os)
+{
+    os.put(' ');
+    return os;
+}
+
+inline std::ostream& crlf(std::ostream& os)
+{
+    os.put('\r').put('\n');
+    return os;
+}
+
 } // namespace net

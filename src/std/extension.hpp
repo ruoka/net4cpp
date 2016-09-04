@@ -177,4 +177,19 @@ inline auto to_string(const string& str) noexcept
     return str;
 }
 
+inline std::string& trim_right(std::string& str, const std::string& delimiters = " \f\n\r\t\v")
+{
+    return str.erase(str.find_last_not_of(delimiters) + 1);
+}
+
+inline std::string& trim_left(std::string& str, const std::string& delimiters = " \f\n\r\t\v")
+{
+      return str.erase(0, str.find_first_not_of(delimiters));
+}
+
+inline std::string& trim(std::string& str, const std::string& delimiters = " \f\n\r\t\v")
+{
+      return trim_left(trim_right(str, delimiters ), delimiters);
+}
+
 } // namespace std
