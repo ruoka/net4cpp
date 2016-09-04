@@ -17,9 +17,9 @@ GTESTDIR = ../googletest/googletest
 GTESTLIB = $(GTESTDIR)/make/gtest_main.a
 
 
-TARGETS = $(addprefix $(BINDIR)/, yarestdb shell)
+#TARGETS = $(addprefix $(BINDIR)/, yyz)
 
-MAINS	= $(TARGETS:$(BINDIR)/%=$(SRCDIR)/%.cpp)
+#MAINS	= $(TARGETS:$(BINDIR)/%=$(SRCDIR)/%.cpp)
 
 SOURCES = $(filter-out $(MAINS), $(wildcard $(SRCDIR)/*.cpp $(SRCDIR)/*/*.cpp $(SRCDIR)/*/*/*.cpp))
 
