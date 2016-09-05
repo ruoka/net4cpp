@@ -61,7 +61,7 @@ clean:
 
 .PHONY: test
 test: $(GTEST_TARGET)
-	$(GTEST_TARGET) --gtest_filter=-*.CommandLine:DbServerTest.*
+	$(GTEST_TARGET) --gtest_filter=-*.CommandLine:HttpServer.*
 
 .PHONY: dump
 dump:
