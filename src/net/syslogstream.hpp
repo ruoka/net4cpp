@@ -51,9 +51,13 @@ public:
         m_facility{syslog::facility::user},
         m_severity{syslog::severity::debug},
         m_level{syslog::severity::debug},
-        m_tag{"syslogstream"},
-        m_parent{this}
+        m_tag{"syslogstream"}
     {}
+
+    void redirect(std::ostream& os)
+    {
+        rdbuf(os.rdbuf());
+    }
 
     void facility(syslog::facility f)
     {
@@ -85,14 +89,15 @@ public:
         if(m_level >= m_severity)
         {
             const auto timestamp = convert(system_clock::now());
-            (*m_parent) << '<' << 8 * (int)m_facility + (int)m_severity << '>'       // <PRI>
-                        << to_string(get<months>(timestamp)) << ' '                  // TIMESTAMP
-                        << setw(2) << setfill(' ') << get<days>(timestamp) << ' '
-                        << setw(2) << setfill('0') << get<hours>(timestamp) << ':'
-                        << setw(2) << setfill('0') << get<minutes>(timestamp) << ':'
-                        << setw(2) << setfill('0') << get<seconds>(timestamp) << ' '
-                        << syslog::hostname << ' '                                   // HOSTNAME
-                        << m_tag << '[' << syslog::pid << ']' << ':' << ' ';         // TAG[PID]:
+            static_cast<oendpointstream&>(*this)
+                    << '<' << priority(m_facility, m_severity) << '>'             // <PRI>
+                    << setw(3) << to_string(get<months>(timestamp))       << ' '  // TIMESTAMP
+                    << setw(2) << setfill(' ') << get<days>(timestamp)    << ' '
+                    << setw(2) << setfill('0') << get<hours>(timestamp)   << ':'
+                    << setw(2) << setfill('0') << get<minutes>(timestamp) << ':'
+                    << setw(2) << setfill('0') << get<seconds>(timestamp) << ' '
+                    << syslog::hostname                                   << ' '  // HOSTNAME
+                    << m_tag << '[' << syslog::pid << ']' << ':'          << ' '; // TAG[PID]:
         }
     }
 
@@ -107,26 +112,27 @@ public:
     auto& operator<< (const T& t)
     {
         if(m_level >= m_severity)
-            (*m_parent) << t;
+            static_cast<oendpointstream&>(*this) << t;
         return *this;
-    }
-
-    std::ostream* tie (std::ostream* tiestr)
-    {
-        auto prevstr = m_parent;
-        m_parent = tiestr;
-        return prevstr;
     }
 
     auto& flush()
     {
         if(m_level >= m_severity)
-            m_parent->put('\n').flush();
+            put('\n').flush();
         m_mutex.unlock();
         return *this;
     }
 
 private:
+
+    int priority(syslog::facility f, syslog::severity s)
+    {
+        auto p = 8;
+        p *= static_cast<int>(f);
+        p += static_cast<int>(s);
+        return p;
+    }
 
     syslog::facility m_facility;
 
@@ -135,8 +141,6 @@ private:
     syslog::severity m_level;
 
     std::string m_tag;
-
-    std::ostream* m_parent;
 
     std::mutex m_mutex;
 };
