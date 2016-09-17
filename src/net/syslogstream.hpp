@@ -1,6 +1,7 @@
 #pragma once
 
 #include <mutex>
+#include <experimental/type_traits>
 #include "std/extension.hpp"
 #include "net/sender.hpp"
 
@@ -51,7 +52,8 @@ public:
         m_facility{syslog::facility::user},
         m_severity{syslog::severity::debug},
         m_level{syslog::severity::debug},
-        m_tag{"syslogstream"}
+        m_tag{"syslogstream"},
+        m_mutex{}
     {}
 
     void redirect(std::ostream& os)
@@ -108,11 +110,18 @@ public:
     }
 
     template <typename T,
-              typename = std::enable_if_t<!std::is_pointer<T>::value>>
-    auto& operator<< (const T& t)
+              typename = std::enable_if_t<!std::experimental::is_pointer_v<T>>>
+    auto& operator<< (const T& type)
     {
         if(m_level >= m_severity)
-            static_cast<oendpointstream&>(*this) << t;
+            static_cast<oendpointstream&>(*this) << type;
+        return *this;
+    }
+
+    auto& operator<< (const char* str)
+    {
+        if(m_level >= m_severity)
+            static_cast<oendpointstream&>(*this) << str;
         return *this;
     }
 
@@ -186,6 +195,12 @@ inline auto& flush(syslogstream& sl)
     return sl;
 }
 
-static syslogstream slog{distribute("localhost","syslog")};
+inline auto& initialize_global_syslogstream()
+{
+    static syslogstream log{distribute("localhost","syslog")};
+    return log;
+}
+
+static syslogstream& slog = initialize_global_syslogstream();
 
 } // namespace net
