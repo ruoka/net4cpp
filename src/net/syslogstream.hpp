@@ -86,6 +86,7 @@ public:
     {
         // <PRI> Feb 22 21:12 localhost syslog[2112]:
         using namespace std;
+        using namespace ext;
         using namespace std::chrono;
 
         if(m_level >= m_severity)
