@@ -4,22 +4,45 @@
 #include <tuple>
 #include <sstream>
 #include <iomanip>
-#include <stdexcept>
-#include <vector>
+#include <experimental/string_view>
 
-namespace std {
-namespace chrono {
+namespace ext {
 
-using days = duration<int, ratio_multiply<hours::period, ratio<24>>::type>;
+using days = std::chrono::duration<int, std::ratio_multiply<std::chrono::hours::period, std::ratio<24>>::type>;
 
-using years = duration<int, ratio_multiply<days::period, ratio<365>>::type>;
+using years = std::chrono::duration<int, std::ratio_multiply<days::period, std::ratio<365>>::type>;
 
-using months = duration<int, ratio_divide<years::period, ratio<12>>::type>;
+using months = std::chrono::duration<int, std::ratio_divide<years::period, std::ratio<12>>::type>;
+
+template<typename T, typename R>
+auto& operator << (std::ostream& os, const std::chrono::duration<T,R>& d) noexcept
+{
+    os << d.count();
+    return os;
+}
+
+static const std::string number2month[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+static const std::string number2weekday[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+
+constexpr auto& to_string(const months& m) noexcept
+{
+    const auto n = m.count();
+    return ext::number2month[n];
+}
+
+constexpr auto& to_string(const days& d) noexcept
+{
+    const auto z = d.count();
+    const auto n = ( z >= -4 ? (z+4) % 7 : (z+5) % 7 + 6);
+    return ext::number2weekday[n];
+}
 
 // http://howardhinnant.github.io/date_algorithms.html#days_from_civil
 
 constexpr auto convert(const years& ys, const months& ms, const days& ds)
 {
+    using namespace std::chrono;
     static_assert(std::numeric_limits<unsigned>::digits >= 18,
              "This algorithm has not been ported to a 16 bit unsigned integer");
     static_assert(std::numeric_limits<int>::digits >= 20,
@@ -56,8 +79,10 @@ constexpr auto convert(const days& ds)
 }
 
 template<typename T>
-constexpr auto convert(const time_point<T>& tp) noexcept
+constexpr auto convert(const std::chrono::time_point<T>& tp) noexcept
 {
+    using namespace std;
+    using namespace std::chrono;
     auto tmp = tp;
     const auto ds = duration_cast<days>(tmp.time_since_epoch());
     tmp -= ds;
@@ -71,37 +96,12 @@ constexpr auto convert(const time_point<T>& tp) noexcept
     return tuple_cat( convert(ds), make_tuple(hs, ms, ss, fs) );
 }
 
-template<typename T, typename R>
-inline auto& operator << (std::ostream& os, const duration<T,R>& d) noexcept
-{
-    os << d.count();
-    return os;
-}
-
-} // namespace chrono
-
-static const std::string number2month[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-
-constexpr auto& to_string(const chrono::months& m)
-{
-    const auto n = m.count();
-    return number2month[n];
-}
-
-static const std::string number2weekday[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-
-constexpr auto& to_string(const chrono::days& d)
-{
-    const auto z = d.count();
-    const auto n = ( z >= -4 ? (z+4) % 7 : (z+5) % 7 + 6);
-    return number2weekday[n];
-}
-
 template<typename T>
-inline auto to_rfc1123(const chrono::time_point<T>& tp) noexcept
+auto to_rfc1123(const std::chrono::time_point<T>& tp) noexcept
 {
+    using namespace std;
+    using namespace std::chrono;
     // Sun, 06 Nov 1994 08:49:37 GMT
-    using namespace chrono;
     const auto timestamp = convert(tp);
     auto os = ostringstream{};
     os << to_string(duration_cast<days>(tp.time_since_epoch())) << ',' << ' '
@@ -116,10 +116,11 @@ inline auto to_rfc1123(const chrono::time_point<T>& tp) noexcept
 }
 
 template<typename T>
-inline auto to_iso8601(const chrono::time_point<T>& tp) noexcept
+auto to_iso8601(const std::chrono::time_point<T>& tp) noexcept
 {
+    using namespace std;
+    using namespace std::chrono;
     // YYYY-MM-DDThh:mm:ss.fffZ
-    using namespace chrono;
     const auto timestamp = convert(tp);
     auto os = ostringstream{};
     os << setw(4) << setfill('0') << get<years>(timestamp)        << '-'
@@ -132,16 +133,10 @@ inline auto to_iso8601(const chrono::time_point<T>& tp) noexcept
     return os.str();
 }
 
-template<typename T>
-inline auto to_string(const chrono::time_point<T>& tp) noexcept
-{
-    return to_iso8601(tp);
-}
-
-inline auto stotp(const string& str)
+inline auto stotp(const std::string& str)
 {
     // YYYY-MM-DDThh:mm:ss.fffZ
-    using namespace chrono;
+    using namespace std::chrono;
     const auto YY = years{stoi(str.substr(0,4))};
     const auto MM = months{stoi(str.substr(5,2))};
     const auto DD = days{stoi(str.substr(8,2))};
@@ -149,32 +144,17 @@ inline auto stotp(const string& str)
     const auto mm = minutes{stoi(str.substr(14,2))};
     const auto ss = seconds {stoi(str.substr(17,2))};
     const auto ff = milliseconds{stoi(str.substr(20,3))};
-    auto tp = convert(YY,MM,DD);
+    auto tp = ext::convert(YY,MM,DD);
     tp += hh; tp += mm; tp += ss; tp += ff;
     return tp;
 }
 
-inline auto to_string(bool b) noexcept
+inline auto stob(const std::string& str) noexcept
 {
-    if(b) return "true"s;
-    else  return "false"s;
-}
-
-inline auto stob(const string& str) noexcept
-{
+    using namespace std::string_literals;
     if(str == "true"s  || str == "1"s) return true;
     if(str == "false"s || str == "0"s) return false;
     throw std::invalid_argument{"No conversion to bool could be done for '"s + str + "'"s};
-}
-
-inline auto to_string(std::nullptr_t) noexcept
-{
-    return "null"s;
-}
-
-inline auto to_string(const string& str) noexcept
-{
-    return str;
 }
 
 inline std::string& trim_right(std::string& str, const std::string& delimiters = " \f\n\r\t\v")
@@ -190,6 +170,49 @@ inline std::string& trim_left(std::string& str, const std::string& delimiters = 
 inline std::string& trim(std::string& str, const std::string& delimiters = " \f\n\r\t\v")
 {
       return trim_left(trim_right(str, delimiters ), delimiters);
+}
+
+template<typename T>
+bool numeric(const T& str)
+{
+    return str.find_first_not_of("0123456789") == str.npos;
+}
+
+static const std::string bool2string[] = {"false", "true"};
+
+static const std::string null2string = {"null"};
+
+} // namespace ext
+
+namespace std {
+
+template<typename T>
+auto to_string(const chrono::time_point<T>& tp) noexcept
+{
+    return ext::to_iso8601(tp);
+}
+
+constexpr auto& to_string(bool b) noexcept
+{
+    return ext::bool2string[b];
+}
+
+constexpr auto& to_string(nullptr_t) noexcept
+{
+    return ext::null2string;
+}
+
+constexpr auto& to_string(const string& str) noexcept
+{
+    return str;
+}
+
+inline long long stoll(std::experimental::string_view sv, std::size_t* pos = nullptr, int base = 10)
+{
+    char* end;
+    auto ll = std::strtoll(sv.data(), &end, base);
+    if(pos) *pos = end - sv.data();
+    return ll;
 }
 
 } // namespace std

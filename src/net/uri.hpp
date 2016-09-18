@@ -1,5 +1,5 @@
 #pragma once
-
+#include <vector>
 #include <experimental/string_view>
 
 // scheme:[//[username:password@]host[:port]][/]path[?query][#fragment]
@@ -172,7 +172,7 @@ property<string_view> port;
 
 indexed_property<'/'> path;
 
-indexed_property<'?'> query;
+indexed_property<'&'> query;
 
 property<string_view> fragment;
 
