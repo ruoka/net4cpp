@@ -7,9 +7,8 @@
 #include "net/acceptor.hpp"
 
 using namespace std;
-using namespace chrono;
-using namespace string_literals;
-using namespace net;
+using namespace std::string_literals;
+using namespace std::chrono_literals;
 
 namespace http {
 
@@ -17,9 +16,9 @@ namespace http {
     {
     public:
 
-        using callback = function<const string&()>;
+        using callback = std::function<const std::string&()>;
 
-        void response(const string& view)
+        void response(const std::string& view)
         {
             m_callback = [&](){return view;};
         }
@@ -42,32 +41,32 @@ namespace http {
     {
     public:
 
-        controller& get(const string& path)
+        controller& get(const std::string& path)
         {
             return m_router[path]["GET"s];
         }
 
-        controller& head(const string& path)
+        controller& head(const std::string& path)
         {
             return m_router[path]["HEAD"s];
         }
 
-        controller& post(const string& path)
+        controller& post(const std::string& path)
         {
             return m_router[path]["POST"s];
         }
 
-        controller& put(const string& path)
+        controller& put(const std::string& path)
         {
             return m_router[path]["PUT"s];
         }
 
-        controller& patch(const string& path)
+        controller& patch(const std::string& path)
         {
             return m_router[path]["PATCH"s];
         }
 
-        controller& destroy(const string& path)
+        controller& destroy(const std::string& path)
         {
             return m_router[path]["DELETE"s];
         }
@@ -79,7 +78,7 @@ namespace http {
             while(true)
             {
                 auto connection = acceptor.accept();
-                auto worker = thread{[&](){handle(std::move(connection));}};
+                auto worker = std::thread{[&](){handle(std::move(connection));}};
                 worker.detach();
             }
         }
@@ -88,6 +87,8 @@ namespace http {
 
         void handle(net::endpointstream connection)
         {
+            using namespace std;
+
             while(connection)
             {
                 auto method = ""s, uri = ""s, version = ""s;
@@ -101,27 +102,27 @@ namespace http {
                 {
                     auto name = ""s, value = ""s;
                     getline(connection, name, ':');
-                    trim(name);
+                    ext::trim(name);
                     getline(connection, value);
-                    trim(value);
+                    ext::trim(value);
                     clog << name << ": " << value << endl;
                 }
 
                 const auto content = m_router[uri][method].render();
 
-                connection << "HTTP/1.1 200 OK"                                                   << crlf
-                           << "Date: " << to_rfc1123(system_clock::now())                         << crlf
-                           << "Server: YARESTDB/0.1"                                              << crlf
-                           << "Access-Control-Allow-Origin: *"                                    << crlf
-                           << "Access-Control-Allow-Methods: HEAD, GET, POST, PUT, PATCH, DELETE" << crlf
-                           << "Content-Type: text/html; charset=UTF-8"                            << crlf
-                           << "Content-Length: " << content.length()                              << crlf
-                           << crlf
-                           << (method != "HEAD"s ? content : ""s) << flush;
+                connection << "HTTP/1.1 200 OK"                                                   << net::crlf
+                           << "Date: " << ext::to_rfc1123(chrono::system_clock::now())            << net::crlf
+                           << "Server: YARESTDB/0.1"                                              << net::crlf
+                           << "Access-Control-Allow-Origin: *"                                    << net::crlf
+                           << "Access-Control-Allow-Methods: HEAD, GET, POST, PUT, PATCH, DELETE" << net::crlf
+                           << "Content-Type: text/html; charset=UTF-8"                            << net::crlf
+                           << "Content-Length: " << content.length()                              << net::crlf
+                           << net::crlf
+                           << (method != "HEAD"s ? content : ""s) << net::flush;
             }
         }
 
-        using router = unordered_map<string,unordered_map<string,controller>>;
+        using router = std::unordered_map<std::string,std::unordered_map<std::string,controller>>;
 
         router m_router;
     };
