@@ -2,6 +2,7 @@
 
 #include <string>
 #include <chrono>
+#include "net/uri.hpp"
 #include "net/endpointstream.hpp"
 
 namespace net {
@@ -13,6 +14,8 @@ class connector
 public:
 
     connector(const std::string& host, const std::string& service_or_port);
+
+    connector(const uri& url);
 
     endpointstream connect() const;
 
@@ -49,4 +52,6 @@ endpointstream connect(const std::string& host,
                        const std::string& service_or_port,
                        const std::chrono::milliseconds& timeout = default_connect_timeout);
 
+endpointstream connect(const uri& url,
+                       const std::chrono::milliseconds& timeout = default_connect_timeout);
 } // namespace net

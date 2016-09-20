@@ -23,6 +23,16 @@ public:
         return m_value;
     }
 
+    operator std::string () const
+    {
+        return std::string{m_value};
+    }
+
+    auto operator == (const T& value) const
+    {
+        return m_value == value;
+    }
+
 protected:
 
     T m_value;
@@ -73,14 +83,12 @@ private:
 
         while(pos != value.npos)
         {
-            m_index.push_back(value.substr(0, pos));
+            m_index.emplace_back(value.substr(0, pos));
             value.remove_prefix(pos + 1);
             pos = value.find_first_of(delim);
         }
 
-        if(pos == value.npos) pos = value.length();
-
-        m_index.push_back(value.substr(0, pos));
+        m_index.emplace_back(value.substr());
 
         return *this;
     }
@@ -94,71 +102,65 @@ explicit uri(string_view string)
 
     absolute = false;
 
-    position = string.find_first_of(":@[]/?#");         // gen-delims
+    position = string.find_first_of(":@[]/?#");               // gen-delims
 
-    if(position > 0 && string.at(position) == ':')      // scheme name
+    if(position != string.npos && string.at(position) == ':') // scheme name
     {
         absolute = true;
         scheme = string.substr(0, position);
-        string.remove_prefix(position+1);               // scheme:
+        string.remove_prefix(position + 1);                   // scheme:
     }
 
     position = string.find_first_not_of("/");
 
-    if(position == 2)                                   // authority component
+    if(position == 2)                                         // authority component
     {
-        string.remove_prefix(2);                        // //
+        string.remove_prefix(2);                              // //
 
         position = string.find_first_of("/?#");
-        if(position == string.npos)
-            position = string.length();
         auto authority = string.substr(0, position);
-        string.remove_prefix(position);                 // authority
+        string.remove_prefix(position);                       // authority
 
         position = authority.find_first_of('@');
         if(position != string.npos)
         {
             userinfo = authority.substr(0, position);
-            authority.remove_prefix(position + 1);      // userinfo@
+            authority.remove_prefix(position + 1);            // userinfo@
         }
 
         position = authority.find_last_of(':');
         if(position != string.npos)
         {
-            auto size = authority.length() - position;
+            const auto size = authority.length() - position;
             port = authority.substr(position + 1, size - 1);
-            authority.remove_suffix(size);              // :port
+            authority.remove_suffix(size);                    // :port
         }
 
         position = authority.length();
-        host = authority.substr(0, position);
-        authority.remove_prefix(position);              // host
+        host = authority.substr();                            // host
     }
 
-    position = string.find_first_of("?#");              // path component
-    if(position == string.npos)
-        position = string.length();
+    position = string.find_first_of("?#");                    // path component
     path = string.substr(0, position);
-    string.remove_prefix(position);                     // path
+    string.remove_prefix(position);                           // path
 
-    if(string.front() == '?')                           // query component
+    if(string.front() == '?')                                 // query component
     {
-        string.remove_prefix(1);                        // ?
+        string.remove_prefix(1);                              // ?
         position = string.find_first_of("#");
-        if(position == string.npos)
-            position = string.length();
         query = string.substr(0, position);
-        string.remove_prefix(position);                 // query
+        string.remove_prefix(position);                       // query
     }
 
-    if(string.front() == '#')                           // fragment component
+    if(string.front() == '#')                                 // fragment component
     {
-        string.remove_prefix(1);                        // #
-        position = string.length();
-        fragment = string.substr(0, position);
-        string.remove_prefix(position);                 // fragment
+        string.remove_prefix(1);                              // #
+        fragment = string.substr();                           // host
     }
 }
+
+uri(const std::string& str) : uri(string_view{str})
+{}
 
 property<bool> absolute;
 
