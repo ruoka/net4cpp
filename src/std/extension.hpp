@@ -4,6 +4,7 @@
 #include <tuple>
 #include <sstream>
 #include <iomanip>
+#include <iterator>
 #include <experimental/string_view>
 
 namespace ext {
@@ -13,13 +14,6 @@ using days = std::chrono::duration<int, std::ratio_multiply<std::chrono::hours::
 using years = std::chrono::duration<int, std::ratio_multiply<days::period, std::ratio<365>>::type>;
 
 using months = std::chrono::duration<int, std::ratio_divide<years::period, std::ratio<12>>::type>;
-
-template<typename T, typename R>
-auto& operator << (std::ostream& os, const std::chrono::duration<T,R>& d) noexcept
-{
-    os << d.count();
-    return os;
-}
 
 static const std::string number2month[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
@@ -186,6 +180,13 @@ static const std::string null2string = {"null"};
 
 namespace std {
 
+template<typename T, typename R>
+auto& operator << (std::ostream& os, const std::chrono::duration<T,R>& d) noexcept
+{
+    os << d.count();
+    return os;
+}
+
 template<typename T>
 auto to_string(const chrono::time_point<T>& tp) noexcept
 {
@@ -207,11 +208,19 @@ constexpr auto& to_string(const string& str) noexcept
     return str;
 }
 
-inline long long stoll(std::experimental::string_view sv, std::size_t* pos = nullptr, int base = 10)
+inline auto stol(std::experimental::string_view sv, std::size_t* pos = nullptr, int base = 10)
+{
+    char* end;
+    auto i = std::strtol(sv.data(), &end, base);
+    if(pos) *pos = std::distance<const char*>(sv.data(), end);
+    return i;
+}
+
+inline auto stoll(std::experimental::string_view sv, std::size_t* pos = nullptr, int base = 10)
 {
     char* end;
     auto ll = std::strtoll(sv.data(), &end, base);
-    if(pos) *pos = end - sv.data();
+    if(pos) *pos = std::distance<const char*>(sv.data(), end);
     return ll;
 }
 
