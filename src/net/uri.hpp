@@ -4,8 +4,7 @@
 
 // scheme:[//[username:password@]host[:port]][/]path[?query][#fragment]
 
-namespace net
-{
+namespace net {
 
 using string_view = std::experimental::string_view;
 
@@ -180,11 +179,15 @@ property<string_view> fragment;
 
 };
 
+} // namespace net
+
+namespace std {
+
 template<typename T>
-inline auto& operator << (std::ostream& os, const uri::property<T>& p)
+inline auto& operator << (std::ostream& os, const net::uri::property<T>& p)
 {
     os << static_cast<const T&>(p);
     return os;
 }
 
-} // namespace net
+} // namespace std

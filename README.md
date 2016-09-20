@@ -28,7 +28,7 @@ catch(const exception& e)
 ```cpp
 try
 {
-    auto s = connect("www.google.com","http");
+    auto s = connect("http://www.google.com");
 
     s << "GET / HTTP/1.1\r\n"
       << "Host: www.google.com\r\n"
