@@ -66,9 +66,21 @@ public:
         m_facility = f;
     }
 
+    template<typename T>
+    void facility(T f)
+    {
+        m_facility = static_cast<syslog::facility>(f);
+    }
+
     void level(syslog::severity s)
     {
         m_level = s;
+    }
+
+    template<typename T>
+    void level(T s)
+    {
+        m_level = static_cast<syslog::severity>(s);
     }
 
     void tag(const std::string& tag)
