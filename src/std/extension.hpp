@@ -208,6 +208,14 @@ constexpr auto& to_string(const string& str) noexcept
     return str;
 }
 
+inline auto stoi(std::experimental::string_view sv, std::size_t* pos = nullptr, int base = 10)
+{
+    char* end;
+    auto i = std::strtol(sv.data(), &end, base);
+    if(pos) *pos = std::distance<const char*>(sv.data(), end);
+    return static_cast<std::int32_t>(i);
+}
+
 inline auto stol(std::experimental::string_view sv, std::size_t* pos = nullptr, int base = 10)
 {
     char* end;
