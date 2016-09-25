@@ -4,7 +4,8 @@
 
 // scheme:[//[username:password@]host[:port]][/]path[?query][#fragment]
 
-namespace net {
+namespace net
+{
 
 using string_view = std::experimental::string_view;
 
@@ -62,12 +63,12 @@ public:
 
     auto begin() const
     {
-        return m_index.begin();
+        return m_index.cbegin();
     }
 
     auto end() const
     {
-        return m_index.end();
+        return m_index.cend();
     }
 
 private:
@@ -135,7 +136,6 @@ explicit uri(string_view string)
             authority.remove_suffix(size);                    // :port
         }
 
-        position = authority.length();
         host = authority.substr();                            // host
     }
 
@@ -179,15 +179,11 @@ property<string_view> fragment;
 
 };
 
-} // namespace net
-
-namespace std {
-
 template<typename T>
-inline auto& operator << (std::ostream& os, const net::uri::property<T>& p)
+inline auto& operator << (std::ostream& os, const uri::property<T>& p)
 {
     os << static_cast<const T&>(p);
     return os;
 }
 
-} // namespace std
+} // namespace net
