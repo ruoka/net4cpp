@@ -49,6 +49,11 @@ endpointstream acceptor::accept()
     if(!s)
         throw std::system_error{errno, std::system_category()};
 
+    auto yes = 1;
+    const auto status = net::setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof yes);
+    if(status)
+        throw std::system_error{errno, std::system_category()};
+
     return new endpointbuf<tcp_buffer_size>{std::move(s)};
 }
 
@@ -62,9 +67,14 @@ endpointstream acceptor::accept(std::string& peer, std::string& port)
     if(!s)
         throw std::system_error{errno, std::system_category()};
 
+    auto yes = 1;
+    auto status = net::setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof yes);
+    if(status)
+        throw std::system_error{errno, std::system_category()};
+
     char hbuf[NI_MAXHOST];
     char sbuf[NI_MAXSERV];
-    const auto status = net::getnameinfo(reinterpret_cast<net::sockaddr*>(&sas), saslen, hbuf, sizeof hbuf, sbuf, sizeof sbuf, 0);
+    status = net::getnameinfo(reinterpret_cast<net::sockaddr*>(&sas), saslen, hbuf, sizeof hbuf, sbuf, sizeof sbuf, 0);
     if(status)
         throw std::system_error{errno, std::system_category()};
 

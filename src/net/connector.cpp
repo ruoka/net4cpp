@@ -33,7 +33,12 @@ endpointstream connect(const std::string& host, const std::string& service_or_po
         if(!s)
             continue;
 
-        auto status = net::connect(s, address.ai_addr, address.ai_addrlen, timeout);
+        auto yes = 1;
+        auto status = net::setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof yes);
+        if(status < 0)
+            continue;
+
+        status = net::connect(s, address.ai_addr, address.ai_addrlen, timeout);
         //auto status = net::connect(s, address.ai_addr, address.ai_addrlen);
         if(status < 0)
             continue;
