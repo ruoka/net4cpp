@@ -2,6 +2,7 @@
 
 #include <string>
 #include <system_error>
+#include "gsl/owner.hpp"
 #include "net/network.hpp"
 
 namespace net {
@@ -78,7 +79,7 @@ private:
     address_info(address_info&) = delete;
     address_info& operator = (const address_info&) = delete;
     address_info& operator = (const address_info&&) = delete;
-    addrinfo* m_addrinfo;
+    gsl::owner<addrinfo*> m_addrinfo;
 };
 
 } // namespace net
