@@ -51,7 +51,9 @@ endpointstream connect(const std::string& host, const std::string& service_or_po
 
 endpointstream connect(const uri& url, const std::chrono::milliseconds& timeout)
 {
-    return connect(url.host, url.port == ""s ? url.scheme : url.port);
+    const auto host = std::string{url.host};
+    const auto port = std::string{url.port == ""s ? url.scheme : url.port};
+    return connect(host,port);
 }
 
 } // namespace net

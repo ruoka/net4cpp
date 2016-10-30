@@ -1,13 +1,11 @@
 #pragma once
 #include <vector>
-#include <experimental/string_view>
+#include <string_view>
 
 // scheme:[//[username:password@]host[:port]][/]path[?query][#fragment]
 
 namespace net
 {
-
-using string_view = std::experimental::string_view;
 
 class uri
 {
@@ -21,11 +19,6 @@ public:
     operator T () const
     {
         return m_value;
-    }
-
-    operator std::string () const
-    {
-        return std::string{m_value};
     }
 
     auto operator == (const T& value) const
@@ -49,7 +42,7 @@ private:
 };
 
 template <char delim>
-class indexed_property : public property<string_view>
+class indexed_property : public property<std::string_view>
 {
 public:
 
@@ -58,7 +51,7 @@ public:
         if(idx < m_index.size())
             return m_index[idx];
         else
-            return string_view{};
+            return std::string_view{};
     }
 
     auto begin() const
@@ -75,7 +68,7 @@ private:
 
     friend class uri;
 
-    auto& operator = (string_view&& value)
+    auto& operator = (std::string_view&& value)
     {
         m_value = value;
 
@@ -93,10 +86,10 @@ private:
         return *this;
     }
 
-    std::vector<string_view> m_index;
+    std::vector<std::string_view> m_index;
 };
 
-explicit uri(string_view string)
+explicit uri(std::string_view string)
 {
     auto position = string.npos;
 
@@ -158,24 +151,24 @@ explicit uri(string_view string)
     }
 }
 
-uri(const std::string& str) : uri(string_view{str})
+uri(const std::string& str) : uri(std::string_view{str})
 {}
 
 property<bool> absolute;
 
-property<string_view> scheme;
+property<std::string_view> scheme;
 
-property<string_view> userinfo;
+property<std::string_view> userinfo;
 
-property<string_view> host;
+property<std::string_view> host;
 
-property<string_view> port;
+property<std::string_view> port;
 
 indexed_property<'/'> path;
 
 indexed_property<'&'> query;
 
-property<string_view> fragment;
+property<std::string_view> fragment;
 
 };
 

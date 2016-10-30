@@ -1,7 +1,7 @@
 #pragma once
 
 #include <mutex>
-#include <experimental/type_traits>
+#include <type_traits>
 #include "std/extension.hpp"
 #include "net/sender.hpp"
 
@@ -123,7 +123,7 @@ public:
     }
 
     template <typename T,
-              typename = std::enable_if_t<!std::experimental::is_pointer_v<T>>>
+              typename = std::enable_if_t<!std::is_pointer_v<T>>>
     auto& operator<< (const T& type)
     {
         if(m_level >= m_severity)

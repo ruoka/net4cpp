@@ -1,8 +1,8 @@
 CXX = clang++
 
-CXXFLAGS = -I$(SRCDIR) -std=c++1z -stdlib=libc++ -MMD# -D DEBUG=1
+CXXFLAGS =  -nostdinc++ -I/usr/local/include/c++/v1 -I$(SRCDIR) -std=c++1z -MMD # -D DEBUG=1
 
-LDFLAGS = -stdlib=libc++
+LDFLAGS = -nostdlib -L/usr/lib -L/usr/local/lib -lc++ -lSystem
 
 SRCDIR = src
 
