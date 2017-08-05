@@ -77,48 +77,76 @@ namespace http {
             acceptor.timeout(1h);
             while(true)
             {
-                auto connection = acceptor.accept();
-                auto worker = std::thread{[&](){handle(std::move(connection));}};
+                auto client = acceptor.accept();
+                auto worker = std::thread{[&](){handle(std::move(client));}};
                 worker.detach();
             }
         }
 
     private:
 
-        void handle(net::endpointstream connection)
+        void handle(net::endpointstream client)
         {
             using namespace std;
 
-            while(connection)
+            while(client)
             {
                 auto method = ""s, uri = ""s, version = ""s;
-                connection >> method >> uri >> version;
+                client >> method >> uri >> version;
 
                 clog << method << ' ' << uri << ' ' << version;
 
-                connection >> ws;
+                client >> ws;
 
-                while(connection && connection.peek() != '\r')
+                auto authorization = ""s;
+
+                while(client && client.peek() != '\r')
                 {
                     auto name = ""s, value = ""s;
-                    getline(connection, name, ':');
+                    getline(client, name, ':');
                     ext::trim(name);
-                    getline(connection, value);
+                    getline(client, value);
                     ext::trim(value);
                     clog << name << ": " << value << endl;
+
+                    if(name == "Authorization")
+                        authorization = value;
                 }
+                client.ignore(2); // crlf
 
-                const auto content = m_router[uri][method].render();
+                if(uri == "/favicon.ico")
+                {
+                    client << "HTTP/1.1 404 Not Found"                                 << net::crlf
+                           << "Date: " << ext::to_rfc1123(chrono::system_clock::now()) << net::crlf
+                           << "Server: net4cpp/1.1"                                    << net::crlf
+                           << "Content-Type: text/html; charset=UTF-8"                 << net::crlf
+                           << "Content-Length: 0"                                      << net::crlf
+                           << net::crlf << net::flush;
+                }
+                else if(authorization.empty() || authorization == "Basic Og==")
+                {
+                    client << "HTTP/1.1 401 Unauthorized status"                       << net::crlf
+                           << "Date: " << ext::to_rfc1123(chrono::system_clock::now()) << net::crlf
+                           << "Server: net4cpp/1.1"                                    << net::crlf
+                           << "WWW-Authenticate: Basic realm=\"User Visible Realm\""   << net::crlf
+                           << "Content-Type: text/html; charset=UTF-8"                 << net::crlf
+                           << "Content-Length: 0"                                      << net::crlf
+                           << net::crlf << net::flush;
+                }
+                else
+                {
+                  const auto content = m_router[uri][method].render();
 
-                connection << "HTTP/1.1 200 OK"                                                   << net::crlf
-                           << "Date: " << ext::to_rfc1123(chrono::system_clock::now())            << net::crlf
-                           << "Server: YARESTDB/0.1"                                              << net::crlf
-                           << "Access-Control-Allow-Origin: *"                                    << net::crlf
-                           << "Access-Control-Allow-Methods: HEAD, GET, POST, PUT, PATCH, DELETE" << net::crlf
-                           << "Content-Type: text/html; charset=UTF-8"                            << net::crlf
-                           << "Content-Length: " << content.length()                              << net::crlf
-                           << net::crlf
-                           << (method != "HEAD"s ? content : ""s) << net::flush;
+                  client << "HTTP/1.1 200 OK"                                                   << net::crlf
+                         << "Date: " << ext::to_rfc1123(chrono::system_clock::now())            << net::crlf
+                         << "Server: net4cpp/1.1"                                               << net::crlf
+                         << "Access-Control-Allow-Origin: *"                                    << net::crlf
+                         << "Access-Control-Allow-Methods: HEAD, GET, POST, PUT, PATCH, DELETE" << net::crlf
+                         << "Content-Type: text/html; charset=UTF-8"                            << net::crlf
+                         << "Content-Length: " << content.length()                              << net::crlf
+                         << net::crlf
+                         << (method != "HEAD"s ? content : ""s) << net::flush;
+                }
             }
         }
 

@@ -17,7 +17,7 @@ u8R"(
     $(document).ready(function() {
         $("button").click( function() {
             $.ajax({url : $(this).attr("data-url"), method : $(this).attr("data-method")})
-            .done(function(data) {$("#article").html(data)})
+            .done(function(data) {$("#content").html(data)})
             .fail(function (jqXHR, textStatus, errorThrown) {alert(textStatus + ":" + jqXHR.status)})
         })
     })
@@ -33,7 +33,7 @@ u8R"(
         <button type="button" data-url="/vk" data-method="DELETE"> DELETE</button>
         <button type="button" data-url="/json" data-method="GET" > JSON</button>
     </aside>
-    <article id = "article"></article>
+    <article id = "content"></article>
 </body>
 </html>
 
