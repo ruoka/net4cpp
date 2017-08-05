@@ -1,7 +1,7 @@
 # net4cpp
 Network library based on C++17 standard
 
-##Echo Server Example
+# Echo Server Example
 
 ```cpp
 try
@@ -23,7 +23,7 @@ catch(const exception& e)
 }
 ```
 
-##Http Request Example
+# Http Request Example
 
 ```cpp
 try
@@ -52,7 +52,7 @@ catch(const exception& e)
 }
 ```
 
-##Syslog Stream Example
+# Syslog Stream Example
 
 ```cpp
 #include "net/syslogstream.hpp"
