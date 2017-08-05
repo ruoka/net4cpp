@@ -1,5 +1,5 @@
 # net4cpp
-Network library based on C++14 standard
+Network library based on C++17 standard
 
 ##Echo Server Example
 
@@ -30,12 +30,12 @@ try
 {
     auto s = connect("http://www.google.com");
 
-    s << "GET / HTTP/1.1\r\n"
-      << "Host: www.google.com\r\n"
-      << "Connection: close\r\n"
-      << "Accept: text/plain, text/html\r\n"
-      << "Accept-Charset: utf-8\r\n"
-      << "\r\n"
+    s << "GET / HTTP/1.1"                << crlf
+      << "Host: www.google.com"          << crlf
+      << "Connection: close"             << crlf
+      << "Accept: text/plain, text/html" << crlf
+      << "Accept-Charset: utf-8"         << crlf
+      << crlf
       << flush;
 
     while(s)

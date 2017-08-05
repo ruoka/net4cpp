@@ -49,7 +49,7 @@ $(GTEST_TARGET): $(OBJECTS) $(GTEST_OBJECTS)
 	$(CXX) $(LDFLAGS) $(OBJECTS) $(GTEST_OBJECTS) $(GTESTLIB) -o $@
 
 
-DEPENDENCIES = $(MAINS:$(SRCDIR)/%.cpp=$(OBJDIR)/%.d) $(SOURCES:$(SRCDIR)/%.cpp=$(OBJDIR)/%.d) $(GTEST_SOURCES:$(TESTDIR)/%.cpp=$(OBJDIR)/%.d)
+DEPENDENCIES = $(MAINS:$(SRCDIR)/%.cpp=$(OBJDIR)/%.d) $(OBJECTS:%.o=%.d) $(GTEST_OBJECTS:%.o=%.d)
 
 
 all: $(TARGETS) $(GTEST_TARGET)
@@ -61,7 +61,7 @@ clean:
 
 .PHONY: test
 test: $(GTEST_TARGET)
-	$(GTEST_TARGET) --gtest_filter=-*.CommandLine:DbServerTest.*
+	$(GTEST_TARGET) --gtest_filter=-*.CommandLine:HttpServer.*
 
 .PHONY: dump
 dump:
