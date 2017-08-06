@@ -1,5 +1,4 @@
 bin
 obj
-engine_test.db
-test/xson
-fson.db
+lib
+include

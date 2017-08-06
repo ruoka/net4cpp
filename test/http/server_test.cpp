@@ -55,7 +55,7 @@ const auto json = u8R"( {"foo" : 1, "bar" : false} )"s;
 
 } // namespace view
 
-TEST(HttpServer,Setup)
+TEST(HttpServerTest,Setup)
 {
     auto server = http::server{};
 

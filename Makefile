@@ -1,8 +1,10 @@
-CXX = clang++
+#CXX = /Library/Developer/CommandLineTools/usr/bin/clang
+CXX = /usr/local/bin/clang
 
-CXXFLAGS =  -nostdinc++ -I/usr/local/include/c++/v1 -I$(SRCDIR) -std=c++1z -MMD # -D DEBUG=1
+CXXFLAGS = -nostdinc++ -I/usr/local/include/c++/v1 -I$(SRCDIR) -std=c++1z -MMD # -D DEBUG=1
 
 LDFLAGS = -nostdlib -L/usr/lib -L/usr/local/lib -lc++ -lSystem
+
 
 SRCDIR = src
 
@@ -12,12 +14,12 @@ OBJDIR = obj
 
 BINDIR = bin
 
-GTESTDIR = ../googletest/googletest
+LIBDIR = lib
 
-GTESTLIB = $(GTESTDIR)/make/gtest_main.a
+INCDIR = include
 
 
-#TARGETS = $(addprefix $(BINDIR)/, yyz)
+#TARGETS = $(addprefix $(BINDIR)/, )
 
 #MAINS	= $(TARGETS:$(BINDIR)/%=$(SRCDIR)/%.cpp)
 
@@ -34,7 +36,27 @@ $(TARGETS): $(OBJECTS)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(@:$(BINDIR)/%=$(SRCDIR)/%.cpp) $(OBJECTS) -MF $(@:$(BINDIR)/%=$(OBJDIR)/%.d) -o $@
 
 
+LIBRARIES = $(addprefix $(LIBDIR)/, libnet4cpp.a)
+
+$(LIBRARIES) : $(OBJECTS)
+	@mkdir -p $(@D)
+	$(AR) $(ARFLAGS) $@ $^
+
+
+HEADERS = $(wildcard $(SRCDIR)/*.hpp $(SRCDIR)/*/*.hpp $(SRCDIR)/*/*/*.hpp)
+
+INCLUDES = $(HEADERS:$(SRCDIR)/%.hpp=$(INCDIR)/%.hpp)
+
+$(INCDIR)/%.hpp: $(SRCDIR)/%.hpp
+	@mkdir -p $(@D)
+	cp $< $@
+
+
+GTESTDIR = ../googletest/googletest
+
 GTEST_TARGET = $(BINDIR)/test
+
+GTESTLIB = $(GTESTDIR)/make/gtest_main.a
 
 GTEST_SOURCES = $(wildcard $(TESTDIR)/*.cpp $(TESTDIR)/*/*.cpp $(TESTDIR)/*/*/*.cpp $(TESTDIR)/*/*/*/*.cp)
 
@@ -52,16 +74,25 @@ $(GTEST_TARGET): $(OBJECTS) $(GTEST_OBJECTS)
 DEPENDENCIES = $(MAINS:$(SRCDIR)/%.cpp=$(OBJDIR)/%.d) $(OBJECTS:%.o=%.d) $(GTEST_OBJECTS:%.o=%.d)
 
 
-all: $(TARGETS) $(GTEST_TARGET)
+.PHONY: bin
+bin: $(TARGETS)
+
+.PHONY: lib
+lib: $(LIBRARIES) $(INCLUDES)
+
+.PHONY: test
+test: $(GTEST_TARGET)
+	$(GTEST_TARGET) --gtest_filter=-*.CommandLine:HttpServerTest.*
+
+.PHONY: all
+all: $(TARGETS) $(LIBRARIES) $(GTEST_TARGET)
 
 .PHONY: clean
 clean:
 	@rm -rf $(OBJDIR)
 	@rm -rf $(BINDIR)
-
-.PHONY: test
-test: $(GTEST_TARGET)
-	$(GTEST_TARGET) --gtest_filter=-*.CommandLine:HttpServer.*
+	@rm -rf $(LIBDIR)
+	@rm -rf $(INCDIR)
 
 .PHONY: dump
 dump:
@@ -69,6 +100,9 @@ dump:
 	@echo $(MAINS)
 	@echo $(SOURCES)
 	@echo $(OBJECTS)
+	@echo $(LIBRARIES)
+	@echo $(HEADERS)
+	@echo $(INCLUDES)
 	@echo $(GTEST_TARGET)
 	@echo $(GTEST_SOURCES)
 	@echo $(GTEST_OBJECTS)
