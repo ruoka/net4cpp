@@ -97,12 +97,12 @@ TEST(StdExtension,TimePoint2String)
 
 TEST(StdExtension,String2TimePoint)
 {
-    ASSERT_EQ(system_clock::time_point{0us}, stotp("1970-01-01T00:00:00.000Z"s));
-    ASSERT_EQ(system_clock::time_point{1ms}, stotp("1970-01-01T00:00:00.001Z"s));
-    ASSERT_EQ(system_clock::time_point{1s}, stotp("1970-01-01T00:00:01.000Z"s));
-    ASSERT_EQ(system_clock::time_point{1min}, stotp("1970-01-01T00:01:00.000Z"s));
-    ASSERT_EQ(system_clock::time_point{1h}, stotp("1970-01-01T01:00:00.000Z"s));
-    ASSERT_EQ(system_clock::time_point{12h}, stotp("1970-01-01T12:00:00.000Z"s));
+    ASSERT_EQ(system_clock::time_point{0us}, to_time_point("1970-01-01T00:00:00.000Z"s));
+    ASSERT_EQ(system_clock::time_point{1ms}, to_time_point("1970-01-01T00:00:00.001Z"s));
+    ASSERT_EQ(system_clock::time_point{1s}, to_time_point("1970-01-01T00:00:01.000Z"s));
+    ASSERT_EQ(system_clock::time_point{1min}, to_time_point("1970-01-01T00:01:00.000Z"s));
+    ASSERT_EQ(system_clock::time_point{1h}, to_time_point("1970-01-01T01:00:00.000Z"s));
+    ASSERT_EQ(system_clock::time_point{12h}, to_time_point("1970-01-01T12:00:00.000Z"s));
 }
 
 TEST(StdExtension,Boolean2String)
@@ -113,10 +113,10 @@ TEST(StdExtension,Boolean2String)
 
 TEST(StdExtension,String2Boolean)
 {
-    ASSERT_EQ(true, stob("true"s));
-    ASSERT_EQ(true, stob("1"s));
-    ASSERT_EQ(false, stob("false"s));
-    ASSERT_EQ(false, stob("0"s));
+    ASSERT_EQ(true, to_boolean("true"s));
+    ASSERT_EQ(true, to_boolean("1"s));
+    ASSERT_EQ(false, to_boolean("false"s));
+    ASSERT_EQ(false, to_boolean("0"s));
 }
 
 TEST(StdExtension,Nullptr2String)

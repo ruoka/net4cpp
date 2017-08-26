@@ -15,7 +15,7 @@ void receiver::leave()
     assert(false); // FIXME
 }
 
-iendpointstream join(const std::string& group, const std::string& service, bool loop)
+iendpointstream join(std::string_view group, std::string_view service, bool loop)
 {
     const auto distribution_address = net::address_info{group, "", SOCK_DGRAM};
     const auto local_address = net::address_info{"", service, SOCK_DGRAM, AI_PASSIVE, distribution_address->ai_family};

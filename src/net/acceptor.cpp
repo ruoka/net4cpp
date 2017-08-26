@@ -6,7 +6,7 @@
 namespace net
 {
 
-acceptor::acceptor(const std::string& host, const std::string& service_or_port) :
+acceptor::acceptor(std::string_view host, std::string_view service_or_port) :
 m_host{host},
 m_service_or_port{service_or_port},
 m_timeout{default_accept_timeout},
@@ -39,7 +39,7 @@ m_sockets{}
         throw std::system_error{errno, std::system_category(), "socket could not be bound"};
 }
 
-acceptor::acceptor(const std::string& service) : acceptor("localhost", service) {}
+acceptor::acceptor(std::string_view service) : acceptor("localhost", service) {}
 
 endpointstream acceptor::accept()
 {

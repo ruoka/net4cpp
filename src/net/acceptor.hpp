@@ -14,9 +14,9 @@ class acceptor
 {
 public:
 
-    acceptor(const std::string& host, const std::string& service_or_port);
+    acceptor(std::string_view host, std::string_view service_or_port);
 
-    explicit acceptor(const std::string& service);
+    explicit acceptor(std::string_view service);
 
     endpointstream accept();
 

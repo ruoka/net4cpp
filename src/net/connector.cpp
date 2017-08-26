@@ -7,7 +7,7 @@ namespace net {
 
 using namespace std::string_literals;
 
-connector::connector(const std::string& host, const std::string& service_or_port) :
+connector::connector(std::string_view host, std::string_view service_or_port) :
 m_host{host},
 m_service_or_port{service_or_port},
 m_timeout{default_connect_timeout}
@@ -24,7 +24,7 @@ endpointstream connector::connect() const
     return net::connect(m_host, m_service_or_port, m_timeout);
 }
 
-endpointstream connect(const std::string& host, const std::string& service_or_port, const std::chrono::milliseconds& timeout)
+endpointstream connect(std::string_view host, std::string_view service_or_port, const std::chrono::milliseconds& timeout)
 {
     auto remote_address = net::address_info{host, service_or_port, SOCK_STREAM};
     for(const auto& address : remote_address)

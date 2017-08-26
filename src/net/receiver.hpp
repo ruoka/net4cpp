@@ -9,7 +9,7 @@ class receiver
 {
 public:
 
-    receiver(const std::string& group, const std::string& service) :
+    receiver(std::string_view group, std::string_view service) :
     m_group{group},
     m_service{service}
     {};
@@ -35,6 +35,6 @@ private:
     std::string m_service;
 };
 
-iendpointstream join(const std::string& group, const std::string& service, bool loop = true);
+iendpointstream join(std::string_view group, std::string_view service, bool loop = true);
 
 } // namespace net

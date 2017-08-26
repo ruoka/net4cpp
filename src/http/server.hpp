@@ -6,11 +6,10 @@
 #include "std/extension.hpp"
 #include "net/acceptor.hpp"
 
-using namespace std;
-using namespace std::string_literals;
-using namespace std::chrono_literals;
-
 namespace http {
+
+    using namespace std::string_literals;
+    using namespace std::chrono_literals;
 
     class controller
     {
@@ -80,7 +79,18 @@ namespace http {
                 auto client = acceptor.accept();
                 auto worker = std::thread{[&](){handle(std::move(client));}};
                 worker.detach();
+                std::this_thread::sleep_for(3ms);
             }
+        }
+
+        bool authenticate() const
+        {
+            return m_authenticate;
+        }
+
+        void authenticate(bool b)
+        {
+            m_authenticate = b;
         }
 
     private:
@@ -94,11 +104,11 @@ namespace http {
                 auto method = ""s, uri = ""s, version = ""s;
                 client >> method >> uri >> version;
 
-                clog << method << ' ' << uri << ' ' << version;
+                clog << method << ' ' << uri << ' ' << version << net::newl;
 
                 client >> ws;
 
-                auto authorization = ""s;
+                auto content_type = "text/html"s, authorization = ""s;
 
                 while(client && client.peek() != '\r')
                 {
@@ -108,6 +118,9 @@ namespace http {
                     getline(client, value);
                     ext::trim(value);
                     clog << name << ": " << value << endl;
+
+                    if(name == "Accept")
+                        content_type = value;
 
                     if(name == "Authorization")
                         authorization = value;
@@ -119,30 +132,32 @@ namespace http {
                     client << "HTTP/1.1 404 Not Found"                                 << net::crlf
                            << "Date: " << ext::to_rfc1123(chrono::system_clock::now()) << net::crlf
                            << "Server: net4cpp/1.1"                                    << net::crlf
-                           << "Content-Type: text/html; charset=UTF-8"                 << net::crlf
+                           << "Content-Type: " << content_type                         << net::crlf
                            << "Content-Length: 0"                                      << net::crlf
                            << net::crlf << net::flush;
                 }
-                else if(authorization.empty() || authorization == "Basic Og==")
+                else if(m_authenticate && (authorization.empty() || authorization == "Basic Og=="))
                 {
                     client << "HTTP/1.1 401 Unauthorized status"                       << net::crlf
                            << "Date: " << ext::to_rfc1123(chrono::system_clock::now()) << net::crlf
                            << "Server: net4cpp/1.1"                                    << net::crlf
                            << "WWW-Authenticate: Basic realm=\"User Visible Realm\""   << net::crlf
-                           << "Content-Type: text/html; charset=UTF-8"                 << net::crlf
+                           << "Content-Type: " << content_type                         << net::crlf
                            << "Content-Length: 0"                                      << net::crlf
                            << net::crlf << net::flush;
                 }
                 else
                 {
-                  const auto content = m_router[uri][method].render();
+                  const auto& content = m_router[uri][method].render();
 
                   client << "HTTP/1.1 200 OK"                                                   << net::crlf
                          << "Date: " << ext::to_rfc1123(chrono::system_clock::now())            << net::crlf
                          << "Server: net4cpp/1.1"                                               << net::crlf
                          << "Access-Control-Allow-Origin: *"                                    << net::crlf
                          << "Access-Control-Allow-Methods: HEAD, GET, POST, PUT, PATCH, DELETE" << net::crlf
-                         << "Content-Type: text/html; charset=UTF-8"                            << net::crlf
+                         << "Access-Control-Allow-Headers: Content-Type"                        << net::crlf
+                         << "Access-Control-Allow-Credentials: true"                            << net::crlf
+                         << "Content-Type: " << content_type                                    << net::crlf
                          << "Content-Length: " << content.length()                              << net::crlf
                          << net::crlf
                          << (method != "HEAD"s ? content : ""s) << net::flush;
@@ -153,6 +168,8 @@ namespace http {
         using router = std::unordered_map<std::string,std::unordered_map<std::string,controller>>;
 
         router m_router;
+
+        bool m_authenticate = false;
     };
 
 } // namespace http

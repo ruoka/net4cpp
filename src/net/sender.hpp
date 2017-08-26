@@ -9,7 +9,7 @@ class sender
 {
 public:
 
-    sender(const std::string& group, const std::string& service_or_port) :
+    sender(std::string_view group, std::string_view service_or_port) :
     m_group{group},
     m_service_or_port{service_or_port}
     {};
@@ -33,6 +33,6 @@ private:
     std::string m_service_or_port;
 };
 
-oendpointstream distribute(const std::string& group, const std::string& service_or_port, unsigned ttl = 1);
+oendpointstream distribute(std::string_view group, std::string_view service_or_port, unsigned ttl = 1);
 
 } // namespace net

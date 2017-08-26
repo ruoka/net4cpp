@@ -13,7 +13,7 @@ class connector
 {
 public:
 
-    connector(const std::string& host, const std::string& service_or_port);
+    connector(std::string_view host, std::string_view service_or_port);
 
     connector(const uri& url);
 
@@ -48,8 +48,8 @@ private:
     std::chrono::milliseconds m_timeout;
 };
 
-endpointstream connect(const std::string& host,
-                       const std::string& service_or_port,
+endpointstream connect(std::string_view host,
+                       std::string_view service_or_port,
                        const std::chrono::milliseconds& timeout = default_connect_timeout);
 
 endpointstream connect(const uri& url,

@@ -98,12 +98,12 @@ public:
     {
         // <PRI> Feb 22 21:12 localhost syslog[2112]:
         using namespace std;
+        using namespace chrono;
         using namespace ext;
-        using namespace std::chrono;
 
         if(m_level >= m_severity)
         {
-            const auto timestamp = convert(system_clock::now());
+            const auto timestamp = to_years_days_months_hours_minutes_seconds(system_clock::now());
             static_cast<oendpointstream&>(*this)
                     << '<' << priority(m_facility, m_severity) << '>'             // <PRI>
                     << setw(3) << to_string(get<months>(timestamp))       << ' '  // TIMESTAMP

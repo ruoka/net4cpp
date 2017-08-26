@@ -10,7 +10,7 @@ oendpointstream sender::distribute()
     return net::distribute(m_group, m_service_or_port);
 }
 
-oendpointstream distribute(const std::string& group, const std::string& service_or_port, unsigned ttl)
+oendpointstream distribute(std::string_view group, std::string_view service_or_port, unsigned ttl)
 {
     const auto distribution_address = net::address_info{group, service_or_port, SOCK_DGRAM};
     for(const auto& address : distribution_address)
