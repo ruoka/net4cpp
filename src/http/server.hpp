@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include "std/extension.hpp"
 #include "net/acceptor.hpp"
+#include "net/syslogstream.hpp"
 
 namespace http {
 
@@ -71,9 +72,11 @@ namespace http {
         }
 
         void listen(const std::string& serice_or_port = "http"s)
+        try
         {
             auto acceptor = net::acceptor{"localhost"s, serice_or_port};
             acceptor.timeout(1h);
+            net::slog << net::info << "accepting connections at localhost." << serice_or_port << net::flush;
             while(true)
             {
                 auto client = acceptor.accept();
@@ -81,6 +84,11 @@ namespace http {
                 worker.detach();
                 std::this_thread::sleep_for(3ms);
             }
+        }
+        catch(const std::exception& e)
+        {
+            net::slog << net::error << e.what() << net::flush;
+            throw;
         }
 
         bool authenticate() const
@@ -103,12 +111,10 @@ namespace http {
             {
                 auto method = ""s, uri = ""s, version = ""s;
                 client >> method >> uri >> version;
-
-                clog << method << ' ' << uri << ' ' << version << net::newl;
-
-                client >> ws;
+                net::slog << net::info << method << ' ' << uri << ' ' << version << net::flush;
 
                 auto content_type = "text/html"s, authorization = ""s;
+                client >> ws;
 
                 while(client && client.peek() != '\r')
                 {
@@ -117,7 +123,7 @@ namespace http {
                     ext::trim(name);
                     getline(client, value);
                     ext::trim(value);
-                    clog << name << ": " << value << endl;
+                    net::slog << net::info << name << ": " << value << net::flush;
 
                     if(name == "Accept")
                         content_type = value;

@@ -3,6 +3,8 @@
 
 namespace view {
 
+using namespace std::string_literals;
+
 const auto index =
 u8R"(
 
@@ -37,26 +39,31 @@ u8R"(
 </body>
 </html>
 
-)";
+)"s;
 
-const auto get = u8R"(<p>GET response</p>)";
+const auto get = u8R"(<p>GET response</p>)"s;
 
-const auto head = u8R"(<p>HEAD response</p>)";
+const auto head = u8R"(<p>HEAD response</p>)"s;
 
-const auto post = u8R"(<p>POST response</p>)";
+const auto post = u8R"(<p>POST response</p>)"s;
 
-const auto put = u8R"(<p>PUT response</p>)";
+const auto put = u8R"(<p>PUT response</p>)"s;
 
-const auto destroy = u8R"(<p>DELETE response</p>)";
+const auto destroy = u8R"(<p>DELETE response</p>)"s;
 
-const auto patch = u8R"(<p>PATCH response</p>)";
+const auto patch = u8R"(<p>PATCH response</p>)"s;
 
-const auto json = u8R"( {"foo" : 1, "bar" : false} )";
+const auto json = u8R"( {"foo" : 1, "bar" : false} )"s;
 
 } // namespace view
 
 TEST(HttpServerTest,Setup)
 {
+    net::slog.tag("HttpServerTest");
+    net::slog.facility(net::syslog::facility::local0);
+    net::slog.level(net::syslog::severity::debug);
+    net::slog.redirect(std::clog);
+
     auto server = http::server{};
 
     server.get("/").response(view::index);
