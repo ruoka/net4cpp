@@ -38,7 +38,6 @@ u8R"(
     <article id = "content"></article>
 </body>
 </html>
-
 )"s;
 
 const auto get = u8R"(<p>GET response</p>)"s;
