@@ -30,7 +30,7 @@ namespace http::base64 {
 
     std::string encode(std::string_view source)
     {
-        auto decoded = std::string{};
+        auto encoded = std::string{};
 
         while(source.size() > 0)
         {
@@ -51,15 +51,15 @@ namespace http::base64 {
                 index4  = (source[2] & 0b00111111);
             }
 
-            decoded.push_back(to_character_set(index1));
-            decoded.push_back(to_character_set(index2));
-            decoded.push_back(to_character_set(index3));
-            decoded.push_back(to_character_set(index4));
+            encoded.push_back(to_character_set(index1));
+            encoded.push_back(to_character_set(index2));
+            encoded.push_back(to_character_set(index3));
+            encoded.push_back(to_character_set(index4));
 
             source.remove_prefix(std::min(3ul,source.size()));
         }
 
-        return decoded;
+        return encoded;
     }
 
     std::string decode(std::string_view source)
