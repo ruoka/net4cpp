@@ -64,7 +64,7 @@ namespace http::base64 {
 
     std::string decode(std::string_view source)
     {
-        auto encoded = std::string{};
+        auto decoded = std::string{};
 
         while(source.size() > 3)
         {
@@ -73,17 +73,17 @@ namespace http::base64 {
                  index3 = to_index(source[2]),
                  index4 = to_index(source[3]);
 
-            encoded.push_back((index1 << 2) | (index2 >> 4));
+            decoded.push_back((index1 << 2) | (index2 >> 4));
 
             if(index3 < 64)
-                encoded.push_back((index2 << 4) | (index3 >> 2));
+                decoded.push_back((index2 << 4) | (index3 >> 2));
 
             if(index4 < 64)
-                encoded.push_back((index3 << 6) | index4);
+                decoded.push_back((index3 << 6) | index4);
 
             source.remove_prefix(std::min(4ul,source.size()));
         }
-        return encoded;
+        return decoded;
     }
 
 } // namespace http::base64
