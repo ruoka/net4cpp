@@ -19,9 +19,9 @@ LIBDIR = lib
 INCDIR = include
 
 
-#TARGETS = $(addprefix $(BINDIR)/, )
+TARGETS = $(addprefix $(BINDIR)/, spike)
 
-#MAINS	= $(TARGETS:$(BINDIR)/%=$(SRCDIR)/%.cpp)
+MAINS	= $(TARGETS:$(BINDIR)/%=$(SRCDIR)/%.cpp)
 
 SOURCES = $(filter-out $(MAINS), $(wildcard $(SRCDIR)/*.cpp $(SRCDIR)/*/*.cpp $(SRCDIR)/*/*/*.cpp))
 
