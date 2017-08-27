@@ -1,5 +1,4 @@
 #pragma once
-
 #include <functional>
 #include <thread>
 #include <unordered_map>
@@ -9,173 +8,173 @@
 
 namespace http {
 
-    using namespace std::string_literals;
-    using namespace std::chrono_literals;
+using namespace std::string_literals;
+using namespace std::chrono_literals;
 
-    class controller
+class controller
+{
+public:
+
+    using callback = std::function<const std::string&()>;
+
+    void response(const std::string& view)
     {
-    public:
+        m_callback = [&](){return view;};
+    }
 
-        using callback = std::function<const std::string&()>;
-
-        void response(const std::string& view)
-        {
-            m_callback = [&](){return view;};
-        }
-
-        void response(callback cb)
-        {
-            m_callback = cb;
-        }
-
-        std::string render()
-        {
-            return m_callback();
-        }
-
-    private:
-        callback m_callback = [](){return "HTTP/1.1 404 Not Found"s;};
-    };
-
-    class server
+    void response(callback cb)
     {
-    public:
+        m_callback = cb;
+    }
 
-        controller& get(const std::string& path)
+    std::string render()
+    {
+        return m_callback();
+    }
+
+private:
+    callback m_callback = [](){return "HTTP/1.1 404 Not Found"s;};
+};
+
+class server
+{
+public:
+
+    controller& get(const std::string& path)
+    {
+        return m_router[path]["GET"s];
+    }
+
+    controller& head(const std::string& path)
+    {
+        return m_router[path]["HEAD"s];
+    }
+
+    controller& post(const std::string& path)
+    {
+        return m_router[path]["POST"s];
+    }
+
+    controller& put(const std::string& path)
+    {
+        return m_router[path]["PUT"s];
+    }
+
+    controller& patch(const std::string& path)
+    {
+        return m_router[path]["PATCH"s];
+    }
+
+    controller& destroy(const std::string& path)
+    {
+        return m_router[path]["DELETE"s];
+    }
+
+    void listen(const std::string& serice_or_port = "http"s)
+    try
+    {
+        auto acceptor = net::acceptor{"localhost"s, serice_or_port};
+        acceptor.timeout(1h);
+        net::slog << net::info << "accepting connections at localhost." << serice_or_port << net::flush;
+        while(true)
         {
-            return m_router[path]["GET"s];
+            auto client = acceptor.accept();
+            auto worker = std::thread{[&](){handle(std::move(client));}};
+            worker.detach();
+            std::this_thread::sleep_for(3ms);
         }
+    }
+    catch(const std::exception& e)
+    {
+        net::slog << net::error << e.what() << net::flush;
+        throw;
+    }
 
-        controller& head(const std::string& path)
-        {
-            return m_router[path]["HEAD"s];
-        }
+    bool authenticate() const
+    {
+        return m_authenticate;
+    }
 
-        controller& post(const std::string& path)
-        {
-            return m_router[path]["POST"s];
-        }
+    void authenticate(bool b)
+    {
+        m_authenticate = b;
+    }
 
-        controller& put(const std::string& path)
-        {
-            return m_router[path]["PUT"s];
-        }
+private:
 
-        controller& patch(const std::string& path)
-        {
-            return m_router[path]["PATCH"s];
-        }
+    void handle(net::endpointstream client)
+    {
+        using namespace std;
 
-        controller& destroy(const std::string& path)
+        while(client)
         {
-            return m_router[path]["DELETE"s];
-        }
+            auto method = ""s, uri = ""s, version = ""s;
+            client >> method >> uri >> version;
+            net::slog << net::info << method << ' ' << uri << ' ' << version << net::flush;
 
-        void listen(const std::string& serice_or_port = "http"s)
-        try
-        {
-            auto acceptor = net::acceptor{"localhost"s, serice_or_port};
-            acceptor.timeout(1h);
-            net::slog << net::info << "accepting connections at localhost." << serice_or_port << net::flush;
-            while(true)
+            auto content_type = "text/html"s, authorization = ""s;
+            client >> ws;
+
+            while(client && client.peek() != '\r')
             {
-                auto client = acceptor.accept();
-                auto worker = std::thread{[&](){handle(std::move(client));}};
-                worker.detach();
-                std::this_thread::sleep_for(3ms);
+                auto name = ""s, value = ""s;
+                getline(client, name, ':');
+                ext::trim(name);
+                getline(client, value);
+                ext::trim(value);
+                net::slog << net::info << name << ": " << value << net::flush;
+
+                if(name == "Accept")
+                    content_type = value;
+
+                if(name == "Authorization")
+                    authorization = value;
+            }
+            client.ignore(2); // crlf
+
+            if(uri == "/favicon.ico")
+            {
+                client << "HTTP/1.1 404 Not Found"                                 << net::crlf
+                       << "Date: " << ext::to_rfc1123(chrono::system_clock::now()) << net::crlf
+                       << "Server: net4cpp/1.1"                                    << net::crlf
+                       << "Content-Type: " << content_type                         << net::crlf
+                       << "Content-Length: 0"                                      << net::crlf
+                       << net::crlf << net::flush;
+            }
+            else if(m_authenticate && (authorization.empty() || authorization == "Basic Og=="))
+            {
+                client << "HTTP/1.1 401 Unauthorized status"                       << net::crlf
+                       << "Date: " << ext::to_rfc1123(chrono::system_clock::now()) << net::crlf
+                       << "Server: net4cpp/1.1"                                    << net::crlf
+                       << "WWW-Authenticate: Basic realm=\"User Visible Realm\""   << net::crlf
+                       << "Content-Type: " << content_type                         << net::crlf
+                       << "Content-Length: 0"                                      << net::crlf
+                       << net::crlf << net::flush;
+            }
+            else
+            {
+                const auto& content = m_router[uri][method].render();
+
+                client << "HTTP/1.1 200 OK"                                                   << net::crlf
+                       << "Date: " << ext::to_rfc1123(chrono::system_clock::now())            << net::crlf
+                       << "Server: net4cpp/1.1"                                               << net::crlf
+                       << "Access-Control-Allow-Origin: *"                                    << net::crlf
+                       << "Access-Control-Allow-Methods: HEAD, GET, POST, PUT, PATCH, DELETE" << net::crlf
+                       << "Access-Control-Allow-Headers: Content-Type"                        << net::crlf
+                       << "Access-Control-Allow-Credentials: true"                            << net::crlf
+                       << "Content-Type: " << content_type                                    << net::crlf
+                       << "Content-Length: " << content.length()                              << net::crlf
+                       << net::crlf
+                       << (method != "HEAD"s ? content : ""s) << net::flush;
             }
         }
-        catch(const std::exception& e)
-        {
-            net::slog << net::error << e.what() << net::flush;
-            throw;
-        }
+    }
 
-        bool authenticate() const
-        {
-            return m_authenticate;
-        }
+    using router = std::unordered_map<std::string,std::unordered_map<std::string,controller>>;
 
-        void authenticate(bool b)
-        {
-            m_authenticate = b;
-        }
+    router m_router;
 
-    private:
-
-        void handle(net::endpointstream client)
-        {
-            using namespace std;
-
-            while(client)
-            {
-                auto method = ""s, uri = ""s, version = ""s;
-                client >> method >> uri >> version;
-                net::slog << net::info << method << ' ' << uri << ' ' << version << net::flush;
-
-                auto content_type = "text/html"s, authorization = ""s;
-                client >> ws;
-
-                while(client && client.peek() != '\r')
-                {
-                    auto name = ""s, value = ""s;
-                    getline(client, name, ':');
-                    ext::trim(name);
-                    getline(client, value);
-                    ext::trim(value);
-                    net::slog << net::info << name << ": " << value << net::flush;
-
-                    if(name == "Accept")
-                        content_type = value;
-
-                    if(name == "Authorization")
-                        authorization = value;
-                }
-                client.ignore(2); // crlf
-
-                if(uri == "/favicon.ico")
-                {
-                    client << "HTTP/1.1 404 Not Found"                                 << net::crlf
-                           << "Date: " << ext::to_rfc1123(chrono::system_clock::now()) << net::crlf
-                           << "Server: net4cpp/1.1"                                    << net::crlf
-                           << "Content-Type: " << content_type                         << net::crlf
-                           << "Content-Length: 0"                                      << net::crlf
-                           << net::crlf << net::flush;
-                }
-                else if(m_authenticate && (authorization.empty() || authorization == "Basic Og=="))
-                {
-                    client << "HTTP/1.1 401 Unauthorized status"                       << net::crlf
-                           << "Date: " << ext::to_rfc1123(chrono::system_clock::now()) << net::crlf
-                           << "Server: net4cpp/1.1"                                    << net::crlf
-                           << "WWW-Authenticate: Basic realm=\"User Visible Realm\""   << net::crlf
-                           << "Content-Type: " << content_type                         << net::crlf
-                           << "Content-Length: 0"                                      << net::crlf
-                           << net::crlf << net::flush;
-                }
-                else
-                {
-                  const auto& content = m_router[uri][method].render();
-
-                  client << "HTTP/1.1 200 OK"                                                   << net::crlf
-                         << "Date: " << ext::to_rfc1123(chrono::system_clock::now())            << net::crlf
-                         << "Server: net4cpp/1.1"                                               << net::crlf
-                         << "Access-Control-Allow-Origin: *"                                    << net::crlf
-                         << "Access-Control-Allow-Methods: HEAD, GET, POST, PUT, PATCH, DELETE" << net::crlf
-                         << "Access-Control-Allow-Headers: Content-Type"                        << net::crlf
-                         << "Access-Control-Allow-Credentials: true"                            << net::crlf
-                         << "Content-Type: " << content_type                                    << net::crlf
-                         << "Content-Length: " << content.length()                              << net::crlf
-                         << net::crlf
-                         << (method != "HEAD"s ? content : ""s) << net::flush;
-                }
-            }
-        }
-
-        using router = std::unordered_map<std::string,std::unordered_map<std::string,controller>>;
-
-        router m_router;
-
-        bool m_authenticate = false;
-    };
+    bool m_authenticate = false;
+};
 
 } // namespace http
