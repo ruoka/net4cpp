@@ -1,18 +1,17 @@
 #pragma once
-
 #include <string>
 #include <algorithm>
 
 namespace http::base64 {
 
-    constexpr char to_character_set(std::size_t i)
+    inline constexpr char to_character_set(std::size_t i)
     {
         assert(i < 65);
         constexpr char set[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
         return set[i];
     }
 
-    constexpr char to_index(char c)
+    inline constexpr char to_index(char c)
     {
         assert((c >= 'A' && c <= 'Z') ||
                (c >= 'a' && c <= 'z') ||
@@ -28,7 +27,7 @@ namespace http::base64 {
         return 64;
     }
 
-    std::string encode(std::string_view source)
+    inline std::string encode(std::basic_string_view<unsigned char> source)
     {
         auto encoded = std::string{};
 
@@ -62,7 +61,7 @@ namespace http::base64 {
         return encoded;
     }
 
-    std::string decode(std::string_view source)
+    inline std::string decode(std::string_view source)
     {
         auto decoded = std::string{};
 

@@ -35,7 +35,8 @@ struct frame
 namespace std
 {
 
-auto& operator << (std::ostream& os, const ws::frame& f)
+template<typename CharT>
+auto& operator << (std::basic_ostream<CharT>& os, const ws::frame& f)
 {
     Expects((f.header.payload_length != std::byte{126} && f.header.payload_length != std::byte{127}) ||
             (f.header.payload_length == std::byte{126} && f.extended_payload_length_16.has_value())  ||
@@ -43,32 +44,33 @@ auto& operator << (std::ostream& os, const ws::frame& f)
     Expects((f.header.masked == std::byte{0b0} && !f.masking_key.has_value()) ||
             (f.header.masked == std::byte{0b1} && f.masking_key.has_value())  );
 
-    os.write(reinterpret_cast<const char*>(&f.header), 2);
+    os.write(reinterpret_cast<const CharT*>(&f.header), 2);
     if(f.extended_payload_length_16.has_value())
-        os.write(reinterpret_cast<const char*>(&f.extended_payload_length_16.value()), 2);
+        os.write(reinterpret_cast<const CharT*>(&f.extended_payload_length_16.value()), 2);
     if(f.extended_payload_length_64.has_value())
-        os.write(reinterpret_cast<const char*>(&f.extended_payload_length_64.value()), 8);
+        os.write(reinterpret_cast<const CharT*>(&f.extended_payload_length_64.value()), 8);
     if(f.masking_key.has_value())
-        os.write(reinterpret_cast<const char*>(&f.masking_key.value()), 4);
+        os.write(reinterpret_cast<const CharT*>(&f.masking_key.value()), 4);
     for (auto c : f.extension_data)
-        os.put(static_cast<char>(c));
+        os.put(static_cast<CharT>(c));
     for (auto c : f.payload_data)
-        os.put(static_cast<char>(c));
+        os.put(static_cast<CharT>(c));
     return os;
 }
 
-auto& operator >> (std::istream& is, ws::frame& f)
+template<typename CharT>
+auto& operator >> (std::basic_istream<CharT>& is, ws::frame& f)
 {
     auto length = std::size_t{0};
-    is.read(reinterpret_cast<char*>(&f.header), 2);
+    is.read(reinterpret_cast<CharT*>(&f.header), 2);
     if(f.header.payload_length == std::byte{126})
     {
-        is.read(reinterpret_cast<char*>(&length), 2);
+        is.read(reinterpret_cast<CharT*>(&length), 2);
         f.extended_payload_length_16 = length;
     }
     else if(f.header.payload_length == std::byte{127})
     {
-        is.read(reinterpret_cast<char*>(&length), 8);
+        is.read(reinterpret_cast<CharT*>(&length), 8);
         f.extended_payload_length_64 = length;
     }
     else
@@ -78,7 +80,7 @@ auto& operator >> (std::istream& is, ws::frame& f)
     if(f.header.masked == std::byte{0b1})
     {
         auto key = std::uint32_t{};
-        is.read(reinterpret_cast<char*>(&key), 4);
+        is.read(reinterpret_cast<CharT*>(&key), 4);
         f.masking_key = key;
     }
     while (length--)

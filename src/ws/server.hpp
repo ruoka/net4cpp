@@ -5,7 +5,9 @@
 #include "net/acceptor.hpp"
 #include "net/syslogstream.hpp"
 #include "ws/frame.hpp"
+#include "ws/sha1.hpp"
 #include "http/base64.hpp"
+#include "ws/test_key.hpp"
 
 namespace ws {
 
@@ -100,11 +102,13 @@ private:
             {
                 net::slog << net::debug << "Upgrading to WebSocket" << net::flush;
 
-                const auto guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+                constexpr auto guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+                const auto client_key = headers["Sec-WebSocket-Key"];
+                const auto server_key = sha1::base64(client_key+guid);
 
-                auto client_key = headers["Sec-WebSocket-Key"];
-
-                auto server_key = base64::encode(client_key+guid);
+                net::slog << net::debug << "Sec-WebSocket-Key: " << client_key << net::flush;
+                net::slog << net::debug << "Concatenated: " << client_key+guid << net::flush;
+                net::slog << net::debug << "Sec-WebSocket-Accept: " << server_key << net::flush;
 
                 client << "HTTP/1.1 101 Switching Protocols"                       << net::crlf
                     //    << "Date: " << ext::to_rfc1123(chrono::system_clock::now()) << net::crlf
@@ -112,8 +116,9 @@ private:
 
                        << "Upgrade: websocket"                                     << net::crlf
                        << "Connection: Upgrade"                                    << net::crlf
-                       << "Sec-WebSocket-Accept: " << server_key                   << net::crlf
-                       << "Sec-WebSocket-Version: 13"                              << net::crlf
+                       << "Sec-WebSocket-Accept: " << server_key << " "            << net::crlf
+                    //    << "Sec-WebSocket-Protocol: chat"                           << net::crlf
+                    //    << "Sec-WebSocket-Version: 13"                              << net::crlf
 
                     //    << "Access-Control-Allow-Origin: *"                         << net::crlf
                     //    << "Access-Control-Allow-Methods: GET"                      << net::crlf

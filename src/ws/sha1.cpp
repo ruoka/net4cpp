@@ -1,304 +1,484 @@
 /*
-    sha1.cpp - source code of
-    ============
-    SHA-1 in C++
-    ============
-    100% Public Domain.
-    Original C Code
-        -- Steve Reid <steve@edmweb.com>
-    Small changes to fit into bglibs
-        -- Bruce Guenter <bruce@untroubled.org>
-    Translation to simpler C++ Code
-        -- Volker Grabsch <vog@notjusthosting.com>
-    Safety fixes
-        -- Eugene Hopkinson <slowriot at voxelstorm dot com>
-*/
+ * Copyright (c) 2000-2006 Apple Computer, Inc. All rights reserved.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
+ *
+ * This file contains Original Code and/or Modifications of Original Code
+ * as defined in and that are subject to the Apple Public Source License
+ * Version 2.0 (the 'License'). You may not use this file except in
+ * compliance with the License. The rights granted to you under the License
+ * may not be used to create, or enable the creation or redistribution of,
+ * unlawful or unlicensed copies of an Apple operating system, or to
+ * circumvent, violate, or enable the circumvention or violation of, any
+ * terms of an Apple operating system software license agreement.
+ *
+ * Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this file.
+ *
+ * The Original Code and all software distributed under the License are
+ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+ * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+ * Please see the License for the specific language governing rights and
+ * limitations under the License.
+ *
+ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
+ */
 
-#include "sha1.hpp"
-#include <sstream>
-#include <iomanip>
-#include <fstream>
+/*
+ * This SHA1 code is based on the basic framework from the reference
+ * implementation for MD5.  That implementation is Copyright (C)
+ * 1991-2, RSA Data Security, Inc. Created 1991. All rights reserved.
+ *
+ * License to copy and use this software is granted provided that it
+ * is identified as the "RSA Data Security, Inc. MD5 Message-Digest
+ * Algorithm" in all material mentioning or referencing this software
+ * or this function.
+ *
+ * License is also granted to make and use derivative works provided
+ * that such works are identified as "derived from the RSA Data
+ * Security, Inc. MD5 Message-Digest Algorithm" in all material
+ * mentioning or referencing the derived work.
+ *
+ * RSA Data Security, Inc. makes no representations concerning either
+ * the merchantability of this software or the suitability of this
+ * software for any particular purpose. It is provided "as is"
+ * without express or implied warranty of any kind.
+ *
+ * These notices must be retained in any copies of any part of this
+ * documentation and/or software.
+ *
+ * Based on the FIPS 180-1: Secure Hash Algorithm (SHA-1) available at
+ * http://www.itl.nist.gov/div897/pubs/fip180-1.htm
+ */
 
+#include <sys/types.h>
+// #include <sys/systm.h>
+#include <libkern/OSAtomic.h>
+// #include <libkern/crypto/sha1.h>
+#include <string.h>
+#include "ws/sha1.hpp"
 
-static const size_t BLOCK_INTS = 16;  /* number of 32bit integers per SHA1 block */
-static const size_t BLOCK_BYTES = BLOCK_INTS * 4;
+// #define	memset(x, y, z)	bzero(x, z);
+// #define	memcpy(x, y, z)	bcopy(y, x, z)
 
+/* Internal mappings to the legacy sha1_ctxt structure. */
+#define	state	h.b32
+#define	bcount	c.b32
+#define	buffer	m.b8
 
-static void reset(uint32_t digest[], std::string &buffer, uint64_t &transforms)
+/*
+ * The digest algorithm interprets the input message as a sequence of 32-bit
+ * big-endian words.  We must reverse bytes in each word on x86/64 platforms,
+ * but not on big-endian ones such as PPC.  For performance, we take advantage
+ * of the bswap instruction on x86/64 to perform byte-reversal.  On PPC, we
+ * could do 4-byte load if the address is 4-byte aligned which should further
+ * improve the performance.  But for code simplicity, we punt and do 1-byte
+ * loads instead.
+ */
+#if (defined(__i386__) || defined(__x86_64__)) && defined(__GNUC__)
+#define	FETCH_32(p) ({							\
+	/*register*/ u_int32_t l = (u_int32_t)*((const u_int32_t *)(p));	\
+	__asm__ __volatile__("bswap %0" : "=r" (l) : "0" (l));		\
+	l;								\
+})
+#else
+#define	FETCH_32(p)							\
+	(((u_int32_t)*((const u_int8_t *)(p) + 3)) |			\
+	(((u_int32_t)*((const u_int8_t *)(p) + 2)) << 8) |		\
+	(((u_int32_t)*((const u_int8_t *)(p) + 1)) << 16) |		\
+	(((u_int32_t)*((const u_int8_t *)(p))) << 24))
+#endif /* __i386__ || __x86_64__ */
+
+/*
+ * Encodes input (u_int32_t) into output (unsigned char). Assumes len is
+ * a multiple of 4. This is not compatible with memcpy().
+ */
+static void
+Encode(unsigned char *output, u_int32_t *input, unsigned int len)
 {
-    /* SHA1 initialization constants */
-    digest[0] = 0x67452301;
-    digest[1] = 0xefcdab89;
-    digest[2] = 0x98badcfe;
-    digest[3] = 0x10325476;
-    digest[4] = 0xc3d2e1f0;
+	unsigned int i, j;
 
-    /* Reset counters */
-    buffer = "";
-    transforms = 0;
+	for (i = 0, j = 0; j < len; i++, j += 4) {
+		output[j + 3] = input[i] & 0xff;
+		output[j + 2] = (input[i] >> 8) & 0xff;
+		output[j + 1] = (input[i] >> 16) & 0xff;
+		output[j] = (input[i] >> 24) & 0xff;
+	}
 }
 
+static unsigned char PADDING[64] = { 0x80, /* zeros */ };
 
-static uint32_t rol(const uint32_t value, const size_t bits)
-{
-    return (value << bits) | (value >> (32 - bits));
+/* Constants from FIPS 180-1 */
+#define	K_00_19		0x5a827999UL
+#define	K_20_39		0x6ed9eba1UL
+#define	K_40_59		0x8f1bbcdcUL
+#define	K_60_79		0xca62c1d6UL
+
+/* F, G, H and I are basic SHA1 functions. */
+#define	F(b, c, d)	((((c) ^ (d)) & (b)) ^ (d))
+#define	G(b, c, d)	((b) ^ (c) ^ (d))
+#define	H(b, c, d)	(((b) & (c)) | (((b) | (c)) & (d)))
+
+/* ROTATE_LEFT rotates x left n bits. */
+#define	ROTATE_LEFT(x, n) (((x) << (n)) | ((x) >> (32 - (n))))
+
+/* R, R1-R4 are macros used during each transformation round. */
+#define R(f, k, v, w, x, y, z, i) {				\
+	(v) = ROTATE_LEFT(w, 5) + f(x, y, z) + (v) + (i) + (k);	\
+	(x) = ROTATE_LEFT(x, 30);				\
 }
 
+#define	R1(v, w, x, y, z, i)	R(F, K_00_19, v, w, x, y, z, i)
+#define	R2(v, w, x, y, z, i)	R(G, K_20_39, v, w, x, y, z, i)
+#define	R3(v, w, x, y, z, i)	R(H, K_40_59, v, w, x, y, z, i)
+#define	R4(v, w, x, y, z, i)	R(G, K_60_79, v, w, x, y, z, i)
 
-static uint32_t blk(const uint32_t block[BLOCK_INTS], const size_t i)
-{
-    return rol(block[(i+13)&15] ^ block[(i+8)&15] ^ block[(i+2)&15] ^ block[i], 1);
+/* WUPDATE represents Wt variable that gets updated for steps 16-79 */
+#define	WUPDATE(p, q, r, s) {		\
+	(p) = ((q) ^ (r) ^ (s) ^ (p));	\
+	(p) = ROTATE_LEFT(p, 1);	\
 }
+
+static void SHA1Transform(u_int32_t, u_int32_t, u_int32_t, u_int32_t,
+    u_int32_t, const u_int8_t *, SHA1_CTX *);
+
+void _SHA1Update(SHA1_CTX *context, const void *inpp, size_t inputLen);
+
+void SHA1Final_r(SHA1_CTX *, void *);
+
+// typedef kern_return_t (*InKernelPerformSHA1Func)(void *ref, const void *data, size_t dataLen, u_int32_t *inHash, u_int32_t options, u_int32_t *outHash, Boolean usePhysicalAddress);
+// void sha1_hardware_hook(Boolean option, InKernelPerformSHA1Func func, void *ref);
+// static void *SHA1Ref;
+// InKernelPerformSHA1Func performSHA1WithinKernelOnly;
+// #define SHA1_USE_HARDWARE_THRESHOLD 2048 //bytes
 
 
 /*
- * (R0+R1), R2, R3, R4 are the different operations used in SHA1
+ * SHA1 initialization. Begins a SHA1 operation, writing a new context.
  */
-
-static void R0(const uint32_t block[BLOCK_INTS], const uint32_t v, uint32_t &w, const uint32_t x, const uint32_t y, uint32_t &z, const size_t i)
+void
+SHA1Init(SHA1_CTX *context)
 {
-    z += ((w&(x^y))^y) + block[i] + 0x5a827999 + rol(v, 5);
-    w = rol(w, 30);
+	context->bcount[0] = context->bcount[1] = 0;
+	context->count = 0;
+
+	/* Load magic initialization constants.  */
+	context->state[0] = 0x67452301UL;
+	context->state[1] = 0xefcdab89UL;
+	context->state[2] = 0x98badcfeUL;
+	context->state[3] = 0x10325476UL;
+	context->state[4] = 0xc3d2e1f0UL;
+}
+
+/*
+ * SHA1 block update operation. Continues a SHA1 message-digest
+ * operation, processing another message block, and updating the
+ * context.
+ */
+void
+_SHA1Update(SHA1_CTX *context, const void *inpp, size_t inputLen)
+{
+	u_int32_t i, index, partLen;
+	const unsigned char *input = (const unsigned char *)inpp;
+
+	if (inputLen == 0)
+		return;
+
+	/* Compute number of bytes mod 64 */
+	index = (context->bcount[1] >> 3) & 0x3F;
+
+	/* Update number of bits */
+	if ((context->bcount[1] += (inputLen << 3)) < (inputLen << 3))
+		context->bcount[0]++;
+	context->bcount[0] += (inputLen >> 29);
+
+	partLen = 64 - index;
+
+	/* Transform as many times as possible. */
+	i = 0;
+	if (inputLen >= partLen) {
+		if (index != 0) {
+			memcpy(&context->buffer[index], input, partLen);
+			SHA1Transform(context->state[0], context->state[1],
+			    context->state[2], context->state[3],
+			    context->state[4], context->buffer, context);
+			i = partLen;
+		}
+
+		for (; i + 63 < inputLen; i += 64)
+			SHA1Transform(context->state[0], context->state[1],
+			    context->state[2], context->state[3],
+			    context->state[4], &input[i], context);
+
+		if (inputLen == i)
+			return;
+
+		index = 0;
+	}
+
+	/* Buffer remaining input */
+	memcpy(&context->buffer[index], &input[i], inputLen - i);
 }
 
 
-static void R1(uint32_t block[BLOCK_INTS], const uint32_t v, uint32_t &w, const uint32_t x, const uint32_t y, uint32_t &z, const size_t i)
-{
-    block[i] = blk(block, i);
-    z += ((w&(x^y))^y) + block[i] + 0x5a827999 + rol(v, 5);
-    w = rol(w, 30);
-}
-
-
-static void R2(uint32_t block[BLOCK_INTS], const uint32_t v, uint32_t &w, const uint32_t x, const uint32_t y, uint32_t &z, const size_t i)
-{
-    block[i] = blk(block, i);
-    z += (w^x^y) + block[i] + 0x6ed9eba1 + rol(v, 5);
-    w = rol(w, 30);
-}
-
-
-static void R3(uint32_t block[BLOCK_INTS], const uint32_t v, uint32_t &w, const uint32_t x, const uint32_t y, uint32_t &z, const size_t i)
-{
-    block[i] = blk(block, i);
-    z += (((w|x)&y)|(w&x)) + block[i] + 0x8f1bbcdc + rol(v, 5);
-    w = rol(w, 30);
-}
-
-
-static void R4(uint32_t block[BLOCK_INTS], const uint32_t v, uint32_t &w, const uint32_t x, const uint32_t y, uint32_t &z, const size_t i)
-{
-    block[i] = blk(block, i);
-    z += (w^x^y) + block[i] + 0xca62c1d6 + rol(v, 5);
-    w = rol(w, 30);
-}
 
 
 /*
- * Hash a single 512-bit block. This is the core of the algorithm.
+ * This function is called by the SHA1 hardware kext during its init.
+ * This will register the function to call to perform SHA1 using hardware.
  */
+// void sha1_hardware_hook(Boolean option, InKernelPerformSHA1Func func, void *ref)
+// {
+// 	if(option) {
+// 		// Establish the hook. The hardware is ready.
+// 		OSCompareAndSwapPtr((void*)NULL, (void*)ref, (void * volatile*)&SHA1Ref);
+//
+// 		if(!OSCompareAndSwapPtr((void *)NULL, (void *)func, (void * volatile *)&performSHA1WithinKernelOnly)) {
+// 			panic("sha1_hardware_hook: Called twice.. Should never happen\n");
+// 		}
+// 	}
+// 	else {
+// 		// The hardware is going away. Tear down the hook.
+// 		performSHA1WithinKernelOnly = NULL;
+// 		SHA1Ref = NULL;
+// 	}
+// }
 
-static void transform(uint32_t digest[], uint32_t block[BLOCK_INTS], uint64_t &transforms)
-{
-    /* Copy digest[] to working vars */
-    uint32_t a = digest[0];
-    uint32_t b = digest[1];
-    uint32_t c = digest[2];
-    uint32_t d = digest[3];
-    uint32_t e = digest[4];
-
-    /* 4 rounds of 20 operations each. Loop unrolled. */
-    R0(block, a, b, c, d, e,  0);
-    R0(block, e, a, b, c, d,  1);
-    R0(block, d, e, a, b, c,  2);
-    R0(block, c, d, e, a, b,  3);
-    R0(block, b, c, d, e, a,  4);
-    R0(block, a, b, c, d, e,  5);
-    R0(block, e, a, b, c, d,  6);
-    R0(block, d, e, a, b, c,  7);
-    R0(block, c, d, e, a, b,  8);
-    R0(block, b, c, d, e, a,  9);
-    R0(block, a, b, c, d, e, 10);
-    R0(block, e, a, b, c, d, 11);
-    R0(block, d, e, a, b, c, 12);
-    R0(block, c, d, e, a, b, 13);
-    R0(block, b, c, d, e, a, 14);
-    R0(block, a, b, c, d, e, 15);
-    R1(block, e, a, b, c, d,  0);
-    R1(block, d, e, a, b, c,  1);
-    R1(block, c, d, e, a, b,  2);
-    R1(block, b, c, d, e, a,  3);
-    R2(block, a, b, c, d, e,  4);
-    R2(block, e, a, b, c, d,  5);
-    R2(block, d, e, a, b, c,  6);
-    R2(block, c, d, e, a, b,  7);
-    R2(block, b, c, d, e, a,  8);
-    R2(block, a, b, c, d, e,  9);
-    R2(block, e, a, b, c, d, 10);
-    R2(block, d, e, a, b, c, 11);
-    R2(block, c, d, e, a, b, 12);
-    R2(block, b, c, d, e, a, 13);
-    R2(block, a, b, c, d, e, 14);
-    R2(block, e, a, b, c, d, 15);
-    R2(block, d, e, a, b, c,  0);
-    R2(block, c, d, e, a, b,  1);
-    R2(block, b, c, d, e, a,  2);
-    R2(block, a, b, c, d, e,  3);
-    R2(block, e, a, b, c, d,  4);
-    R2(block, d, e, a, b, c,  5);
-    R2(block, c, d, e, a, b,  6);
-    R2(block, b, c, d, e, a,  7);
-    R3(block, a, b, c, d, e,  8);
-    R3(block, e, a, b, c, d,  9);
-    R3(block, d, e, a, b, c, 10);
-    R3(block, c, d, e, a, b, 11);
-    R3(block, b, c, d, e, a, 12);
-    R3(block, a, b, c, d, e, 13);
-    R3(block, e, a, b, c, d, 14);
-    R3(block, d, e, a, b, c, 15);
-    R3(block, c, d, e, a, b,  0);
-    R3(block, b, c, d, e, a,  1);
-    R3(block, a, b, c, d, e,  2);
-    R3(block, e, a, b, c, d,  3);
-    R3(block, d, e, a, b, c,  4);
-    R3(block, c, d, e, a, b,  5);
-    R3(block, b, c, d, e, a,  6);
-    R3(block, a, b, c, d, e,  7);
-    R3(block, e, a, b, c, d,  8);
-    R3(block, d, e, a, b, c,  9);
-    R3(block, c, d, e, a, b, 10);
-    R3(block, b, c, d, e, a, 11);
-    R4(block, a, b, c, d, e, 12);
-    R4(block, e, a, b, c, d, 13);
-    R4(block, d, e, a, b, c, 14);
-    R4(block, c, d, e, a, b, 15);
-    R4(block, b, c, d, e, a,  0);
-    R4(block, a, b, c, d, e,  1);
-    R4(block, e, a, b, c, d,  2);
-    R4(block, d, e, a, b, c,  3);
-    R4(block, c, d, e, a, b,  4);
-    R4(block, b, c, d, e, a,  5);
-    R4(block, a, b, c, d, e,  6);
-    R4(block, e, a, b, c, d,  7);
-    R4(block, d, e, a, b, c,  8);
-    R4(block, c, d, e, a, b,  9);
-    R4(block, b, c, d, e, a, 10);
-    R4(block, a, b, c, d, e, 11);
-    R4(block, e, a, b, c, d, 12);
-    R4(block, d, e, a, b, c, 13);
-    R4(block, c, d, e, a, b, 14);
-    R4(block, b, c, d, e, a, 15);
-
-    /* Add the working vars back into digest[] */
-    digest[0] += a;
-    digest[1] += b;
-    digest[2] += c;
-    digest[3] += d;
-    digest[4] += e;
-
-    /* Count the number of transformations */
-    transforms++;
-}
-
-
-static void buffer_to_block(const std::string &buffer, uint32_t block[BLOCK_INTS])
-{
-    /* Convert the std::string (byte buffer) to a uint32_t array (MSB) */
-    for (size_t i = 0; i < BLOCK_INTS; i++)
-    {
-        block[i] = (buffer[4*i+3] & 0xff)
-                   | (buffer[4*i+2] & 0xff)<<8
-                   | (buffer[4*i+1] & 0xff)<<16
-                   | (buffer[4*i+0] & 0xff)<<24;
-    }
-}
-
-
-SHA1::SHA1()
-{
-    reset(digest, buffer, transforms);
-}
-
-
-void SHA1::update(const std::string &s)
-{
-    std::istringstream is(s);
-    update(is);
-}
-
-
-void SHA1::update(std::istream &is)
-{
-    while (true)
-    {
-        char sbuf[BLOCK_BYTES];
-        is.read(sbuf, BLOCK_BYTES - buffer.size());
-        buffer.append(sbuf, is.gcount());
-        if (buffer.size() != BLOCK_BYTES)
-        {
-            return;
-        }
-        uint32_t block[BLOCK_INTS];
-        buffer_to_block(buffer, block);
-        transform(digest, block, transforms);
-        buffer.clear();
-    }
-}
-
+// static u_int32_t SHA1UpdateWithHardware(SHA1_CTX *context, const unsigned char *data, size_t dataLen, Boolean usePhysicalAddress)
+// {
+// 	u_int32_t *inHashBuffer = context->state;
+// 	u_int32_t options = 0;
+// 	int result;
+//
+// 	result = performSHA1WithinKernelOnly(SHA1Ref, data, dataLen, inHashBuffer, options, inHashBuffer, usePhysicalAddress);
+// 	if(result != KERN_SUCCESS) {
+// 		//The hardware failed to hash for some reason. Fall back to software.
+// 		return 0;
+// 	}
+//
+// 	//Update the context with the total length.
+//         /* Update number of bits */
+//         if ((context->bcount[1] += (dataLen << 3)) < (dataLen << 3))
+//                 context->bcount[0]++;
+//         context->bcount[0] += (dataLen >> 29);
+// 	return dataLen;
+// }
 
 /*
- * Add padding and return the message digest.
+ * This is function is only called in from the pagefault path or from page_copy().
+ * So we assume that we can safely convert the virtual address to the physical address and use it.
+ * Assumptions: The passed in address(inpp) is a kernel virtual address
+ * and a physical page has been faulted in.
+ * The inputLen passed in should always be less than or equal to a  page size (4096)
+ * and inpp should be on a page boundary.
+ * "performSHA1WithinKernelOnly" is initialized only when the hardware driver exists and is ready.
  */
+// void SHA1UpdateUsePhysicalAddress(SHA1_CTX *context, const void *inpp, size_t inputLen)
+// {
+// 	Boolean usePhysicalAddress = TRUE;
+// 	if((inputLen == PAGE_SIZE) && performSHA1WithinKernelOnly) { // If hardware exists and is ready.
+// 		if(SHA1UpdateWithHardware(context, (const unsigned char *)inpp, inputLen, usePhysicalAddress))
+// 			return;
+// 		//else for some reason the hardware failed..
+// 		//fall through to software and try the hash in software.
+// 	}
+// 	//Use the software implementation since the hardware is absent or
+// 	// has not been initialized yet or inputLen !=  PAGE_SIZE.
+// 	_SHA1Update(context, inpp, inputLen);
+// }
 
-std::string SHA1::final()
+/*
+ * A wrapper around _SHA1Update() to pick between software or hardware based SHA1.
+ *
+ */
+void SHA1Update(SHA1_CTX *context, const void *inpp, size_t inputLen)
 {
-    /* Total number of hashed bits */
-    uint64_t total_bits = (transforms*BLOCK_BYTES + buffer.size()) * 8;
+	const unsigned char *input = (const unsigned char *)inpp;
+	// Boolean usePhysicalAddress = FALSE;
+	// u_int32_t index;
+    //
+	// if((inputLen > SHA1_USE_HARDWARE_THRESHOLD) && performSHA1WithinKernelOnly) {
+	// 	index = (context->bcount[1] >> 3) & 0x3F;
+	// 	if(index != 0) {  //bytes left in the context. Handle them first.
+	// 		u_int32_t partLen = 64 - index;
+	// 		memcpy(&context->buffer[index], input, partLen);
+	// 		_SHA1Update(context, inpp, inputLen);
+	// 		inputLen -= partLen;
+	// 		input += partLen;
+	// 	}
+    //
+	// 	u_int32_t lenForHardware = inputLen & (~0x3F); //multiple of 64
+	// 	u_int32_t bytesHashed = 0;
+	// 	bytesHashed = SHA1UpdateWithHardware(context, input, lenForHardware, usePhysicalAddress);
+    //
+	// 	inputLen -= bytesHashed;
+	// 	input += bytesHashed;
+	// }
 
-    /* Padding */
-    buffer += 0x80;
-    size_t orig_size = buffer.size();
-    while (buffer.size() < BLOCK_BYTES)
-    {
-        buffer += (char)0x00;
-    }
-
-    uint32_t block[BLOCK_INTS];
-    buffer_to_block(buffer, block);
-
-    if (orig_size > BLOCK_BYTES - 8)
-    {
-        transform(digest, block, transforms);
-        for (size_t i = 0; i < BLOCK_INTS - 2; i++)
-        {
-            block[i] = 0;
-        }
-    }
-
-    /* Append total_bits, split this uint64_t into two uint32_t */
-    block[BLOCK_INTS - 1] = total_bits;
-    block[BLOCK_INTS - 2] = (total_bits >> 32);
-    transform(digest, block, transforms);
-
-    /* Hex std::string */
-    std::ostringstream result;
-    for (size_t i = 0; i < sizeof(digest) / sizeof(digest[0]); i++)
-    {
-        result << std::hex << std::setfill('0') << std::setw(8);
-        result << digest[i];
-    }
-
-    /* Reset for next run */
-    reset(digest, buffer, transforms);
-
-    return result.str();
+	//Fall through to the software implementation.
+	_SHA1Update(context, input, inputLen);
 }
 
-
-std::string SHA1::from_file(const std::string &filename)
+/*
+ * For backwards compatibility, sha1_result symbol is mapped to this
+ * routine since it's equivalent to SHA1Final with reversed parameters.
+ */
+void
+SHA1Final_r(SHA1_CTX *context, void *digest)
 {
-    std::ifstream stream(filename.c_str(), std::ios::binary);
-    SHA1 checksum;
-    checksum.update(stream);
-    return checksum.final();
+	SHA1Final(digest, context);
+}
+
+/*
+ * SHA1 finalization. Ends an SHA1 message-digest operation, writing the
+ * the message digest and zeroizing the context.
+ */
+void
+SHA1Final(void *digest, SHA1_CTX *context)
+{
+	unsigned char bits[8];
+	u_int32_t index = (context->bcount[1] >> 3) & 0x3f;
+
+	/* Save number of bits */
+	Encode(bits, context->bcount, 8);
+
+	/* Pad out to 56 mod 64. */
+	SHA1Update(context, PADDING, ((index < 56) ? 56 : 120) - index);
+
+	/* Append length (before padding) */
+	SHA1Update(context, bits, 8);
+
+	/* Store state in digest */
+	Encode((unsigned char *)digest, context->state, 20);
+
+	/* Zeroize sensitive information. */
+	memset(context, 0, sizeof (*context));
+}
+
+/*
+ * SHA1 basic transformation. Transforms state based on block.
+ */
+static void
+SHA1Transform(u_int32_t a, u_int32_t b, u_int32_t c, u_int32_t d,
+    u_int32_t e, const u_int8_t block[64], SHA1_CTX *context)
+{
+	/* Register (instead of array) is a win in most cases */
+	/*register*/ u_int32_t w0, w1, w2, w3, w4, w5, w6, w7;
+	/*register*/ u_int32_t w8, w9, w10, w11, w12, w13, w14, w15;
+
+	w15 = FETCH_32(block + 60);
+	w14 = FETCH_32(block + 56);
+	w13 = FETCH_32(block + 52);
+	w12 = FETCH_32(block + 48);
+	w11 = FETCH_32(block + 44);
+	w10 = FETCH_32(block + 40);
+	w9  = FETCH_32(block + 36);
+	w8  = FETCH_32(block + 32);
+	w7  = FETCH_32(block + 28);
+	w6  = FETCH_32(block + 24);
+	w5  = FETCH_32(block + 20);
+	w4  = FETCH_32(block + 16);
+	w3  = FETCH_32(block + 12);
+	w2  = FETCH_32(block +  8);
+	w1  = FETCH_32(block +  4);
+	w0  = FETCH_32(block +  0);
+
+	/* Round 1 */
+					R1(e, a, b, c, d,  w0);		/*  0 */
+					R1(d, e, a, b, c,  w1);		/*  1 */
+					R1(c, d, e, a, b,  w2);		/*  2 */
+					R1(b, c, d, e, a,  w3);		/*  3 */
+					R1(a, b, c, d, e,  w4);		/*  4 */
+					R1(e, a, b, c, d,  w5);		/*  5 */
+					R1(d, e, a, b, c,  w6);		/*  6 */
+					R1(c, d, e, a, b,  w7);		/*  7 */
+					R1(b, c, d, e, a,  w8);		/*  8 */
+					R1(a, b, c, d, e,  w9);		/*  9 */
+					R1(e, a, b, c, d, w10);		/* 10 */
+					R1(d, e, a, b, c, w11);		/* 11 */
+					R1(c, d, e, a, b, w12);		/* 12 */
+					R1(b, c, d, e, a, w13);		/* 13 */
+					R1(a, b, c, d, e, w14);		/* 14 */
+					R1(e, a, b, c, d, w15);		/* 15 */
+	WUPDATE( w0, w13,  w8,  w2);	R1(d, e, a, b, c,  w0);		/* 16 */
+	WUPDATE( w1, w14,  w9,  w3);	R1(c, d, e, a, b,  w1);		/* 17 */
+	WUPDATE( w2, w15, w10,  w4);	R1(b, c, d, e, a,  w2);		/* 18 */
+	WUPDATE( w3,  w0, w11,  w5);	R1(a, b, c, d, e,  w3);		/* 19 */
+
+	/* Round 2 */
+	WUPDATE( w4,  w1, w12,  w6);	R2(e, a, b, c, d,  w4);		/* 20 */
+	WUPDATE( w5,  w2, w13,  w7);	R2(d, e, a, b, c,  w5);		/* 21 */
+	WUPDATE( w6,  w3, w14,  w8);	R2(c, d, e, a, b,  w6);		/* 22 */
+	WUPDATE( w7,  w4, w15,  w9);	R2(b, c, d, e, a,  w7);		/* 23 */
+	WUPDATE( w8,  w5,  w0, w10);	R2(a, b, c, d, e,  w8);		/* 24 */
+	WUPDATE( w9,  w6,  w1, w11);	R2(e, a, b, c, d,  w9);		/* 25 */
+	WUPDATE(w10,  w7,  w2, w12);	R2(d, e, a, b, c, w10);		/* 26 */
+	WUPDATE(w11,  w8,  w3, w13);	R2(c, d, e, a, b, w11);		/* 27 */
+	WUPDATE(w12,  w9,  w4, w14);	R2(b, c, d, e, a, w12);		/* 28 */
+	WUPDATE(w13, w10,  w5, w15);	R2(a, b, c, d, e, w13);		/* 29 */
+	WUPDATE(w14, w11,  w6,  w0);	R2(e, a, b, c, d, w14);		/* 30 */
+	WUPDATE(w15, w12,  w7,  w1);	R2(d, e, a, b, c, w15);		/* 31 */
+	WUPDATE( w0, w13,  w8,  w2);	R2(c, d, e, a, b,  w0);		/* 32 */
+	WUPDATE( w1, w14,  w9,  w3);	R2(b, c, d, e, a,  w1);		/* 33 */
+	WUPDATE( w2, w15, w10,  w4);	R2(a, b, c, d, e,  w2);		/* 34 */
+	WUPDATE( w3,  w0, w11,  w5);	R2(e, a, b, c, d,  w3);		/* 35 */
+	WUPDATE( w4,  w1, w12,  w6);	R2(d, e, a, b, c,  w4);		/* 36 */
+	WUPDATE( w5,  w2, w13,  w7);	R2(c, d, e, a, b,  w5);		/* 37 */
+	WUPDATE( w6,  w3, w14,  w8);	R2(b, c, d, e, a,  w6);		/* 38 */
+	WUPDATE( w7,  w4, w15,  w9);	R2(a, b, c, d, e,  w7);		/* 39 */
+
+	/* Round 3 */
+	WUPDATE( w8,  w5,  w0, w10);	R3(e, a, b, c, d,  w8);		/* 40 */
+	WUPDATE( w9,  w6,  w1, w11);	R3(d, e, a, b, c,  w9);		/* 41 */
+	WUPDATE(w10,  w7,  w2, w12);	R3(c, d, e, a, b, w10);		/* 42 */
+	WUPDATE(w11,  w8,  w3, w13);	R3(b, c, d, e, a, w11);		/* 43 */
+	WUPDATE(w12,  w9,  w4, w14);	R3(a, b, c, d, e, w12);		/* 44 */
+	WUPDATE(w13, w10,  w5, w15);	R3(e, a, b, c, d, w13);		/* 45 */
+	WUPDATE(w14, w11,  w6,  w0);	R3(d, e, a, b, c, w14);		/* 46 */
+	WUPDATE(w15, w12,  w7,  w1);	R3(c, d, e, a, b, w15);		/* 47 */
+	WUPDATE( w0, w13,  w8,  w2);	R3(b, c, d, e, a,  w0);		/* 48 */
+	WUPDATE( w1, w14,  w9,  w3);	R3(a, b, c, d, e,  w1);		/* 49 */
+	WUPDATE( w2, w15, w10,  w4);	R3(e, a, b, c, d,  w2);		/* 50 */
+	WUPDATE( w3,  w0, w11,  w5);	R3(d, e, a, b, c,  w3);		/* 51 */
+	WUPDATE( w4,  w1, w12,  w6);	R3(c, d, e, a, b,  w4);		/* 52 */
+	WUPDATE( w5,  w2, w13,  w7);	R3(b, c, d, e, a,  w5);		/* 53 */
+	WUPDATE( w6,  w3, w14,  w8);	R3(a, b, c, d, e,  w6);		/* 54 */
+	WUPDATE( w7,  w4, w15,  w9);	R3(e, a, b, c, d,  w7);		/* 55 */
+	WUPDATE( w8,  w5,  w0, w10);	R3(d, e, a, b, c,  w8);		/* 56 */
+	WUPDATE( w9,  w6,  w1, w11);	R3(c, d, e, a, b,  w9);		/* 57 */
+	WUPDATE(w10,  w7,  w2, w12);	R3(b, c, d, e, a, w10);		/* 58 */
+	WUPDATE(w11,  w8,  w3, w13);	R3(a, b, c, d, e, w11);		/* 59 */
+
+	WUPDATE(w12,  w9,  w4, w14);	R4(e, a, b, c, d, w12);		/* 60 */
+	WUPDATE(w13, w10,  w5, w15);	R4(d, e, a, b, c, w13);		/* 61 */
+	WUPDATE(w14, w11,  w6,  w0);	R4(c, d, e, a, b, w14);		/* 62 */
+	WUPDATE(w15, w12,  w7,  w1);	R4(b, c, d, e, a, w15);		/* 63 */
+	WUPDATE( w0, w13,  w8,  w2);	R4(a, b, c, d, e,  w0);		/* 64 */
+	WUPDATE( w1, w14,  w9,  w3);	R4(e, a, b, c, d,  w1);		/* 65 */
+	WUPDATE( w2, w15, w10,  w4);	R4(d, e, a, b, c,  w2);		/* 66 */
+	WUPDATE( w3,  w0, w11,  w5);	R4(c, d, e, a, b,  w3);		/* 67 */
+	WUPDATE( w4,  w1, w12,  w6);	R4(b, c, d, e, a,  w4);		/* 68 */
+	WUPDATE( w5,  w2, w13,  w7);	R4(a, b, c, d, e,  w5);		/* 69 */
+	WUPDATE( w6,  w3, w14,  w8);	R4(e, a, b, c, d,  w6);		/* 70 */
+	WUPDATE( w7,  w4, w15,  w9);	R4(d, e, a, b, c,  w7);		/* 71 */
+	WUPDATE( w8,  w5,  w0, w10);	R4(c, d, e, a, b,  w8);		/* 72 */
+	WUPDATE( w9,  w6,  w1, w11);	R4(b, c, d, e, a,  w9);		/* 73 */
+	WUPDATE(w10,  w7,  w2, w12);	R4(a, b, c, d, e, w10);		/* 74 */
+	WUPDATE(w11,  w8,  w3, w13);	R4(e, a, b, c, d, w11);		/* 75 */
+	WUPDATE(w12,  w9,  w4, w14);	R4(d, e, a, b, c, w12);		/* 76 */
+	WUPDATE(w13, w10,  w5, w15);	R4(c, d, e, a, b, w13);		/* 77 */
+	WUPDATE(w14, w11,  w6,  w0);	R4(b, c, d, e, a, w14);		/* 78 */
+	WUPDATE(w15, w12,  w7,  w1);	R4(a, b, c, d, e, w15);		/* 79 */
+
+	context->state[0] += a;
+	context->state[1] += b;
+	context->state[2] += c;
+	context->state[3] += d;
+	context->state[4] += e;
+
+	/* Zeroize sensitive information. */
+	w15 = w14 = w13 = w12 = w11 = w10 = w9 = w8 = 0;
+	w7 = w6 = w5 = w4 = w3 = w2 = w1 = w0 = 0;
 }
