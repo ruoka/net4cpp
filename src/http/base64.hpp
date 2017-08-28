@@ -27,7 +27,7 @@ namespace http::base64 {
         return 64;
     }
 
-    inline std::string encode(std::basic_string_view<unsigned char> source)
+    inline std::string encode(std::string_view source)
     {
         auto encoded = std::string{};
 
@@ -59,6 +59,13 @@ namespace http::base64 {
         }
 
         return encoded;
+    }
+
+    template<typename CharT,
+             std::enable_if_t<!std::is_same_v<CharT,char>,bool> = true>
+    inline std::string encode(std::basic_string_view<CharT> source)
+    {
+        return encode(std::string_view{reinterpret_cast<const char*>(source.data()), source.size()});
     }
 
     inline std::string decode(std::string_view source)

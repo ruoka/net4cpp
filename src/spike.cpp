@@ -90,6 +90,11 @@ int main()
 
     std::cout << sha1::base64("ES1O60NMq4L+S56lB1kfZg==258EAFA5-E914-47DA-95CA-C5AB0DC85B11") << std::endl;
 
+    auto hash = sha1::sha_1{};
+    hash.append("ES1O60NMq4L+S56lB1kfZg==258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+    auto result = hash.data();
+    std::cout << http::base64::encode(std::basic_string_view<std::byte>(result, 20)) << std::endl;
+
     // auto f1 = ws::frame{};
     // f1.header.fin = std::byte{0b1};
     // f1.header.rsv1 = std::byte{0b0};
@@ -127,18 +132,18 @@ int main()
     // std::clog << "opcode = " << std::to_integer<int>(f2.header.opcode) << std::endl;
     // std::clog << "payload_length = " << std::to_integer<std::size_t>(f2.header.payload_length) << std::endl;
 
-    auto hash = sha1::sha_1{};
-    hash.initialize();
-    hash.loop("test");
-    hash.result();
-
-    net::slog.tag("Spike");
-    net::slog.facility(net::syslog::facility::local0);
-    net::slog.level(net::syslog::severity::debug);
-    net::slog.redirect(std::clog);
-
-    auto server = ws::server{};
-    server.listen("8080"s);
+    // auto hash = sha1::sha_1{};
+    // hash.initialize();
+    // hash.loop("test");
+    // hash.result();
+    //
+    // net::slog.tag("Spike");
+    // net::slog.facility(net::syslog::facility::local0);
+    // net::slog.level(net::syslog::severity::debug);
+    // net::slog.redirect(std::clog);
+    //
+    // auto server = ws::server{};
+    // server.listen("8080"s);
 
     return 0;
 }
