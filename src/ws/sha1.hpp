@@ -67,7 +67,10 @@ extern void SHA1Final(void *, SHA1_CTX *);
 }
 #endif
 
+#include <array>
+#include <algorithm>
 #include "http/base64.hpp"
+#include "gsl/assert.hpp"
 
 namespace sha1 {
 
@@ -88,6 +91,99 @@ inline std::string base64(std::string_view source)
     auto tmp2 = std::basic_string_view<unsigned char>{reinterpret_cast<const unsigned char*>(tmp1), SHA1_RESULTLEN};
     return http::base64::encode(tmp2);
 }
+
+class sha_1
+{
+    std::uint32_t h0, h1, h2, h3, h4;
+
+    union
+    {
+        std::aligned_storage_t<160> hh;
+        std::uint32_t digest[5];
+    };
+
+public:
+
+    void initialize() noexcept
+    {
+        h0 = 0x67452301u;
+        h1 = 0xEFCDAB89u;
+        h2 = 0x98BADCFEu;
+        h3 = 0x10325476u;
+        h4 = 0xC3D2E1F0u;
+        hh = {0ul,0ul,0ul,0ul,0ul};
+    }
+
+    void loop(std::string_view message)
+    {
+        constexpr auto chunk_length = 64ul;
+
+        if(message.length() == 0)
+            return;
+
+        for(const auto chunk = message.substr(0, std::min(message.length(), chunk_length));
+            message.length() >= chunk_length; message.remove_prefix(chunk.length()))
+        {
+            auto w = std::array<std::uint32_t,80>{};
+
+            for(auto i = 0u; i < 16u; ++i)
+                w[i] = (chunk[i] << 24) xor (chunk[i+1] << 16) xor (chunk[i+2] << 8) xor chunk[i+3];
+
+            for(auto i = 16u; i < 32u; ++i)
+                w[i] = (w[i-3] xor w[i-8] xor w[i-14] xor w[i-16]) << 1;
+
+            for(auto i = 32u; i < 79u; ++i)
+                w[i] = (w[i-6] xor w[i-16] xor w[i-28] xor w[i-32]) << 2;
+
+            auto a = h0, b = h1, c = h2, d = h3, e = h4, f = 0u, k = 0u;
+
+            for(auto i = 0ul; i < 79ul; ++i)
+            {
+                if (i <= 19)
+                {
+                    f = (b and c) or ((not b) and d);
+                    k = 0x5A827999u;
+                }
+                else if (20 <= i and i <= 39)
+                {
+                    f = b xor c xor d;
+                    k = 0x6ED9EBA1u;
+                }
+                else if (40 <= i and i <= 59)
+                {
+                    f = (b and c) or (b and d) or (c and d);
+                    k = 0x8F1BBCDCu;
+                }
+                else if (60 <= i and i <= 79)
+                {
+                    f = b xor c xor d;
+                    k = 0xCA62C1D6u;
+                }
+                auto temp = (a << 5) + f + e + k + w[i];
+                e = d;
+                d = c;
+                c = (b << 30);
+                b = a;
+                a = temp;
+            }
+            h0 += a;
+            h1 += b;
+            h2 += c;
+            h3 += d;
+            h4 += e;
+        }
+    }
+
+    const std::byte* result()
+    {
+        digest[0] = h0;
+        digest[1] = h1;
+        digest[2] = h2;
+        digest[3] = h3;
+        digest[4] = h4;
+        return reinterpret_cast<const std::byte*>(&hh);
+    }
+};
 
 } // namespace sha1
 

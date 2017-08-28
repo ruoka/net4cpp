@@ -127,6 +127,11 @@ int main()
     // std::clog << "opcode = " << std::to_integer<int>(f2.header.opcode) << std::endl;
     // std::clog << "payload_length = " << std::to_integer<std::size_t>(f2.header.payload_length) << std::endl;
 
+    auto hash = sha1::sha_1{};
+    hash.initialize();
+    hash.loop("test");
+    hash.result();
+
     net::slog.tag("Spike");
     net::slog.facility(net::syslog::facility::local0);
     net::slog.level(net::syslog::severity::debug);
