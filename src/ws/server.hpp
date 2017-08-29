@@ -4,17 +4,13 @@
 #include "std/extension.hpp"
 #include "net/acceptor.hpp"
 #include "net/syslogstream.hpp"
+#include "cryptic/sha1.hpp"
 #include "ws/frame.hpp"
-#include "ws/sha1.hpp"
-#include "http/base64.hpp"
-#include "ws/test_key.hpp"
 
 namespace ws {
 
 using namespace std::string_literals;
 using namespace std::chrono_literals;
-
-using namespace http;
 
 class server
 {
@@ -51,6 +47,8 @@ public:
     }
 
 private:
+
+    using sha1 = cryptic::sha1;
 
     void handle(net::endpointstream client)
     {
@@ -104,19 +102,20 @@ private:
 
                 constexpr auto guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
                 const auto client_key = headers["Sec-WebSocket-Key"];
-                const auto server_key = sha1::base64(client_key+guid);
+                const auto server_key = client_key+guid;
+                const auto server_key_sha1_base64 = sha1::base64(server_key);
 
                 net::slog << net::debug << "Sec-WebSocket-Key: " << client_key << net::flush;
-                net::slog << net::debug << "Concatenated: " << client_key+guid << net::flush;
-                net::slog << net::debug << "Sec-WebSocket-Accept: " << server_key << net::flush;
+                net::slog << net::debug << "Concatenated: " <<server_key << net::flush;
+                net::slog << net::debug << "Sec-WebSocket-Accept: " << server_key_sha1_base64 << net::flush;
 
                 client << "HTTP/1.1 101 Switching Protocols"                       << net::crlf
                     //    << "Date: " << ext::to_rfc1123(chrono::system_clock::now()) << net::crlf
                     //    << "Server: net4cpp/1.1"                                    << net::crlf
 
-                       << "Upgrade: websocket"                                     << net::crlf
-                       << "Connection: Upgrade"                                    << net::crlf
-                       << "Sec-WebSocket-Accept: " << server_key << " "            << net::crlf
+                       << "Upgrade: websocket"                                      << net::crlf
+                       << "Connection: Upgrade"                                     << net::crlf
+                       << "Sec-WebSocket-Accept: " << server_key_sha1_base64 << " " << net::crlf
                     //    << "Sec-WebSocket-Protocol: chat"                           << net::crlf
                     //    << "Sec-WebSocket-Version: 13"                              << net::crlf
 

@@ -5,8 +5,6 @@
 
 namespace gsl {
 
-enum class byte : unsigned char {};
-
 // [views.constants], constants
 constexpr std::ptrdiff_t dynamic_extent = -1;
 
@@ -87,7 +85,7 @@ public:
     {}
 
     template <class Container>
-    constexpr span(Container& cont) : m_data{cont.data()}, m_size{cont.size()}
+    constexpr span(Container& cont) : m_data{reinterpret_cast<ElementType*>(cont.data())}, m_size{cont.size()}
     {}
 
     template <class Container> span(const Container&&) = delete;
@@ -134,7 +132,7 @@ public:
     template <ptrdiff_t Offset, ptrdiff_t Count = dynamic_extent>
     constexpr span<element_type, Count> subspan() const
     {
-        return subspan(Offset);
+        return subspan(Offset, Count);
     }
 
     constexpr span<element_type, dynamic_extent> first(index_type count) const
@@ -152,7 +150,7 @@ public:
     constexpr span<element_type, dynamic_extent> subspan(index_type offset, index_type count = dynamic_extent) const
     {
         if(offset > m_size) std::terminate();
-        return {m_data+offset,m_size - offset};
+        return {m_data+offset, (count == dynamic_extent) ? (m_size - offset) : count};
     }
 
     // [span.obs], span observers
@@ -290,19 +288,59 @@ constexpr bool operator>=(const span<ElementType, Extent>& l, const span<Element
 template <class ElementType, ptrdiff_t Extent>
 constexpr span<const std::byte, (Extent == dynamic_extent ? dynamic_extent : (sizeof(ElementType) * Extent))> as_bytes(span<ElementType, Extent> s) noexcept
 {
-    return {static_cast<const byte*>(s.data()), s.length_bytes()};
+    return {static_cast<const std::byte*>(s.data()), s.length_bytes()};
 }
 
 template <class ElementType, ptrdiff_t Extent>
 constexpr span<std::byte, (Extent == dynamic_extent ? dynamic_extent : (sizeof(ElementType) * Extent))> as_writeable_bytes(span<ElementType, Extent> s) noexcept
 {
-    return {static_cast<byte*>(s.data()), s.length_bytes()};
+    return {static_cast<std::byte*>(s.data()), s.length_bytes()};
 }
+
+//
+// make_span() - Utility functions for creating spans
+//
 
 template <class ElementType>
 span<ElementType> make_span(ElementType* ptr, typename span<ElementType>::index_type count)
 {
     return span<ElementType>(ptr, count);
+}
+
+template <class ElementType>
+span<ElementType> make_span(ElementType* firstElem, ElementType* lastElem)
+{
+    return span<ElementType>(firstElem, lastElem);
+}
+
+template <class ElementType, std::size_t N>
+span<ElementType, N> make_span(ElementType (&arr)[N])
+{
+    return span<ElementType, N>(arr);
+}
+
+template <class Container>
+span<typename Container::value_type> make_span(Container& cont)
+{
+    return span<typename Container::value_type>(cont);
+}
+
+template <class Container>
+span<const typename Container::value_type> make_span(const Container& cont)
+{
+    return span<const typename Container::value_type>(cont);
+}
+
+template <class Ptr>
+span<typename Ptr::element_type> make_span(Ptr& cont, std::ptrdiff_t count)
+{
+    return span<typename Ptr::element_type>(cont, count);
+}
+
+template <class Ptr>
+span<typename Ptr::element_type> make_span(Ptr& cont)
+{
+    return span<typename Ptr::element_type>(cont);
 }
 
 } // namespace gsl

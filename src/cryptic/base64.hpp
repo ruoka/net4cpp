@@ -1,8 +1,9 @@
 #pragma once
 #include <string>
 #include <algorithm>
+#include "gsl/assert.hpp"
 
-namespace http::base64 {
+namespace cryptic::base64 {
 
     inline constexpr char to_character_set(std::size_t i)
     {
