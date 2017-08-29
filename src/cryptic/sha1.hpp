@@ -31,48 +31,33 @@ public:
     void update(span<const byte> message)
     {
         message_length += 8 * message.size();
-        auto done = false;
-        while(!done)
-        {
-            if(message.size() >= 64)
-            {
-                const auto chunk = message.subspan(0, 64);
-                transform(chunk);
-                message = message.subspan<64>();
-            }
-            else if(message.size() >= 56)
-            {
-                auto buffer = array<byte,64>{};
-                auto itr = copy(message.cbegin(), message.cend(), buffer.begin());
-                *itr++ = byte{0b10000000};
-                auto padding = make_span(itr, buffer.end());
-                fill(padding.begin(), padding.end(), byte{0b00000000});
-                transform(buffer);
-                message = nullptr;
-            }
-            else if(message.size() == 0)
-            {
-                auto buffer = array<byte,64>{};
-                auto padding = make_span(buffer);
-                fill(padding.begin(), padding.end(), byte{0b00000000});
-                auto length = make_span(buffer).subspan<56>();
-                encode(length, message_length);
-                transform(buffer);
-                done = true;
-            }
-            else if(message.size() < 56)
-            {
-                auto buffer = array<byte,64>{};
-                auto itr = copy(message.cbegin(), message.cend(), buffer.begin());
-                *itr++ = byte{0b10000000};
-                auto padding = make_span(itr, buffer.end());
-                fill(padding.begin(), padding.end(), byte{0b00000000});
-                auto length = make_span(buffer).subspan<56>();
-                encode(length, message_length);
-                transform(buffer);
-                done = true;
-            }
 
+        while(message.size() >= 64)
+        {
+            const auto chunk = message.subspan(0, 64);
+            transform(chunk);
+            message = message.subspan<64>();
+        }
+
+        auto chunk = array<byte,64>{};
+        auto itr = copy(message.cbegin(), message.cend(), chunk.begin());
+        *itr++ = byte{0b10000000};
+        fill(itr, chunk.end(), byte{0b00000000});
+
+        if(distance(chunk.begin(), itr) < 56)
+        {
+            auto length = make_span(chunk).subspan<56>();
+            encode(length, message_length);
+        }
+
+        transform(chunk);
+
+        if(distance(chunk.begin(), itr) > 56)
+        {
+            fill(chunk.begin(), chunk.end(), byte{0b00000000});
+            auto length = make_span(chunk).subspan<56>();
+            encode(length, message_length);
+            transform(chunk);
         }
     }
 
