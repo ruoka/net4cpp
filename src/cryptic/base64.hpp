@@ -1,15 +1,16 @@
 #pragma once
 #include <string>
 #include <algorithm>
+#include "gsl/span.hpp"
 #include "gsl/assert.hpp"
 
 namespace cryptic::base64 {
 
-    inline constexpr char to_character_set(std::size_t i)
+    inline constexpr char to_character_set(std::byte b)
     {
-        assert(i < 65);
+        assert(b < std::byte{65});
         constexpr char set[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
-        return set[i];
+        return set[std::to_integer<std::size_t>(b)];
     }
 
     inline constexpr char to_index(char c)
@@ -28,27 +29,27 @@ namespace cryptic::base64 {
         return 64;
     }
 
-    inline std::string encode(std::string_view source)
+    inline std::string encode(gsl::span<const std::byte> source)
     {
         auto encoded = std::string{};
 
         while(source.size() > 0)
         {
-            auto index1 = (source[0] & 0b11111100) >> 2,
-                 index2 = (source[0] & 0b00000011) << 4,
-                 index3 = 64,
-                 index4 = 64;
+            auto index1 = (source[0] bitand std::byte{0b11111100}) >> 2,
+                 index2 = (source[0] bitand std::byte{0b00000011}) << 4,
+                 index3 = std::byte{64},
+                 index4 = std::byte{64};
 
             if(source.size() > 1)
             {
-                index2 |= (source[1] & 0b11110000) >> 4;
-                index3  = (source[1] & 0b00001111) << 2;
+                index2 |= (source[1] bitand std::byte{0b11110000}) >> 4;
+                index3  = (source[1] bitand std::byte{0b00001111}) << 2;
             }
 
             if(source.size() > 2)
             {
-                index3 |= (source[2] & 0b11000000) >> 6;
-                index4  = (source[2] & 0b00111111);
+                index3 |= (source[2] bitand std::byte{0b11000000}) >> 6;
+                index4  = (source[2] bitand std::byte{0b00111111});
             }
 
             encoded.push_back(to_character_set(index1));
@@ -56,18 +57,16 @@ namespace cryptic::base64 {
             encoded.push_back(to_character_set(index3));
             encoded.push_back(to_character_set(index4));
 
-            source.remove_prefix(std::min(3ul,source.size()));
+            source = source.subspan(std::min(3l,source.size()));
         }
 
         return encoded;
     }
 
-    template<typename CharT,
-             std::enable_if_t<!std::is_same_v<CharT,char>,bool> = true>
-    inline std::string encode(std::basic_string_view<CharT> source)
-    {
-        return encode(std::string_view{reinterpret_cast<const char*>(source.data()), source.size()});
-    }
+    // inline std::string encode(std::string_view source)
+    // {
+    //     return encode(source);
+    // }
 
     inline std::string decode(std::string_view source)
     {

@@ -88,7 +88,11 @@ public:
     constexpr span(Container& cont) : m_data{reinterpret_cast<ElementType*>(cont.data())}, m_size{cont.size()}
     {}
 
-    template <class Container> span(const Container&&) = delete;
+    template <class Container>
+    constexpr span(const Container& cont) : m_data{reinterpret_cast<const ElementType*>(cont.data())}, m_size{cont.size()}
+    {}
+
+    // template <class Container> span(const Container&&) = delete;
 
     constexpr span(const span& other) noexcept = default;
 

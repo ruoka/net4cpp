@@ -1,30 +1,33 @@
 #include <gtest/gtest.h>
+#include <string_view>
 #include "cryptic/base64.hpp"
+
+using namespace std::string_literals;
 
 TEST(CrypticBase64,ToCharacterSet)
 {
-    ASSERT_EQ('A', cryptic::base64::to_character_set(0));
-    ASSERT_EQ('B', cryptic::base64::to_character_set(1));
-    ASSERT_EQ('a', cryptic::base64::to_character_set(26));
-    ASSERT_EQ('b', cryptic::base64::to_character_set(27));
-    ASSERT_EQ('0', cryptic::base64::to_character_set(52));
-    ASSERT_EQ('+', cryptic::base64::to_character_set(62));
-    ASSERT_EQ('/', cryptic::base64::to_character_set(63));
-    ASSERT_EQ('=', cryptic::base64::to_character_set(64));
+    ASSERT_EQ('A', cryptic::base64::to_character_set(std::byte{0}));
+    ASSERT_EQ('B', cryptic::base64::to_character_set(std::byte{1}));
+    ASSERT_EQ('a', cryptic::base64::to_character_set(std::byte{26}));
+    ASSERT_EQ('b', cryptic::base64::to_character_set(std::byte{27}));
+    ASSERT_EQ('0', cryptic::base64::to_character_set(std::byte{52}));
+    ASSERT_EQ('+', cryptic::base64::to_character_set(std::byte{62}));
+    ASSERT_EQ('/', cryptic::base64::to_character_set(std::byte{63}));
+    ASSERT_EQ('=', cryptic::base64::to_character_set(std::byte{64}));
 }
 
 TEST(CrypticBase64,Encode)
 {
-    EXPECT_EQ("", cryptic::base64::encode(""));
-    EXPECT_EQ("TQ==", cryptic::base64::encode("M"));
-    EXPECT_EQ("TWE=", cryptic::base64::encode("Ma"));
-    EXPECT_EQ("TWFu", cryptic::base64::encode("Man"));
+    EXPECT_EQ(""s, cryptic::base64::encode(""s));
+    EXPECT_EQ("TQ=="s, cryptic::base64::encode("M"s));
+    EXPECT_EQ("TWE="s, cryptic::base64::encode("Ma"s));
+    EXPECT_EQ("TWFu"s, cryptic::base64::encode("Man"s));
 
-    EXPECT_EQ("cGxlYXN1cmUu", cryptic::base64::encode("pleasure."));
-    EXPECT_EQ("bGVhc3VyZS4=", cryptic::base64::encode("leasure."));
-    EXPECT_EQ("ZWFzdXJlLg==", cryptic::base64::encode("easure."));
-    EXPECT_EQ("YXN1cmUu", cryptic::base64::encode("asure."));
-    EXPECT_EQ("c3VyZS4=", cryptic::base64::encode("sure."));
+    EXPECT_EQ("cGxlYXN1cmUu"s, cryptic::base64::encode("pleasure."s));
+    EXPECT_EQ("bGVhc3VyZS4="s, cryptic::base64::encode("leasure."s));
+    EXPECT_EQ("ZWFzdXJlLg=="s, cryptic::base64::encode("easure."s));
+    EXPECT_EQ("YXN1cmUu"s, cryptic::base64::encode("asure."s));
+    EXPECT_EQ("c3VyZS4="s, cryptic::base64::encode("sure."s));
 }
 
 TEST(CrypticBase64,ToIndex)
