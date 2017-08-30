@@ -3,9 +3,6 @@
 #include <fstream>
 #include "ws/frame.hpp"
 #include "ws/server.hpp"
-#include "ws/test_key.hpp"
-#include "ws/sha1.hpp"
-#include "cryptic/sha1.hpp"
 
 using namespace std::string_literals;
 
@@ -23,51 +20,6 @@ namespace std
 
 int main()
 {
-    std::cout << sha1::base64("") << std::endl;
-
-    auto hash = cryptic::sha1{};
-    hash.update(cryptic::span<const cryptic::byte>{nullptr});
-    std::cout << hash.base64() << std::endl;
-
-    std::cout << sha1::base64("XX") << std::endl;
-
-    std::array<std::byte,2> data = {std::byte{'X'},std::byte{'X'}};
-    hash = cryptic::sha1{};
-    hash.update(data);
-    std::cout << hash.base64() << std::endl;
-
-    auto test1 = "The quick brown fox jumps over the lazy dog"s;
-
-    std::cout << sha1::base64(test1) << std::endl;
-
-    hash = cryptic::sha1{};
-    hash.update(test1);
-    std::cout << hash.base64() << std::endl;
-
-    auto file = std::ifstream{"./src/spike.cpp"};
-    auto test2 = ""s;
-    std::getline(file,test2,(char)std::char_traits<char>::eof());
-
-    std::clog << test2 << std::endl;
-
-    std::cout << sha1::base64(test2) << std::endl;
-
-    hash = cryptic::sha1{test2};
-    std::cout << hash.base64() << std::endl;
-
-    auto test3 = "omQGMC65WBEzzZAX7H8l+g==258EAFA5-E914-47DA-95CA-C5AB0DC85B11"s;
-
-    std::cout << sha1::base64(test3) << std::endl;
-
-    hash = cryptic::sha1{test3};
-    std::cout << hash.base64() << std::endl;
-
-    auto test4 = "omQGMC65WBEzzZAX7H8l+g==258EAFA5-E914-47DA-95CA-C5AB0DC85B11_XXXXXX"s;
-
-    std::cout << sha1::base64(test4) << std::endl;
-
-    hash = cryptic::sha1{test4};
-    std::cout << hash.base64() << std::endl;
 
     // auto f1 = ws::frame{};
     // f1.header.fin = std::byte{0b1};
