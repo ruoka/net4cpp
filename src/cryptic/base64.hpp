@@ -15,10 +15,10 @@ namespace cryptic::base64 {
 
     inline constexpr char to_index(char c)
     {
-        assert((c >= 'A' && c <= 'Z') ||
-               (c >= 'a' && c <= 'z') ||
-               (c >= '0' && c <= '9') ||
-                c == '+' || c == '/' || c == '=');
+        assert((c >= 'A' and c <= 'Z') or
+               (c >= 'a' and c <= 'z') or
+               (c >= '0' and c <= '9') or
+                c == '+' or c == '/' or c == '=');
 
         if(c == '=') return 64;
         if(c >= 'a') return ('Z'-'A') + 1 + (c - 'a');
