@@ -1,6 +1,7 @@
 #pragma once
-#include <thread>
 #include <map>
+#include <bitset>
+#include <thread>
 #include "std/extension.hpp"
 #include "net/acceptor.hpp"
 #include "net/syslogstream.hpp"
@@ -76,17 +77,8 @@ private:
             }
             client.ignore(2); // crlf
 
-            if(uri == "/favicon.ico")
-            {
-                client << "HTTP/1.1 404 Not Found"                                 << net::crlf
-                       << "Date: " << ext::to_rfc1123(chrono::system_clock::now()) << net::crlf
-                       << "Server: net4cpp/1.1"                                    << net::crlf
-                       << "Content-Type: text/html"                                << net::crlf
-                       << "Content-Length: 0"                                      << net::crlf
-                       << net::crlf << net::flush;
-            }
-            else if(m_authenticate &&
-                   (headers.count("Authorization") == 0 || headers["Authorization"] == "Basic Og=="))
+            if(m_authenticate &&
+              (headers.count("Authorization") == 0 || headers["Authorization"] == "Basic Og=="))
             {
                 client << "HTTP/1.1 401 Unauthorized status"                       << net::crlf
                        << "Date: " << ext::to_rfc1123(chrono::system_clock::now()) << net::crlf
@@ -106,30 +98,61 @@ private:
                 const auto server_key_sha1_base64 = sha1::base64(server_key);
 
                 net::slog << net::debug << "Sec-WebSocket-Key: " << client_key << net::flush;
-                net::slog << net::debug << "Concatenated: " <<server_key << net::flush;
+                net::slog << net::debug << "Concatenated: " << server_key << net::flush;
                 net::slog << net::debug << "Sec-WebSocket-Accept: " << server_key_sha1_base64 << net::flush;
 
                 client << "HTTP/1.1 101 Switching Protocols"                       << net::crlf
-                    //    << "Date: " << ext::to_rfc1123(chrono::system_clock::now()) << net::crlf
-                    //    << "Server: net4cpp/1.1"                                    << net::crlf
-
-                       << "Upgrade: websocket"                                      << net::crlf
+                       << "Date: " << ext::to_rfc1123(chrono::system_clock::now()) << net::crlf
+                       << "Server: net4cpp/1.1"                                    << net::crlf
+                       << "Upgrade: websocket"                                     << net::crlf
                        << "Connection: Upgrade"                                     << net::crlf
                        << "Sec-WebSocket-Accept: " << server_key_sha1_base64 << " " << net::crlf
-                    //    << "Sec-WebSocket-Protocol: chat"                           << net::crlf
-                    //    << "Sec-WebSocket-Version: 13"                              << net::crlf
-
-                    //    << "Access-Control-Allow-Origin: *"                         << net::crlf
-                    //    << "Access-Control-Allow-Methods: GET"                      << net::crlf
-                    //    << "Access-Control-Allow-Credentials: true"                 << net::crlf
+                    // << "Sec-WebSocket-Protocol: chat"                           << net::crlf
+                    // << "Sec-WebSocket-Version: 13"                              << net::crlf
+                    // << "Access-Control-Allow-Origin: *"                         << net::crlf
+                    // << "Access-Control-Allow-Methods: GET"                      << net::crlf
+                    // << "Access-Control-Allow-Credentials: true"                 << net::crlf
                        << net::crlf << net::flush;
 
-                auto frame = ws::frame{};
-                client >> frame;
-                if(client)
-                    net::slog << net::debug << "Received ws-frame opcode " << std::to_integer<int>(frame.header.opcode) << net::flush;
-                else
-                    net::slog << net::debug << "Client closed Connection" << net::flush;
+                while(client)
+                {
+                    auto frame = ws::frame{};
+                    client >> frame;
+                    auto payload_length = frame.header.payload_length;
+                    union {std::uint32_t masking_key; std::uint8_t masking_key_octet[4];} xx;
+                    xx.masking_key = frame.masking_key.value_or('0');
+
+                    net::slog << net::debug << std::bitset<16>{(unsigned long)frame.bits}.to_string() << net::flush;
+                    net::slog << net::debug << std::bitset<1>{(unsigned long)frame.header.fin}.to_string() << net::flush;
+                    net::slog << net::debug << std::bitset<4>{(unsigned long)frame.header.opcode}.to_string() << net::flush;
+                    net::slog << net::debug << std::bitset<1>{(unsigned long)frame.header.masked}.to_string() << net::flush;
+                    net::slog << net::debug << std::bitset<7>{(unsigned long)frame.header.payload_length}.to_string() << net::flush;
+
+                    net::slog << net::debug << "Received ws-frame opcode " << frame.header.opcode << net::flush;
+
+                    net::slog << net::debug << "Received ws-frame payload_length " << payload_length << net::flush;
+
+                    if(frame.masking_key.has_value())
+                    {
+                        net::slog << net::debug << std::bitset<8>{frame.masking_key.value()}.to_string() << net::flush;
+                        net::slog << net::debug << "Received ws-frame masking_key " << frame.masking_key.value() << net::flush;
+                    }
+
+                    for(auto i = 0, j = 0; i < payload_length; ++i, j = i % 4)
+                        std::clog << (char)(frame.payload_data[i] xor xx.masking_key_octet[j]);
+
+                    std::clog << std::endl;
+                }
+                net::slog << net::debug << "Client closed Connection" << net::flush;
+            }
+            else
+            {
+                client << "HTTP/1.1 404 Not Found"                                 << net::crlf
+                       << "Date: " << ext::to_rfc1123(chrono::system_clock::now()) << net::crlf
+                       << "Server: net4cpp/1.1"                                    << net::crlf
+                       << "Content-Type: text/html"                                << net::crlf
+                       << "Content-Length: 0"                                      << net::crlf
+                       << net::crlf << net::flush;
             }
         }
     }
