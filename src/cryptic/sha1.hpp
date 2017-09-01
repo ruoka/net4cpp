@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <sstream>
 #include <algorithm>
 #include "gsl/span.hpp"
 #include "gsl/assert.hpp"
@@ -36,6 +37,7 @@ public:
                           0x98BADCFEu,
                           0x10325476u,
                           0xC3D2E1F0u};
+
         message_length += 8 * message.size();
 
         while(message.size() >= 64)
@@ -54,13 +56,12 @@ public:
         {
             auto length = make_span(chunk).subspan<56>();
             encode(length, message_length);
+            transform(chunk);
         }
-
-        transform(chunk);
-
-        if(distance(chunk.begin(), itr) > 56)
+        else
         {
-            fill(chunk.begin(), chunk.end(), byte{0b00000000});
+            transform(chunk);
+            fill(chunk.begin(), itr, byte{0b00000000});
             auto length = make_span(chunk).subspan<56>();
             encode(length, message_length);
             transform(chunk);
@@ -87,6 +88,23 @@ public:
     {
         auto hash = sha1{message};
         return hash.base64();
+    }
+
+    string hexadecimal()
+    {
+        auto ss = stringstream{};
+        ss << setw(8) << setfill('0') << hex << message_digest[0]
+           << setw(8) << setfill('0') << hex << message_digest[1]
+           << setw(8) << setfill('0') << hex << message_digest[2]
+           << setw(8) << setfill('0') << hex << message_digest[3]
+           << setw(8) << setfill('0') << hex << message_digest[4];
+        return ss.str();
+    }
+
+    static string hexadecimal(span<const byte> message)
+    {
+        auto hash = sha1{message};
+        return hash.hexadecimal();
     }
 
 private:
