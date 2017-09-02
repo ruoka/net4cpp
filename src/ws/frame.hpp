@@ -7,23 +7,23 @@ namespace ws {
 
 struct frame
 {
-    static const char continuation = char{0b0000};
-    static const char text = char{0b1000};   // 1
-    static const char binary = char{0b0010}; // 2
-    static const char close = char{0b1000};  // 8
-    static const char ping = char{0b1001};   // 9
-    static const char pong = char{0b1010};   // 10
+    static const char continuation = char{0b0000}; // 0
+    static const char text = char{0b0001};         // 1
+    static const char binary = char{0b0010};       // 2
+    static const char close = char{0b1000};        // 8
+    static const char ping = char{0b1001};         // 9
+    static const char pong = char{0b1010};         // 10
 
     union alignas(16)
     {
         std::uint16_t bits;
         struct alignas(16)
         {
-            std::uint16_t fin : 1;
+            std::uint16_t opcode : 4;
+            std::uint16_t rsv3 : 1;
             std::uint16_t rsv1 : 1;
             std::uint16_t rsv2 : 1;
-            std::uint16_t rsv3 : 1;
-            std::uint16_t opcode : 4;
+            std::uint16_t fin : 1;
             std::uint16_t payload_length : 7;
             std::uint16_t masked : 1;
         } header;
@@ -50,7 +50,7 @@ auto& operator << (std::basic_ostream<CharT>& os, const ws::frame& f)
     // Expects((f.header.masked == std::byte{0b0} && !f.masking_key.has_value()) ||
     //         (f.header.masked == std::byte{0b1} && f.masking_key.has_value())  );
 
-    os.write(reinterpret_cast<const CharT*>(&f.header), 2);
+    os.write(reinterpret_cast<const CharT*>(&f.bits), 2);
     if(f.extended_payload_length_16.has_value())
         os.write(reinterpret_cast<const CharT*>(&f.extended_payload_length_16.value()), 2);
     if(f.extended_payload_length_64.has_value())
