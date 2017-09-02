@@ -118,9 +118,6 @@ private:
                 {
                     auto frame = ws::frame{};
                     client >> frame;
-                    auto payload_length = frame.header.payload_length;
-                    union {std::uint32_t masking_key; std::uint8_t masking_key_octet[4];} xx;
-                    xx.masking_key = frame.masking_key.value_or('0');
 
                     net::slog << net::debug << std::bitset<16>{(unsigned long)frame.bits}.to_string() << net::flush;
                     net::slog << net::debug << std::bitset<1>{(unsigned long)frame.header.fin}.to_string() << net::flush;
@@ -130,17 +127,16 @@ private:
 
                     net::slog << net::debug << "Received ws-frame opcode " << frame.header.opcode << net::flush;
 
-                    net::slog << net::debug << "Received ws-frame payload_length " << payload_length << net::flush;
+                    net::slog << net::debug << "Received ws-frame payload_length " << frame.header.payload_length << net::flush;
 
-                    if(frame.masking_key.has_value())
+                    if(frame.header.masked)
                     {
-                        net::slog << net::debug << std::bitset<8>{frame.masking_key.value()}.to_string() << net::flush;
-                        net::slog << net::debug << "Received ws-frame masking_key " << frame.masking_key.value() << net::flush;
+                        net::slog << net::debug << std::bitset<8>{frame.masking_key}.to_string() << net::flush;
+                        net::slog << net::debug << "Received ws-frame masking_key " << frame.masking_key << net::flush;
                     }
 
-                    for(auto i = 0, j = 0; i < payload_length; ++i, j = i % 4)
-                        std::clog << (char)(frame.payload_data[i] xor xx.masking_key_octet[j]);
-
+                    for (const auto c : frame.payload_data)
+                        std::clog << c;
                     std::clog << std::endl;
                 }
                 net::slog << net::debug << "Client closed Connection" << net::flush;
