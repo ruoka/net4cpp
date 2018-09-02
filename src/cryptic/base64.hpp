@@ -7,14 +7,14 @@ namespace cryptic::base64 {
 
     inline constexpr char to_character_set(std::byte b)
     {
-        Ensures(b < std::byte{65});
+        assert(b < std::byte{65});
         constexpr char set[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
         return set[std::to_integer<std::size_t>(b)];
     }
 
     inline constexpr char to_index(char c)
     {
-        Ensures((c >= 'A' and c <= 'Z') or
+        assert((c >= 'A' and c <= 'Z') or
                (c >= 'a' and c <= 'z') or
                (c >= '0' and c <= '9') or
                 c == '+' or c == '/' or c == '=');

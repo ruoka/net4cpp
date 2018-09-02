@@ -2,6 +2,7 @@
 #include <iterator>
 #include <algorithm>
 #include <experimental/type_traits>
+#include "gsl/assert.hpp"
 
 namespace gsl {
 
@@ -19,7 +20,7 @@ struct __span_size
         return Extent;
     }
     template<typename T>
-    auto& operator = (T s)
+    auto& operator = (T)
     {
         return *this;
     }
@@ -99,19 +100,19 @@ public:
     constexpr span(span&& other) noexcept = default;
 
     template <class OtherElementType, ptrdiff_t OtherExtent>
-    constexpr span(const span<OtherElementType, OtherExtent>& other) : span<ElementType,Extent>{other.m_data}
+    constexpr span(const span<OtherElementType, OtherExtent>& other) : span<ElementType,Extent>{other.data(), other.size()}
     {
         using std::experimental::is_convertible_v;
         static_assert(std::is_convertible_v<OtherElementType,ElementType>, "Not convertible");
-        static_assert(OtherExtent == Extent, "Size mismatch");
+        static_assert(OtherExtent <= Extent, "Size mismatch");
     }
 
     template <class OtherElementType, ptrdiff_t OtherExtent>
-    constexpr span(span<OtherElementType, OtherExtent>&& other) : span<ElementType,Extent>{other.m_data}
+    constexpr span(span<OtherElementType, OtherExtent>&& other) : span<ElementType,Extent>{other.data(), other.size()}
     {
         using std::experimental::is_convertible_v;
         static_assert(std::is_convertible_v<OtherElementType,ElementType>, "Not convertible");
-        static_assert(OtherExtent == Extent, "Size mismatch");
+        static_assert(OtherExtent <= Extent, "Size mismatch");
     }
 
     ~span() noexcept = default;
@@ -141,20 +142,20 @@ public:
 
     constexpr span<element_type, dynamic_extent> first(index_type count) const
     {
-        if(count > m_size) std::terminate();
+        Ensures(count <= m_size);
         return {m_data,count};
     }
 
     constexpr span<element_type, dynamic_extent> last(index_type count) const
     {
-        if(count > m_size) std::terminate();
+        Ensures(count <= m_size);
         return {m_data + m_size - count, count};
     }
 
     constexpr span<element_type, dynamic_extent> subspan(index_type offset, index_type count = dynamic_extent) const
     {
-        if(offset > m_size) std::terminate();
-        return {m_data+offset, (count == dynamic_extent) ? (m_size - offset) : count};
+        Ensures(offset <= m_size);
+        return {m_data + offset, (count == dynamic_extent) ? (m_size - offset) : count};
     }
 
     // [span.obs], span observers
@@ -186,13 +187,13 @@ public:
     // [span.elem], span element access
     constexpr reference operator[](index_type idx) const
     {
-        if(idx > m_size) std::terminate();
+        Ensures(idx < m_size);
         return m_data[idx];
     }
 
     constexpr reference operator()(index_type idx) const
     {
-        if(idx > m_size) std::terminate();
+        Ensures(idx < m_size);
         return m_data[idx];
     }
 
