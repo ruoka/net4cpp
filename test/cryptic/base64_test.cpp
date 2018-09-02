@@ -1,3 +1,7 @@
+// Copyright (c) 2017 Kaius Ruokonen
+// Distributed under the MIT software license
+// See LICENCE file or https://opensource.org/licenses/MIT
+
 #include <gtest/gtest.h>
 #include <string_view>
 #include "cryptic/base64.hpp"
