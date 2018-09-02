@@ -19,10 +19,17 @@ inline void ensures(bool condition, const char* file, int line, const char* func
 
 } // namespace gsl
 
+#ifndef __OPTIMIZE__
+
 #ifndef Expects
 #define Expects(condition) gsl::expects(condition, __FILE__, __LINE__, __func__)
 #endif
 
 #ifndef Ensures
 #define Ensures(condition) gsl::ensures(condition, __FILE__, __LINE__, __func__)
+#endif
+
+#else
+#define Expects(condition)
+#define Ensures(condition)
 #endif

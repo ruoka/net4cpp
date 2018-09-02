@@ -6,6 +6,9 @@ using namespace std::string_literals;
 
 TEST(CrypticSHA1,base64)
 {
+    auto hash = cryptic::sha1{};
+    EXPECT_EQ(20, hash.size());
+
     auto test1 = ""s;
     EXPECT_EQ("2jmj7l5rSw0yVb/vlWAYkK/YBwk="s, cryptic::sha1::base64(test1));
     EXPECT_EQ("da39a3ee5e6b4b0d3255bfef95601890afd80709"s, cryptic::sha1::hexadecimal(test1));
