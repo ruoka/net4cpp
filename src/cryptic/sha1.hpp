@@ -9,10 +9,10 @@
 #include <algorithm>
 #include "gsl/span.hpp"
 #include "cryptic/base64.hpp"
+#include "cryptic/helpers.hpp"
 
 namespace cryptic {
 
-using namespace std;
 using namespace gsl;
 
 class sha1
@@ -27,8 +27,7 @@ public:
                          0xEFCDAB89u,
                          0x98BADCFEu,
                          0x10325476u,
-                         0xC3D2E1F0u},
-        m_buffer{}
+                         0xC3D2E1F0u}
     {}
 
     sha1(span<const byte> message) noexcept : sha1()
@@ -63,35 +62,41 @@ public:
             fill_n(chunk.begin(), 56, byte{0b00000000});
         }
 
-        auto length = make_span(chunk).last<8>();
+        const auto length = make_span(chunk).last<8>();
         encode(length, m_message_length);
         transform(chunk);
     }
 
-    const byte* data() noexcept
+    void encode(span<byte,20> output) const noexcept
     {
-        encode(m_buffer, m_message_digest);
-        return m_buffer.data();
+    	for(auto i = 0, j = 0; j < output.size(); ++i, j += 4)
+        {
+    		output[j+3] = narrow(m_message_digest[i]      );
+    		output[j+2] = narrow(m_message_digest[i] >>  8);
+    		output[j+1] = narrow(m_message_digest[i] >> 16);
+    		output[j+0] = narrow(m_message_digest[i] >> 24);
+    	}
     }
 
     constexpr size_type size() const
     {
-        return m_buffer.size();
+        return 20;
     }
 
-    string base64()
+    string base64() const
     {
-        data();
-        return base64::encode(m_buffer);
+        auto buffer = array<byte,20>{};
+        encode(buffer);
+        return base64::encode(buffer);
     }
 
     static string base64(span<const byte> message)
     {
-        auto hash = sha1{message};
+        const auto hash = sha1{message};
         return hash.base64();
     }
 
-    string hexadecimal()
+    string hexadecimal() const
     {
         auto ss = stringstream{};
         ss << setw(8) << setfill('0') << hex << m_message_digest[0u]
@@ -104,20 +109,11 @@ public:
 
     static string hexadecimal(span<const byte> message)
     {
-        auto hash = sha1{message};
+        const auto hash = sha1{message};
         return hash.hexadecimal();
     }
 
 private:
-
-    template<size_t Rotation, typename Unsigned>
-    static constexpr Unsigned leftrotate(Unsigned number)
-    {
-        static_assert(is_unsigned_v<Unsigned>);
-        constexpr auto bits = numeric_limits<Unsigned>::digits;
-        static_assert(Rotation <= bits);
-        return (number << Rotation) bitor (number >> (bits - Rotation));
-    }
 
     void transform(span<const byte, 64> chunk) noexcept
     {
@@ -198,42 +194,21 @@ private:
         m_message_digest[4] += e;
     }
 
-    template<typename Type, typename Integer>
-    static constexpr byte narrow(Integer number)
+    static void encode(span<byte,8> output, const size_type length) noexcept
     {
-        static_assert(is_integral_v<Integer>);
-        static_assert(numeric_limits<Type>::digits < numeric_limits<Integer>::digits);
-        return static_cast<Type>(number bitand 0b11111111);
-    }
-
-    static void encode(span<byte> output, const size_type length) noexcept
-    {
-    	output[7] = narrow<byte>(length >>  0);
-    	output[6] = narrow<byte>(length >>  8);
-    	output[5] = narrow<byte>(length >> 16);
-    	output[4] = narrow<byte>(length >> 24);
-    	output[3] = narrow<byte>(length >> 32);
-    	output[2] = narrow<byte>(length >> 40);
-    	output[1] = narrow<byte>(length >> 48);
-    	output[0] = narrow<byte>(length >> 56);
-    }
-
-    static void encode(span<byte> output, const span<uint32_t> input) noexcept
-    {
-    	for(auto i = 0, j = 0; j < output.size(); ++i, j += 4)
-        {
-    		output[j+3] = narrow<byte>(input[i]);
-    		output[j+2] = narrow<byte>(input[i] >>  8);
-    		output[j+1] = narrow<byte>(input[i] >> 16);
-    		output[j+0] = narrow<byte>(input[i] >> 24);
-    	}
+    	output[7] = narrow(length >>  0);
+    	output[6] = narrow(length >>  8);
+    	output[5] = narrow(length >> 16);
+    	output[4] = narrow(length >> 24);
+    	output[3] = narrow(length >> 32);
+    	output[2] = narrow(length >> 40);
+    	output[1] = narrow(length >> 48);
+    	output[0] = narrow(length >> 56);
     }
 
     size_type m_message_length;
 
     array<uint32_t,5> m_message_digest;
-
-    array<byte,20> m_buffer;
 };
 
 } // namespace cryptic
