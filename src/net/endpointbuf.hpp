@@ -4,16 +4,33 @@
 
 namespace net {
 
-const std::size_t tcp_buffer_size{4096};
-
-const std::size_t udp_buffer_size{512};
-
-template<std::size_t N>
-class endpointbuf : public std::streambuf
+class endpointbuf_base : public std::streambuf
 {
 public:
 
-    explicit endpointbuf(socket&& s) : m_socket{std::move(s)}, m_input_sequence{}, m_output_sequence{}
+    explicit endpointbuf_base(socket&& s) : m_socket{std::move(s)}
+    {}
+
+    bool wait_for(const std::chrono::milliseconds& timeout) const
+    {
+        return m_socket.wait_for(timeout);
+    }
+
+protected:
+
+    socket m_socket;
+};
+
+constexpr std::size_t tcp_buffer_size{4096};
+
+constexpr std::size_t udp_buffer_size{512};
+
+template<std::size_t N>
+class endpointbuf : public endpointbuf_base
+{
+public:
+
+    explicit endpointbuf(socket&& s) : endpointbuf_base{std::move(s)}, m_input_sequence{}, m_output_sequence{}
     {
         setg(&m_input_sequence[0], &m_input_sequence[sizeof m_input_sequence], &m_input_sequence[sizeof m_input_sequence]);
         setp(&m_output_sequence[0], &m_output_sequence[sizeof m_output_sequence]);
@@ -62,7 +79,7 @@ protected:
         return 0;
     }
 
-    std::streampos seekoff (std::streamoff off, std::ios_base::seekdir way, std::ios_base::openmode which)
+    std::streampos seekoff(std::streamoff off, std::ios_base::seekdir way, std::ios_base::openmode which)
     {
         if(off == 0 && way == std::ios_base::cur && which == std::ios_base::out)
             return {pptr() - pbase()};
@@ -71,8 +88,6 @@ protected:
     }
 
 private:
-
-    socket m_socket;
 
     char_type m_input_sequence[N];
 

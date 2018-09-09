@@ -2,32 +2,33 @@
 
 #include <iostream>
 #include <ostream>
-#include <memory>
+#include "gsl/not_null.hpp"
 
 namespace net {
+
+class endpointbuf_base;
 
 class iendpointstream : public std::istream
 {
 public:
-    iendpointstream(std::streambuf* sb) : std::istream{sb}, m_buf{sb}
-    {
-        init(m_buf.get());
-    }
-    iendpointstream(iendpointstream&& s) : std::istream{std::move(s)}, m_buf{std::move(s.m_buf)}
-    {
-        init(m_buf.get());
-    }
-    iendpointstream& operator = (iendpointstream&& s)
-    {
-        swap(s);
-        m_buf.swap(s.m_buf);
-        init(m_buf.get());
-        return *this;
-    }
+
+    iendpointstream(endpointbuf_base* sb);
+
+    iendpointstream(iendpointstream&& s);
+
+    ~iendpointstream();
+
+    iendpointstream& operator = (iendpointstream&& s);
+
+    bool wait_for(const std::chrono::milliseconds& timeout) const;
+
 private:
+
     iendpointstream(const iendpointstream&) = delete;
+
     iendpointstream& operator = (const iendpointstream&) = delete;
-    std::unique_ptr<std::streambuf> m_buf;
+
+    gsl::not_null<endpointbuf_base*> m_buf;
 };
 
 inline void swap(iendpointstream& lhs, iendpointstream& rhs)
@@ -40,25 +41,24 @@ inline void swap(iendpointstream& lhs, iendpointstream& rhs)
 class oendpointstream : public std::ostream
 {
 public:
-    oendpointstream(std::streambuf* sb) : std::ostream{sb}, m_buf{sb}
-    {
-        init(m_buf.get());
-    }
-    oendpointstream(oendpointstream&& s) : std::ostream{std::move(s)}, m_buf{std::move(s.m_buf)}
-    {
-        init(m_buf.get());
-    }
-    oendpointstream& operator = (oendpointstream&& s)
-    {
-        swap(s);
-        m_buf.swap(s.m_buf);
-        init(m_buf.get());
-        return *this;
-    }
+
+    oendpointstream(endpointbuf_base* sb);
+
+    oendpointstream(oendpointstream&& s);
+
+    ~oendpointstream();
+
+    oendpointstream& operator = (oendpointstream&& s);
+
+    bool wait_for(const std::chrono::milliseconds& timeout) const;
+
 private:
+
     oendpointstream(const oendpointstream&) = delete;
+
     oendpointstream& operator = (const oendpointstream&) = delete;
-    std::unique_ptr<std::streambuf> m_buf;
+
+    gsl::not_null<endpointbuf_base*> m_buf;
 };
 
 inline void swap(oendpointstream& lhs, oendpointstream& rhs)
@@ -71,25 +71,24 @@ inline void swap(oendpointstream& lhs, oendpointstream& rhs)
 class endpointstream : public std::iostream
 {
 public:
-    endpointstream(std::streambuf* sb) : std::iostream{sb}, m_buf{sb}
-    {
-        init(m_buf.get());
-    }
-    endpointstream(endpointstream&& s) : std::iostream{std::move(s)}, m_buf{std::move(s.m_buf)}
-    {
-        init(m_buf.get());
-    }
-    endpointstream& operator = (endpointstream&& s)
-    {
-        swap(s);
-        m_buf.swap(s.m_buf);
-        init(m_buf.get());
-        return *this;
-    }
+
+    endpointstream(endpointbuf_base* sb);
+
+    endpointstream(endpointstream&& s);
+
+    ~endpointstream();
+
+    endpointstream& operator = (endpointstream&& s);
+
+    bool wait_for(const std::chrono::milliseconds& timeout) const;
+
 private:
+
     endpointstream(const endpointstream&) = delete;
+
     endpointstream& operator = (const endpointstream&) = delete;
-    std::unique_ptr<std::streambuf> m_buf;
+
+    gsl::not_null<endpointbuf_base*> m_buf;
 };
 
 inline void swap(endpointstream& lhs, endpointstream& rhs)

@@ -23,15 +23,17 @@ public:
 
     not_null(const not_null& other) = default;
 
+    not_null(not_null&& other) = default;
+
     not_null& operator=(const not_null& other) = default;
 
-    template <typename U, typename Dummy = std::enable_if_t<std::is_convertible<U, T>::value>>
+    template <typename U, typename = std::enable_if_t<std::is_convertible<U, T>::value>>
     not_null(const not_null<U>& other)
     {
         *this = other;
     }
 
-    template <typename U, typename Dummy = std::enable_if_t<std::is_convertible<U, T>::value>>
+    template <typename U, typename = std::enable_if_t<std::is_convertible<U, T>::value>>
     not_null& operator=(const not_null<U>& other)
     {
         m_ptr = other.get();

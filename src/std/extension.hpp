@@ -170,7 +170,7 @@ inline auto to_time_point(const std::string& str)
     return point;
 }
 
-inline auto to_boolean(const std::string& str) noexcept
+inline auto to_boolean(const std::string& str)
 {
     using namespace std::string_literals;
     if(str == "true"s  || str == "1"s) return true;
