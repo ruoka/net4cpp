@@ -2,7 +2,7 @@
 
 #include <iostream>
 #include <ostream>
-#include "gsl/not_null.hpp"
+#include "gsl/owner.hpp"
 
 namespace net {
 
@@ -28,7 +28,7 @@ private:
 
     iendpointstream& operator = (const iendpointstream&) = delete;
 
-    gsl::not_null<endpointbuf_base*> m_buf;
+    gsl::owner<endpointbuf_base*> m_buf;
 };
 
 inline void swap(iendpointstream& lhs, iendpointstream& rhs)
@@ -58,7 +58,7 @@ private:
 
     oendpointstream& operator = (const oendpointstream&) = delete;
 
-    gsl::not_null<endpointbuf_base*> m_buf;
+    gsl::owner<endpointbuf_base*> m_buf;
 };
 
 inline void swap(oendpointstream& lhs, oendpointstream& rhs)
@@ -88,7 +88,7 @@ private:
 
     endpointstream& operator = (const endpointstream&) = delete;
 
-    gsl::not_null<endpointbuf_base*> m_buf;
+    gsl::owner<endpointbuf_base*> m_buf;
 };
 
 inline void swap(endpointstream& lhs, endpointstream& rhs)

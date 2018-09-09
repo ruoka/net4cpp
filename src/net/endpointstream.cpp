@@ -5,24 +5,24 @@ namespace net {
 
     iendpointstream::iendpointstream(endpointbuf_base* sb) : std::istream{sb}, m_buf{sb}
     {
-        init(m_buf.get());
+        init(m_buf);
     }
 
-    iendpointstream::iendpointstream(iendpointstream&& s) : std::istream{std::move(s)}, m_buf{std::move(s.m_buf)}
+    iendpointstream::iendpointstream(iendpointstream&& s) : std::istream{std::move(s)}, m_buf{s.m_buf}
     {
-        init(m_buf.get());
+        init(m_buf);
+        s.m_buf = nullptr;
     }
 
     iendpointstream::~iendpointstream()
     {
-        delete m_buf.get();
+        if(m_buf != nullptr)
+            delete m_buf;
     }
 
     iendpointstream& iendpointstream::operator = (iendpointstream&& s)
     {
         swap(s);
-        m_buf = std::move(s.m_buf);
-        init(m_buf.get());
         return *this;
     }
 
@@ -33,24 +33,24 @@ namespace net {
 
     oendpointstream::oendpointstream(endpointbuf_base* sb) : std::ostream{sb}, m_buf{sb}
     {
-        init(m_buf.get());
+        init(m_buf);
     }
 
-    oendpointstream::oendpointstream(oendpointstream&& s) : std::ostream{std::move(s)}, m_buf{std::move(s.m_buf)}
+    oendpointstream::oendpointstream(oendpointstream&& s) : std::ostream{std::move(s)}, m_buf{s.m_buf}
     {
-        init(m_buf.get());
+        init(m_buf);
+        s.m_buf = nullptr;
     }
 
     oendpointstream::~oendpointstream()
     {
-        delete m_buf.get();
+        if(m_buf != nullptr)
+            delete m_buf;
     }
 
     oendpointstream& oendpointstream::operator = (oendpointstream&& s)
     {
         swap(s);
-        m_buf = std::move(s.m_buf);
-        init(m_buf.get());
         return *this;
     }
 
@@ -61,24 +61,24 @@ namespace net {
 
     endpointstream::endpointstream(endpointbuf_base* sb) : std::iostream{sb}, m_buf{sb}
     {
-        init(m_buf.get());
+        init(m_buf);
     }
 
-    endpointstream::endpointstream(endpointstream&& s) : std::iostream{std::move(s)}, m_buf{std::move(s.m_buf)}
+    endpointstream::endpointstream(endpointstream&& s) : std::iostream{std::move(s)}, m_buf{s.m_buf}
     {
-        init(m_buf.get());
+        init(m_buf);
+        s.m_buf = nullptr;
     }
 
     endpointstream::~endpointstream()
     {
-        delete m_buf.get();
+        if(m_buf != nullptr)
+            delete m_buf;
     }
 
     endpointstream& endpointstream::operator = (endpointstream&& s)
     {
         swap(s);
-        m_buf = std::move(s.m_buf);
-        init(m_buf.get());
         return *this;
     }
 
