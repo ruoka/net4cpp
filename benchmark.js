@@ -1,3 +1,5 @@
+// Source https://gist.github.com/suxue/10440289
+
 // websocket server for evaluating javascript expression remotely
 
 var http = require("http");
