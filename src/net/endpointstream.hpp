@@ -20,7 +20,7 @@ public:
 
     iendpointstream& operator = (iendpointstream&& s);
 
-    bool wait_for(const std::chrono::milliseconds& timeout) const;
+    bool wait_for(const std::chrono::milliseconds& timeout);
 
 private:
 
@@ -43,8 +43,6 @@ public:
 
     oendpointstream& operator = (oendpointstream&& s);
 
-    bool wait_for(const std::chrono::milliseconds& timeout) const;
-
 private:
 
     oendpointstream(const oendpointstream&) = delete;
@@ -66,7 +64,7 @@ public:
 
     endpointstream& operator = (endpointstream&& s);
 
-    bool wait_for(const std::chrono::milliseconds& timeout) const;
+    bool wait_for(const std::chrono::milliseconds& timeout);
 
 private:
 

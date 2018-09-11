@@ -7,6 +7,7 @@
 
 using namespace net;
 using namespace std;
+using namespace std::literals;
 
 TEST(NetEndpointStreamTest,Construct1)
 {
@@ -30,6 +31,8 @@ TEST(NetEndpointStreamTest,HttpRequestAndResponse)
       << crlf
       << flush;
 
+    EXPECT_TRUE(s.wait_for(1s));
+
     auto os = ostringstream{};
     while(s)
     {
@@ -39,4 +42,10 @@ TEST(NetEndpointStreamTest,HttpRequestAndResponse)
     }
     SUCCEED() << os.str();
     cout << os.str();;
+}
+
+TEST(NetEndpointStreamTest,WaitFor)
+{
+    auto s = connect("www.google.fi","http");
+    EXPECT_FALSE(s.wait_for(1s));
 }
