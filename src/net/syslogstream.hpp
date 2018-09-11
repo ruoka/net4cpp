@@ -103,6 +103,8 @@ public:
 
         if(m_level >= m_severity)
         {
+            const auto fmt = flags();
+            std::dec(*this);
             const auto timestamp = to_years_days_months_hours_minutes_seconds(system_clock::now());
             static_cast<oendpointstream&>(*this)
                     << '<' << priority(m_facility, m_severity) << '>'             // <PRI>
@@ -113,6 +115,7 @@ public:
                     << setw(2) << setfill('0') << get<seconds>(timestamp) << ' '
                     << syslog::hostname                                   << ' '  // HOSTNAME
                     << m_tag << '[' << syslog::pid << ']' << ':'          << ' '; // TAG[PID]:
+            setf(fmt);
         }
     }
 

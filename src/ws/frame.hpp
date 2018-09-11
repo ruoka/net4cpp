@@ -4,18 +4,17 @@
 
 namespace ws {
 
+constexpr std::uint16_t continuation = 0b0000; // 0
+constexpr std::uint16_t text         = 0b0001; // 1
+constexpr std::uint16_t binary       = 0b0010; // 2
+constexpr std::uint16_t close        = 0b1000; // 8
+constexpr std::uint16_t ping         = 0b1001; // 9
+constexpr std::uint16_t pong         = 0b1010; // 10
+
 struct frame
 {
-    static const char continuation = char{0b0000}; // 0
-    static const char text = char{0b0001};         // 1
-    static const char binary = char{0b0010};       // 2
-    static const char close = char{0b1000};        // 8
-    static const char ping = char{0b1001};         // 9
-    static const char pong = char{0b1010};         // 10
-
     union alignas(16)
     {
-        std::uint16_t bits;
         struct alignas(16)
         {
             std::uint16_t opcode : 4;
@@ -26,19 +25,20 @@ struct frame
             std::uint16_t payload_length : 7;
             std::uint16_t masked : 1;
         } header;
+        std::uint16_t bits;
     };
-    std::uint16_t extended_payload_length_16;
-    std::uint64_t extended_payload_length_64;
+    std::uint16_t extended_payload_length_16; // NOTE, optional
+    std::uint64_t extended_payload_length_64; // NOTE, optional
     union alignas(32)
     {
         std::uint32_t masking_key;
         std::uint8_t masking_key_octet[4];
     };
-    std::vector<char> extension_data;
-    std::vector<char> payload_data;
+    std::vector<char> extension_data; // NOTE, optional
+    std::vector<char> payload_data; // NOTE, optional
 };
 
-std::size_t length(const frame& f)
+std::size_t length(const frame& f) noexcept
 {
     return std::max<std::size_t>({f.header.payload_length,f.extended_payload_length_16,f.extended_payload_length_64});
 }

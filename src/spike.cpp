@@ -20,25 +20,24 @@ namespace std
 
 int main()
 {
-
-    // auto f1 = ws::frame{};
-    // f1.header.fin = std::byte{0b1};
-    // f1.header.rsv1 = std::byte{0b0};
-    // f1.header.rsv2 = std::byte{0b0};
-    // f1.header.rsv3 = std::byte{0b0};
-    // f1.header.opcode = ws::frame::pong;
-    // f1.header.masked = std::byte{0b1};
-    // f1.header.payload_length = std::byte{0x4};
-    // f1.masking_key = std::uint32_t{0x13};
+    auto f1 = ws::frame{};
+    f1.header.fin = 0b1;
+    f1.header.rsv1 = 0b0;
+    f1.header.rsv2 = 0b0;
+    f1.header.rsv3 = 0b0;
+    f1.header.opcode = ws::pong;
+    f1.header.masked = 0b1;
+    f1.header.payload_length = 0x4;
+    f1.masking_key = 0x13;
     // f1.payload_data.push_back(std::byte{'A'});
     // f1.payload_data.push_back(std::byte{'B'});
     // f1.payload_data.push_back(std::byte{'C'});
     // f1.payload_data.push_back(std::byte{'D'});
 
-    // std::clog << std::to_integer<int>(f1.header.fin) << std::endl;
-    // std::clog << std::to_integer<int>(f1.header.masked) << std::endl;
-    // std::clog << std::to_integer<int>(f1.header.opcode) << std::endl;
-    // std::clog << std::to_integer<int>(f1.header.payload_length) << std::endl;
+    std::clog << std::bitset<1>{f1.header.fin}            << std::endl;
+    std::clog << std::bitset<1>{f1.header.masked}         << std::endl;
+    std::clog << std::bitset<4>{f1.header.opcode}         << std::endl;
+    std::clog << std::bitset<7>{f1.header.payload_length} << std::endl;
 
     // std::clog << f1 << std::endl;
     //

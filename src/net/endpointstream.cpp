@@ -26,9 +26,9 @@ namespace net {
         return *this;
     }
 
-    bool iendpointstream::wait_for(const std::chrono::milliseconds& timeout) const
+    bool iendpointstream::wait_for(const std::chrono::milliseconds& timeout)
     {
-        return m_buf->wait_for(timeout);
+        return m_buf->wait_for(timeout) && peek() != traits_type::eof();
     }
 
     oendpointstream::oendpointstream(endpointbuf_base* sb) : std::ostream{sb}, m_buf{sb}
@@ -54,11 +54,6 @@ namespace net {
         return *this;
     }
 
-    bool oendpointstream::wait_for(const std::chrono::milliseconds& timeout) const
-    {
-        return m_buf->wait_for(timeout);
-    }
-
     endpointstream::endpointstream(endpointbuf_base* sb) : std::iostream{sb}, m_buf{sb}
     {
         init(m_buf);
@@ -82,9 +77,9 @@ namespace net {
         return *this;
     }
 
-    bool endpointstream::wait_for(const std::chrono::milliseconds& timeout) const
+    bool endpointstream::wait_for(const std::chrono::milliseconds& timeout)
     {
-        return m_buf->wait_for(timeout);
+        return m_buf->wait_for(timeout) && peek() != traits_type::eof();
     }
 
 } // namespace net
