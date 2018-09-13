@@ -101,7 +101,7 @@ private:
             constexpr auto guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
             const auto client_key = headers["Sec-WebSocket-Key"];
             const auto server_key = client_key+guid;
-            const auto server_key_sha1_base64 = sha1::base64(server_key);
+            const auto server_key_sha1_base64 = sha1::base64(gsl::as_bytes<char>(server_key));
 
             net::slog << net::debug << "Sec-WebSocket-Key: " << client_key << net::flush;
             net::slog << net::debug << "Concatenated: " << server_key << net::flush;
