@@ -1,9 +1,8 @@
-#CXX = /Library/Developer/CommandLineTools/usr/bin/clang
-CXX = /usr/local/bin/clang
+CXX = clang
 
-CXXFLAGS = -nostdinc++ -I/usr/local/include/c++/v1 -I$(SRCDIR) -std=c++1z -MMD # -D DEBUG=1
+CXXFLAGS = -I$(SRCDIR) -std=c++17 -MMD # -D DEBUG=1
 
-LDFLAGS = -nostdlib -L/usr/lib -L/usr/local/lib -lc++ -lSystem
+LDFLAGS = -lc++ -lSystem
 
 
 SRCDIR = src
