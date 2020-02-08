@@ -3,8 +3,6 @@
 
 namespace view {
 
-using namespace std::string_literals;
-
 const auto index =
 u8R"(
 
@@ -38,41 +36,39 @@ u8R"(
     <article id = "content"></article>
 </body>
 </html>
-)"s;
 
-const auto get = u8R"(<p>GET response</p>)"s;
+)";
 
-const auto head = u8R"(<p>HEAD response</p>)"s;
+const auto get = u8R"(<p>GET response</p>)";
 
-const auto post = u8R"(<p>POST response</p>)"s;
+const auto head = u8R"(<p>HEAD response</p>)";
 
-const auto put = u8R"(<p>PUT response</p>)"s;
+const auto post = u8R"(<p>POST response</p>)";
 
-const auto destroy = u8R"(<p>DELETE response</p>)"s;
+const auto put = u8R"(<p>PUT response</p>)";
 
-const auto patch = u8R"(<p>PATCH response</p>)"s;
+const auto destroy = u8R"(<p>DELETE response</p>)";
 
-const auto json = u8R"( {"foo" : 1, "bar" : false} )"s;
+const auto patch = u8R"(<p>PATCH response</p>)";
+
+// const auto json = u8R"({"foo" : 1, "bar" : false})";
+
+const auto json = std::string{"{\"foo\" : 1, \"bar\" : false}\""};
 
 } // namespace view
 
 TEST(HttpServerTest,Setup)
 {
-    net::slog.tag("HttpServerTest");
-    net::slog.facility(net::syslog::facility::local0);
-    net::slog.level(net::syslog::severity::debug);
-    net::slog.redirect(std::clog);
-
     auto server = http::server{};
 
-    server.get("/").response(view::index);
-    server.get("/vk").response(view::get);
-    server.head("/vk").response(view::head);
-    server.post("/vk").response(view::post);
-    server.put("/vk").response(view::put);
-    server.patch("/vk").response(view::patch);
-    server.destroy("/vk").response(view::destroy);
-    server.get("/json").response(view::json);
+    server.get("/").html(view::index);
+    server.get("/vk").html(view::get);
+    server.head("/vk").html(view::head);
+    server.post("/vk").html(view::post);
+    server.put("/vk").html(view::put);
+    server.patch("/vk").html(view::patch);
+    server.destroy("/vk").html(view::destroy);
+    server.get("/json").json(view::json);
 
     server.listen("8080");
 }
