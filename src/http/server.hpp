@@ -1,5 +1,7 @@
 #pragma once
 #include <set>
+#include <tuple>
+#include <regex>
 #include <string>
 #include <thread>
 #include <functional>
@@ -18,52 +20,53 @@ class controller
 {
 public:
 
-    using callback = std::function<const std::string&(const std::string&)>;
+    using callback = std::function<std::string(const std::string&,const std::string&)>;
 
-    void text(const std::string& view)
+    void text(const std::string& content)
     {
         m_content_type = "text/plain"s;
-        m_callback = [&](const std::string&){return view;};
+        m_callback = [&](const std::string&,const std::string&){return content;};
     }
 
     void html(const std::string& content)
     {
         m_content_type = "text/html"s;
-        m_callback = [&](const std::string&){return content;};
+        m_callback = [&](const std::string&,const std::string&){return content;};
     }
 
     void css(const std::string& content)
     {
         m_content_type = "text/css"s;
-        m_callback = [&](const std::string&){return content;};
+        m_callback = [&](const std::string&,const std::string&){return content;};
     }
 
     void script(const std::string& content)
     {
         m_content_type = "application/javascript"s;
-        m_callback = [&](const std::string&){return content;};
+        m_callback = [&](const std::string&,const std::string&){return content;};
     }
 
     void json(const std::string& content)
     {
         m_content_type = "application/json"s;
-        m_callback = [&](const std::string&){return content;};
+        m_callback = [&](const std::string&,const std::string&){return content;};
     }
 
     void xml(const std::string& content)
     {
         m_content_type = "application/xml"s;
-        m_callback = [&](const std::string&){return content;};
+        m_callback = [&](const std::string&,const std::string&){return content;};
     }
 
-    void response(callback cb)
+    void response(const std::string& content_type, callback cb)
     {
+        m_content_type = content_type;
         m_callback = cb;
     }
 
-    std::string render(const std::string& uri = ""s)
+    std::tuple<std::string,std::string> render(const std::string& request = ""s, const std::string& body = ""s) const
     {
-        return m_callback(uri);
+        return {m_callback(request,body),m_content_type};
     }
 
     void content_type(const std::string& type)
@@ -80,7 +83,7 @@ private:
 
     std::string m_content_type = "*/*"s;
 
-    callback m_callback = [](const std::string&){return "HTTP/1.1 404 Not Found"s;};
+    callback m_callback = [](const std::string&,const std::string&){return "Not Found"s;};
 };
 
 class server
@@ -168,7 +171,7 @@ private:
         return m_content_type;
     }
 
-    void handle(endpointstream client)
+    void handle(endpointstream client) // TODO: Fix exceptions!
     {
         while(client)
         {
@@ -177,6 +180,7 @@ private:
             client >> std::ws;
             slog << info << "HTTP request \"" << method << ' ' << uri << ' ' << version << "\"" << flush;
 
+            auto content_length = 0ull;
             auto request_content_type = ""s, authorization = ""s;
 
             while(client && client.peek() != '\r')
@@ -188,6 +192,9 @@ private:
                 ext::trim(value);
                 slog << info << "HTTP request header \"" << name << "\": \"" << value << "\"" << flush;
 
+                if(name == "Content-Length")
+                    content_length = std::stoll(value);
+
                 if(name == "Accept")
                     request_content_type = value;
 
@@ -195,6 +202,12 @@ private:
                     authorization = value;
             }
             client.ignore(2); // crlf
+
+            auto body = std::string(content_length,' ');
+            for(auto& c : body)
+                c = client.get();
+
+            slog << info << "HTTP request body \"" << body << "\"" << flush;
 
             if(!m_methods.count(method))
             {
@@ -236,18 +249,21 @@ private:
             }
             else
             {
-                const auto& content = m_router[uri][method].render(uri);
-                const auto& content_type = m_router[uri][method].content_type();
+                auto content = ""s, content_type = ""s;
 
-                client << "HTTP/1.1 200 OK"                             << crlf
-                       << "Date: " << date()                            << crlf
-                       << "Server: " << host()                          << crlf
-                       << "Content-Type: " << content_type              << crlf
-                       << "Content-Length: " << content.length()        << crlf
-                       << "Access-Control-Allow-Methods: " << methods() << crlf
-                       << "Access-Control-Allow-Origin: *"              << crlf
-                       << "Access-Control-Allow-Headers: Content-Type"  << crlf
-                       << "Access-Control-Allow-Credentials: true"      << crlf
+                for(auto& route : m_router)
+                    if(std::regex_match(uri,std::regex(route.first)))
+                        std::tie(content,content_type) = route.second[method].render(uri,body);
+
+                client << "HTTP/1.1 200 OK"                                           << crlf
+                       << "Date: " << date()                                          << crlf
+                       << "Server: " << host()                                        << crlf
+                       << "Content-Type: " << content_type                            << crlf
+                       << "Content-Length: " << content.length()                      << crlf
+                       << "Access-Control-Allow-Methods: " << methods()               << crlf
+                       << "Access-Control-Allow-Origin: http://localhost:8080"        << crlf
+                       << "Access-Control-Allow-Headers: Content-Type, Authorization" << crlf
+                       << "Access-Control-Allow-Credentials: true"                    << crlf
                        << crlf
                        << (method != "HEAD"s ? content : ""s) << flush;
             }
@@ -262,7 +278,7 @@ private:
 
     std::string m_content_type = "*/*"s;
 
-    std::set<std::string> m_methods = {"HEAD"s};
+    std::set<std::string> m_methods = {"HEAD"s, "OPTIONS"s};
 
     bool m_authenticate = false;
 };
