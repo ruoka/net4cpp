@@ -11,23 +11,17 @@
 
 namespace ext {
 
-using days = std::chrono::duration<int, std::ratio_multiply<std::chrono::hours::period, std::ratio<24>>::type>;
-
-using years = std::chrono::duration<int, std::ratio_multiply<days::period, std::ratio<365>>::type>;
-
-using months = std::chrono::duration<int, std::ratio_divide<years::period, std::ratio<12>>::type>;
-
 static const std::string number2month[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
 static const std::string number2weekday[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 
-constexpr auto& to_string(const months& m) noexcept
+constexpr auto& to_string(const std::chrono::months& m) noexcept
 {
     const auto n = m.count();
     return ext::number2month[n];
 }
 
-constexpr auto& to_string(const days& d) noexcept
+constexpr auto& to_string(const std::chrono::days& d) noexcept
 {
     const auto z = d.count();
     const auto n = ( z >= -4 ? (z+4) % 7 : (z+5) % 7 + 6);
@@ -36,7 +30,7 @@ constexpr auto& to_string(const days& d) noexcept
 
 // http://howardhinnant.github.io/date_algorithms.html#days_from_civil
 
-constexpr auto to_time_point(const years& ys, const months& ms, const days& ds)
+constexpr auto to_time_point(const std::chrono::years& ys, const std::chrono::months& ms, const std::chrono::days& ds)
 {
     using namespace std::chrono;
     static_assert(std::numeric_limits<unsigned>::digits >= 18,
@@ -56,7 +50,7 @@ constexpr auto to_time_point(const years& ys, const months& ms, const days& ds)
 
 // http://howardhinnant.github.io/date_algorithms.html#civil_from_days
 
-constexpr auto to_years_days_months(const days& ds)
+constexpr auto to_years_days_months(const std::chrono::days& ds)
 {
     static_assert(std::numeric_limits<unsigned>::digits >= 18,
              "This algorithm has not been ported to a 16 bit unsigned integer");
@@ -71,7 +65,7 @@ constexpr auto to_years_days_months(const days& ds)
     const auto mp = (5*doy + 2)/153;                                   // [0, 11]
     const auto d = doy - (153*mp+2)/5 + 1;                             // [1, 31]
     const auto m = mp + (mp < 10 ? 3 : -9u);                           // [1, 12]
-    return make_tuple( years{y + (m <= 2)}, months{m}, days{d} );
+    return make_tuple( std::chrono::years{y + (m <= 2)}, std::chrono::months{m}, std::chrono::days{d} );
 }
 
 template<typename T>
@@ -183,19 +177,19 @@ inline void to_upper(std::string& str) noexcept
     for(auto& c : str) c = std::toupper(c);
 }
 
-inline std::string& trim_right(std::string& str, const std::string& delimiters = " \f\n\r\t\v")
+inline std::string& trim_right(std::string& str, const char* ws = " \f\n\r\t\v")
 {
-    return str.erase(str.find_last_not_of(delimiters) + 1);
+    return str.erase(str.find_last_not_of(ws) + 1);
 }
 
-inline std::string& trim_left(std::string& str, const std::string& delimiters = " \f\n\r\t\v")
+inline std::string& trim_left(std::string& str, const char* ws = " \f\n\r\t\v")
 {
-      return str.erase(0, str.find_first_not_of(delimiters));
+      return str.erase(0, str.find_first_not_of(ws));
 }
 
-inline std::string& trim(std::string& str, const std::string& delimiters = " \f\n\r\t\v")
+inline std::string& trim(std::string& str, const char* ws = " \f\n\r\t\v")
 {
-      return trim_left(trim_right(str, delimiters ), delimiters);
+      return trim_left(trim_right(str, ws ), ws);
 }
 
 template<typename T>

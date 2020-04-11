@@ -6,14 +6,11 @@
 #include <thread>
 #include <functional>
 #include <unordered_map>
-#include "std/extension.hpp"
 #include "net/acceptor.hpp"
-#include "net/syslogstream.hpp"
+#include "http/headers.hpp"
 
 namespace http {
 
-using namespace net;
-using namespace std::string_literals;
 using namespace std::chrono_literals;
 
 class controller
@@ -177,33 +174,26 @@ private:
         {
             auto method = ""s, uri = ""s, version = ""s;
             client >> method >> uri >> version;
-            client >> std::ws;
             slog << info << "HTTP request \"" << method << ' ' << uri << ' ' << version << "\"" << flush;
 
-            auto content_length = 0ull;
-            auto request_content_type = ""s, authorization = ""s;
+            client >> std::ws;
 
-            while(client && client.peek() != '\r')
-            {
-                auto name = ""s, value = ""s;
-                getline(client, name, ':');
-                ext::trim(name);
-                getline(client, value);
-                ext::trim(value);
-                slog << info << "HTTP request header \"" << name << "\": \"" << value << "\"" << flush;
+            auto headers = http::headers{};
+            client >> headers;
+            // headers object will do the logging into syslog
 
-                if(name == "Content-Length")
-                    content_length = std::stoll(value);
-
-                if(name == "Accept")
-                    request_content_type = value;
-
-                if(name == "Authorization")
-                    authorization = value;
-            }
             client.ignore(2); // crlf
 
+            auto content_length = 0ull;
+            if(headers.count("Content-Length"))
+                content_length = std::stoll(headers["Content-Length"]);
+
+            auto authorization = ""s;
+            if(headers.count("Authorization"))
+                authorization = headers["Authorization"];
+
             auto body = std::string(content_length,' ');
+
             for(auto& c : body)
                 c = client.get();
 

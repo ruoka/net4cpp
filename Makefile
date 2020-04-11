@@ -1,6 +1,6 @@
 CXX = clang
 
-CXXFLAGS = -I$(SRCDIR) -std=c++17 -MMD # -D DEBUG=1
+CXXFLAGS = -I$(SRCDIR) -std=c++2a -MMD # -D DEBUG=1
 
 LDFLAGS = -lc++ -lSystem
 
