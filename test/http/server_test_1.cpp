@@ -4,7 +4,7 @@
 namespace view {
 
 const auto index =
-u8R"(
+R"(
 
 <!DOCTYPE html>
 <html>
@@ -39,19 +39,19 @@ u8R"(
 
 )";
 
-const auto get = u8R"(<p>GET response</p>)";
+const auto get = R"(<p>GET response</p>)";
 
-const auto head = u8R"(<p>HEAD response</p>)";
+const auto head = R"(<p>HEAD response</p>)";
 
-const auto post = u8R"(<p>POST response</p>)";
+const auto post = R"(<p>POST response</p>)";
 
-const auto put = u8R"(<p>PUT response</p>)";
+const auto put = R"(<p>PUT response</p>)";
 
-const auto destroy = u8R"(<p>DELETE response</p>)";
+const auto destroy = R"(<p>DELETE response</p>)";
 
-const auto patch = u8R"(<p>PATCH response</p>)";
+const auto patch = R"(<p>PATCH response</p>)";
 
-// const auto json = u8R"({"foo" : 1, "bar" : false})";
+// const auto json = R"({"foo" : 1, "bar" : false})";
 
 const auto json = std::string{"{\"foo\" : 1, \"bar\" : false}"};
 
