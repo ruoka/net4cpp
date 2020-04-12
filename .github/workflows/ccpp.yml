@@ -14,8 +14,8 @@ jobs:
     steps:
     - uses: actions/checkout@v2
       with:
-        fetch-depth: 2
-    - run: git checkout HEAD^
+        fetch-depth: 1
+        submodules: true
     - name: make
       run: make
     - name: make test
