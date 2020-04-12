@@ -14,6 +14,9 @@
 #ifndef IPV6_DROP_MEMBERSHIP
 #define IPV6_DROP_MEMBERSHIP IPV6_LEAVE_GROUP
 #endif
+#ifndef SO_NOSIGPIPE
+#define SO_NOSIGPIPE MSG_NOSIGNAL
+#endif
 
 namespace net {
 

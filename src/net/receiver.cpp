@@ -1,3 +1,4 @@
+#include <cstring>
 #include <cassert>
 #include "net/receiver.hpp"
 #include "net/address_info.hpp"
