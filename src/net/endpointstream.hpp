@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <ostream>
+#include <chrono>
 #include "gsl/owner.hpp"
 
 namespace net {

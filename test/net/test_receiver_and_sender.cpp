@@ -1,6 +1,7 @@
 #include <array>
 #include <vector>
 #include <thread>
+#include <mutex>
 #include <gtest/gtest.h>
 #include "net/sender.hpp"
 #include "net/receiver.hpp"

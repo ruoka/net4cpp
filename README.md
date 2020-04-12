@@ -1,5 +1,5 @@
 # net4cpp
-Network library based on C++17 standard
+Network library based on C++20 standard
 
 # Echo Server Example
 
