@@ -88,7 +88,7 @@ lib: $(LIBRARY) $(INCLUDES)
 
 .PHONY: test
 test: $(TEST_TARGET)
-	$(TEST_TARGET) --gtest_filter=-*.CommandLine:HttpServerTest*
+	$(TEST_TARGET) --gtest_filter=-*CommandLine:HttpServerTest*:NetReceiverAndSenderTest*
 
 .PHONY: clean
 clean:
