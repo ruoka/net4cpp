@@ -102,7 +102,7 @@ int acceptor::wait()
     else
         net::select(FD_SETSIZE, &fds, nullptr, nullptr, nullptr);
 
-    for(const auto& fd : m_sockets)
+    for(int fd : m_sockets)
         if(FD_ISSET(fd,&fds)) return fd;
 
     throw std::system_error{errno, std::system_category(), "accept failed"};
