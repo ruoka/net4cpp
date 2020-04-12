@@ -1,4 +1,4 @@
-CXX = clang++
+CXX = clang++ -nostdinc++
 
 CXXFLAGS = -std=c++17 -MMD # -D DEBUG=1
 
