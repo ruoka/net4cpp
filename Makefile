@@ -2,7 +2,7 @@ CXX = clang++
 
 CXXFLAGS = -std=c++17 -MMD # -D DEBUG=1
 
-LDFLAGS =
+LDFLAGS = -pthread
 
 ############
 
