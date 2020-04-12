@@ -2,7 +2,7 @@ CXX = clang++
 
 CXXFLAGS = -std=c++2a -MMD # -D DEBUG=1
 
-LDFLAGS = -stdlib=libc++
+LDFLAGS =
 
 ############
 
