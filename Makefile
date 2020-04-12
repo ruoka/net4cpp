@@ -1,6 +1,6 @@
 CXX = clang++
 
-CXXFLAGS = -std=c++2a -MMD # -D DEBUG=1
+CXXFLAGS = -std=c++17 -MMD # -D DEBUG=1
 
 LDFLAGS = -stdlib=libc++
 
