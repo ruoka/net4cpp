@@ -27,19 +27,21 @@ TEST(NetAcceptorTest,Accept)
         auto ator = acceptor{"localhost","50001"};
         auto host = ""s;
         auto port = ""s;
-        auto c = ator.accept(host, port);
+        auto c = net::endpointstream{nullptr};
+        EXPECT_NO_THROW(c = ator.accept(host, port));
+        EXPECT_FALSE(!c);
         EXPECT_EQ(host,"localhost");
         EXPECT_GT(port,"49152");
         EXPECT_LT(port,"65535");
-        SUCCEED() << "Connection: " << host << "." << port << endl;
     }};
 
     this_thread::sleep_for(10ms);
 
     auto t2 = thread {
     []{
-        auto h = connect("localhost","50001");
-        EXPECT_FALSE(!h);
+        auto s = net::endpointstream{nullptr};
+        EXPECT_NO_THROW(s = connect("localhost","50001"));
+        EXPECT_FALSE(!s);
     }};
 
     t1.join();
