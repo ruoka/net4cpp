@@ -87,7 +87,7 @@ int acceptor::wait()
 {
     auto fds = net::fd_set{};
     FD_ZERO(&fds);
-    for(const auto& fd : m_sockets) FD_SET(fd,&fds);
+    for(int fd : m_sockets) FD_SET(fd,&fds);
 
     if(m_timeout.count())
     {
