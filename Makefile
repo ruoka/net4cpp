@@ -2,7 +2,7 @@ CXX = clang++
 
 CXXFLAGS = -std=c++17 -MMD # -D DEBUG=1
 
-LDFLAGS = -pthread
+LDFLAGS = -lpthread -pthread
 
 ############
 
@@ -72,7 +72,7 @@ $(OBJDIR)/$(TESTDIR)/%.o: $(TESTDIR)/%.cpp $(GTESTLIBS) $(INCLUDES)
 
 $(TEST_TARGET): $(TEST_OBJECTS) $(LIBRARY)
 	@mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(TEST_OBJECTS) $(LIBRARY) $(GTESTLIBS) -o $@
+	$(CXX) $(CXXFLAGS) $(TEST_OBJECTS) $(LIBRARY) $(GTESTLIBS) $(LDFLAGS) -o $@
 
 ############
 
