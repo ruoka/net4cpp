@@ -1,11 +1,11 @@
 #pragma once
+#include <map>
 #include <set>
 #include <tuple>
 #include <regex>
 #include <string>
 #include <thread>
 #include <functional>
-#include <unordered_map>
 #include "net/acceptor.hpp"
 #include "http/headers.hpp"
 
@@ -17,56 +17,56 @@ class controller
 {
 public:
 
-    using callback = std::function<std::string(const std::string&,const std::string&)>;
+    using callback = std::function<std::string(std::string_view,std::string_view)>;
 
     void text(const std::string& content)
     {
         m_content_type = "text/plain"s;
-        m_callback = [&](const std::string&,const std::string&){return content;};
+        m_callback = [&](std::string_view,std::string_view){return content;};
     }
 
     void html(const std::string& content)
     {
         m_content_type = "text/html"s;
-        m_callback = [&](const std::string&,const std::string&){return content;};
+        m_callback = [&](std::string_view,std::string_view){return content;};
     }
 
     void css(const std::string& content)
     {
         m_content_type = "text/css"s;
-        m_callback = [&](const std::string&,const std::string&){return content;};
+        m_callback = [&](std::string_view,std::string_view){return content;};
     }
 
     void script(const std::string& content)
     {
         m_content_type = "application/javascript"s;
-        m_callback = [&](const std::string&,const std::string&){return content;};
+        m_callback = [&](std::string_view,std::string_view){return content;};
     }
 
     void json(const std::string& content)
     {
         m_content_type = "application/json"s;
-        m_callback = [&](const std::string&,const std::string&){return content;};
+        m_callback = [&](std::string_view,std::string_view){return content;};
     }
 
     void xml(const std::string& content)
     {
         m_content_type = "application/xml"s;
-        m_callback = [&](const std::string&,const std::string&){return content;};
+        m_callback = [&](std::string_view,std::string_view){return content;};
     }
 
-    void response(const std::string& content_type, callback cb)
+    void response(std::string_view content_type, callback cb)
     {
         m_content_type = content_type;
         m_callback = cb;
     }
 
-    std::tuple<std::string,std::string> render(const std::string& request = ""s, const std::string& body = ""s) const
+    std::tuple<std::string,std::string> render(std::string_view request = "", std::string_view body = "") const
     {
         return {m_callback(request,body),m_content_type};
     }
 
-    void content_type(const std::string& type)
+    void content_type(std::string_view type)
     {
         m_content_type = type;
     }
@@ -80,7 +80,7 @@ private:
 
     std::string m_content_type = "*/*"s;
 
-    callback m_callback = [](const std::string&,const std::string&){return "Not Found"s;};
+    callback m_callback = [](std::string_view, std::string_view){return "Not Found"s;};
 };
 
 class server
@@ -260,7 +260,7 @@ private:
         }
     }
 
-    using router = std::unordered_map<std::string,std::unordered_map<std::string,controller>>;
+    using router = std::map<std::string,std::map<std::string,controller>, std::less<>>;
 
     router m_router;
 

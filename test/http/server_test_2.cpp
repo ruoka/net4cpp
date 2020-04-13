@@ -7,7 +7,7 @@ TEST(HttpServerTest2,TestRegexRoutes)
 {
     auto server = http::server{};
 
-    auto handler = [](const std::string& uri,const std::string& body){return "<p>"s + uri + "</p>"s;};
+    auto handler = [](std::string_view request,std::string_view body){return "<p>"s + std::string{request} + "</p>"s;};
 
     server.get("/[a-z]*").response("text/html",handler);
 
