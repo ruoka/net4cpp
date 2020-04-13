@@ -32,37 +32,29 @@ TEST(StdExtension,Durations2Stream)
 
 TEST(StdExtension,Months2String)
 {
-    ASSERT_EQ("Jan"s, to_string(months{1}));
-    ASSERT_EQ("Feb"s, to_string(months{2}));
-    ASSERT_EQ("Mar"s, to_string(months{3}));
-    ASSERT_EQ("Apr"s, to_string(months{4}));
-    ASSERT_EQ("May"s, to_string(months{5}));
-    ASSERT_EQ("Jun"s, to_string(months{6}));
-    ASSERT_EQ("Jul"s, to_string(months{7}));
-    ASSERT_EQ("Aug"s, to_string(months{8}));
-    ASSERT_EQ("Sep"s, to_string(months{9}));
-    ASSERT_EQ("Oct"s, to_string(months{10}));
-    ASSERT_EQ("Nov"s, to_string(months{11}));
-    ASSERT_EQ("Dec"s, to_string(months{12}));
+    ASSERT_EQ("Jan"s, to_string(month{1}));
+    ASSERT_EQ("Feb"s, to_string(month{2}));
+    ASSERT_EQ("Mar"s, to_string(month{3}));
+    ASSERT_EQ("Apr"s, to_string(month{4}));
+    ASSERT_EQ("May"s, to_string(month{5}));
+    ASSERT_EQ("Jun"s, to_string(month{6}));
+    ASSERT_EQ("Jul"s, to_string(month{7}));
+    ASSERT_EQ("Aug"s, to_string(month{8}));
+    ASSERT_EQ("Sep"s, to_string(month{9}));
+    ASSERT_EQ("Oct"s, to_string(month{10}));
+    ASSERT_EQ("Nov"s, to_string(month{11}));
+    ASSERT_EQ("Dec"s, to_string(month{12}));
 }
 
-TEST(StdExtension,Days2String)
+TEST(StdExtension,Weekday2String)
 {
-    ASSERT_EQ("Wed"s, to_string(days{-1}));
-    ASSERT_EQ("Thu"s, to_string(days{0}));
-    ASSERT_EQ("Fri"s, to_string(days{1}));
-    ASSERT_EQ("Sat"s, to_string(days{2}));
-    ASSERT_EQ("Sun"s, to_string(days{3}));
-    ASSERT_EQ("Mon"s, to_string(days{4}));
-    ASSERT_EQ("Tue"s, to_string(days{5}));
-    ASSERT_EQ("Wed"s, to_string(days{6}));
-    ASSERT_EQ("Thu"s, to_string(days{7}));
-    ASSERT_EQ("Fri"s, to_string(days{8}));
-    ASSERT_EQ("Sat"s, to_string(days{9}));
-    ASSERT_EQ("Sun"s, to_string(days{10}));
-    ASSERT_EQ("Mon"s, to_string(days{11}));
-    ASSERT_EQ("Tue"s, to_string(days{12}));
-    ASSERT_EQ("Wed"s, to_string(days{13}));
+    ASSERT_EQ("Sun"s, to_string(weekday{0}));
+    ASSERT_EQ("Mon"s, to_string(weekday{1}));
+    ASSERT_EQ("Tue"s, to_string(weekday{2}));
+    ASSERT_EQ("Wed"s, to_string(weekday{3}));
+    ASSERT_EQ("Thu"s, to_string(weekday{4}));
+    ASSERT_EQ("Fri"s, to_string(weekday{5}));
+    ASSERT_EQ("Sat"s, to_string(weekday{6}));
 }
 
 TEST(StdExtension,TimePoint2RFC1123)
