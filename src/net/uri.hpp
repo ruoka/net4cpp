@@ -68,7 +68,7 @@ private:
 
     friend class uri;
 
-    auto& operator = (std::string_view&& value)
+    auto& operator = (std::string_view value)
     {
         m_value = value;
 
@@ -89,7 +89,7 @@ private:
     std::vector<std::string_view> m_index;
 };
 
-explicit uri(std::string_view string)
+uri(std::string_view string)
 {
     auto position = string.npos;
 
@@ -150,9 +150,6 @@ explicit uri(std::string_view string)
         fragment = string.substr();                           // host
     }
 }
-
-uri(const std::string& str) : uri(std::string_view{str})
-{}
 
 property<bool> absolute;
 
