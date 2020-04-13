@@ -96,26 +96,28 @@ public:
 
     void header()
     {
-        // <PRI> Feb 22 21:12 localhost syslog[2112]:
-        using namespace std;
-        using namespace chrono;
-        using namespace ext;
-
         if(m_level >= m_severity)
         {
-            const auto fmt = flags();
-            std::dec(*this);
-            const auto timestamp = to_years_days_months_hours_minutes_seconds(system_clock::now());
+            const auto current_point = std::chrono::system_clock::now();
+            const auto current_day = std::chrono::floor<std::chrono::days>(current_point);
+            const auto date = std::chrono::year_month_day{current_day};
+            const auto time = ext::time_of_day{current_point - current_day};
+
+            const auto formatting = flags();
+
+            // <PRI> Feb 22 21:12 localhost syslog[2112]:
             static_cast<oendpointstream&>(*this)
-                    << '<' << priority(m_facility, m_severity) << '>'             // <PRI>
-                    << setw(3) << to_string(get<months>(timestamp))       << ' '  // TIMESTAMP
-                    << setw(2) << setfill(' ') << get<days>(timestamp)    << ' '
-                    << setw(2) << setfill('0') << get<hours>(timestamp)   << ':'
-                    << setw(2) << setfill('0') << get<minutes>(timestamp) << ':'
-                    << setw(2) << setfill('0') << get<seconds>(timestamp) << ' '
-                    << syslog::hostname                                   << ' '  // HOSTNAME
-                    << m_tag << '[' << syslog::pid << ']' << ':'          << ' '; // TAG[PID]:
-            setf(fmt);
+                    << std::dec
+                    << '<' << priority(m_facility, m_severity)     << '>'  // <PRI>
+                    << std::setw(3) << ext::to_string(date.month())      << ' '  // TIMESTAMP
+                    << std::setw(2) << std::setfill(' ') << date.day()     << ' '
+                    << std::setw(2) << std::setfill('0') << time.hours()   << ':'
+                    << std::setw(2) << std::setfill('0') << time.minutes() << ':'
+                    << std::setw(2) << std::setfill('0') << time.seconds() << ' '
+                    << syslog::hostname                            << ' '  // HOSTNAME
+                    << m_tag << '[' << syslog::pid << ']' << ':'   << ' '; // TAG[PID]:
+
+            flags(formatting);
         }
     }
 
