@@ -83,7 +83,7 @@ public:
         m_level = static_cast<syslog::severity>(s);
     }
 
-    void tag(const std::string& tag)
+    void tag(std::string_view tag)
     {
         m_tag = tag;
     }
