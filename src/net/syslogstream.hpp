@@ -98,26 +98,23 @@ public:
     {
         if(m_level >= m_severity)
         {
-            const auto current_point = std::chrono::system_clock::now();
-            const auto current_day = std::chrono::floor<std::chrono::days>(current_point);
-            const auto date = std::chrono::year_month_day{current_day};
-            const auto time = ext::time_of_day{current_point - current_day};
-
+            const auto current_time = std::chrono::system_clock::now();
+            const auto midnight = std::chrono::floor<std::chrono::days>(current_time);
+            const auto date = std::chrono::year_month_day{midnight};
+            const auto time = std::chrono::hh_mm_ss{current_time - midnight};
             const auto formatting = flags();
-
             // <PRI> Feb 22 21:12 localhost syslog[2112]:
             static_cast<oendpointstream&>(*this)
-                    << std::dec
-                    << '<' << priority(m_facility, m_severity)     << '>'  // <PRI>
-                    << std::setw(3) << ext::to_string(date.month())      << ' '  // TIMESTAMP
+                    << std::resetiosflags(formatting)
+                    << '<' << priority(m_facility, m_severity)             << '>'  // <PRI>
+                    << std::setw(3) << ext::to_string(date.month())        << ' '  // TIMESTAMP
                     << std::setw(2) << std::setfill(' ') << date.day()     << ' '
                     << std::setw(2) << std::setfill('0') << time.hours()   << ':'
                     << std::setw(2) << std::setfill('0') << time.minutes() << ':'
                     << std::setw(2) << std::setfill('0') << time.seconds() << ' '
-                    << syslog::hostname                            << ' '  // HOSTNAME
-                    << m_tag << '[' << syslog::pid << ']' << ':'   << ' '; // TAG[PID]:
-
-            flags(formatting);
+                    << syslog::hostname                                    << ' ' // HOSTNAME
+                    << m_tag << '[' << syslog::pid << ']' << ':'           << ' ' // TAG[PID]:
+                    << std::setiosflags(formatting);
         }
     }
 
