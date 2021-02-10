@@ -44,49 +44,6 @@ auto& operator << (std::ostream& os, const std::chrono::duration<T,R>& d) noexce
 namespace ext
 {
 
-template<class Rep, class Period>
-class time_of_day
-{
-public:
-
-    using precision = std::chrono::duration<Rep, Period>;
-
-    constexpr time_of_day() noexcept = default;
-
-    constexpr explicit time_of_day(const std::chrono::duration<Rep, Period>& since_midnight) noexcept
-    {
-        auto temp = since_midnight;
-        m_hours = std::chrono::duration_cast<std::chrono::hours>(temp);
-        temp -= m_hours;
-        m_minutes = std::chrono::duration_cast<std::chrono::minutes>(temp);
-        temp -= m_minutes;
-        m_seconds = std::chrono::duration_cast<std::chrono::seconds>(temp);
-        temp -= m_seconds;
-        m_subseconds = std::chrono::duration_cast<precision>(temp);
-    }
-
-    constexpr std::chrono::hours hours() const noexcept {return m_hours;};
-
-    constexpr std::chrono::minutes minutes() const noexcept {return m_minutes;};
-
-    constexpr std::chrono::seconds seconds() const noexcept {return m_seconds;};
-
-    constexpr precision subseconds() const noexcept {return m_subseconds;};
-
-    // constexpr unsigned mode() const noexcept {return m_subseconds};
-    // constexpr explicit operator precision() const noexcept;
-    // constexpr precision to_duration() const noexcept;
-    // void make24() noexcept;
-    // void make12() noexcept;
-
-private:
-
-    std::chrono::hours m_hours;
-    std::chrono::minutes m_minutes;
-    std::chrono::seconds m_seconds;
-    precision m_subseconds;
-};
-
 inline auto stoi(std::string_view sv, std::size_t* pos = nullptr, int base = 10)
 {
     char* end;
@@ -136,17 +93,17 @@ static const std::string g_number2weekday[] = {"Sun", "Mon", "Tue", "Wed", "Thu"
 
 constexpr auto& to_string(const std::chrono::weekday& wd) noexcept
 {
-    const auto n = static_cast<unsigned>(wd);
+    const auto n = wd.c_encoding();
     return g_number2weekday[n];
 }
 
 template<typename T>
-auto to_rfc1123(const std::chrono::time_point<T>& current_point) noexcept
+auto to_rfc1123(const std::chrono::time_point<T>& current_time) noexcept
 {
-    const auto current_day = std::chrono::floor<std::chrono::days>(current_point);
-    const auto weekday = std::chrono::weekday{current_day};
-    const auto date = std::chrono::year_month_day{current_day};
-    const auto time = ext::time_of_day{current_point - current_day};
+    const auto midnight = std::chrono::floor<std::chrono::days>(current_time);
+    const auto weekday = std::chrono::weekday{midnight};
+    const auto date = std::chrono::year_month_day{midnight};
+    const auto time = std::chrono::hh_mm_ss{current_time - midnight};
     // Sun, 22 Feb 2112 10:00:00
     auto os = std::ostringstream{};
     os << ext::to_string(weekday)                             << ", "
@@ -161,11 +118,11 @@ auto to_rfc1123(const std::chrono::time_point<T>& current_point) noexcept
 }
 
 template<typename T>
-auto to_iso8601(const std::chrono::time_point<T>& current_point) noexcept
+auto to_iso8601(const std::chrono::time_point<T>& current_time) noexcept
 {
-    const auto current_day = std::chrono::floor<std::chrono::days>(current_point);
-    const auto date = std::chrono::year_month_day{current_day};
-    const auto time = ext::time_of_day{current_point - current_day};
+    const auto midnight = std::chrono::floor<std::chrono::days>(current_time);
+    const auto date = std::chrono::year_month_day{midnight};
+    const auto time = std::chrono::hh_mm_ss{current_time - midnight};
     const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time.subseconds());
     // YYYY-MM-DDThh:mm:ss.fffZ
     auto os = std::ostringstream{};
