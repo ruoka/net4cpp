@@ -31,6 +31,7 @@ operator<<(std::basic_ostream<CharT, Traits>& os, const std::chrono::day& d) noe
     os << static_cast<unsigned>(d);
     return os;
 }
+
 template<typename T, typename R>
 auto& operator << (std::ostream& os, const std::chrono::duration<T,R>& d) noexcept
 {
@@ -38,53 +39,6 @@ auto& operator << (std::ostream& os, const std::chrono::duration<T,R>& d) noexce
     return os;
 }
 
-namespace chrono
-{
-template<class Duration> class hh_mm_ss
-{
-public:
-
-    static constexpr unsigned fractional_width = 6; // FIXME
-
-    using precision = duration<common_type_t<typename Duration::rep, std::chrono::seconds::rep>, ratio<1,1000000>>; // FIXME
-
-    constexpr hh_mm_ss() noexcept : hh_mm_ss{Duration::zero()} {};
-
-    constexpr explicit hh_mm_ss(Duration d) :
-        is_neg{d < Duration{0}},
-        h{duration_cast<chrono::hours>(std::chrono::abs(d))},
-        m{duration_cast<chrono::minutes>(std::chrono::abs(d) - hours())},
-        s{duration_cast<chrono::seconds>(std::chrono::abs(d) - hours() - minutes())},
-        ss{duration_cast<precision>(std::chrono::abs(d) - hours() - minutes() - seconds())}
-    {}
-
-    constexpr bool is_negative() const noexcept {return is_neg;};
-
-    constexpr chrono::hours hours() const noexcept {return h;};
-
-    constexpr chrono::minutes minutes() const noexcept {return m;};
-
-    constexpr chrono::seconds seconds() const noexcept {return s;};
-
-    constexpr precision subseconds() const noexcept {return ss;};
-
-    constexpr precision to_duration() const noexcept
-    {
-        auto dur = h + m + s + ss;
-        return is_neg ? -dur : dur;
-    }
-
-    constexpr explicit operator precision() const noexcept {return to_duration();};
-
-private:
-    bool is_neg;
-    std::chrono::hours h;
-    std::chrono::minutes m;
-    std::chrono::seconds s;
-    precision ss;
-};
-
-} // namespace chrono
 } // namespace std
 
 namespace ext
@@ -139,7 +93,7 @@ static const std::string g_number2weekday[] = {"Sun", "Mon", "Tue", "Wed", "Thu"
 
 constexpr auto& to_string(const std::chrono::weekday& wd) noexcept
 {
-    const auto n = static_cast<unsigned>(wd);
+    const auto n = wd.c_encoding();
     return g_number2weekday[n];
 }
 
