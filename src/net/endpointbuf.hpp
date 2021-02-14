@@ -18,6 +18,10 @@ public:
 
 protected:
 
+    endpointbuf_base(const endpointbuf_base&) = delete;
+
+    endpointbuf_base& operator = (const endpointbuf_base&) = delete;
+
     socket m_socket;
 };
 
