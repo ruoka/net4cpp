@@ -49,3 +49,9 @@ TEST(NetEndpointStreamTest,WaitFor)
     auto s = connect("www.google.fi","http");
     EXPECT_FALSE(s.wait_for(1s));
 }
+
+TEST(NetEndpointStreamTest,Move)
+{
+    auto s1 = net::endpointstream{nullptr};
+    s1 = connect("www.google.fi","http");;
+}
