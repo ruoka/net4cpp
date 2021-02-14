@@ -1,14 +1,15 @@
+#include <iostream> // FIXME
 #include "net/endpointstream.hpp"
 #include "net/endpointbuf.hpp"
 
 namespace net {
 
-    iendpointstream::iendpointstream(endpointbuf_base* sb) : std::istream{sb}, m_buf{sb}
+    iendpointstream::iendpointstream(endpointbuf_base* buf) : std::istream{buf}, m_buf{buf}
     {
         init(m_buf);
     }
 
-    iendpointstream::iendpointstream(iendpointstream&& s) : std::istream{std::move(s)}, m_buf{s.m_buf}
+    iendpointstream::iendpointstream(iendpointstream&& s) : std::istream{s.m_buf}, m_buf{s.m_buf}
     {
         init(m_buf);
         s.m_buf = nullptr;
@@ -22,7 +23,9 @@ namespace net {
 
     iendpointstream& iendpointstream::operator = (iendpointstream&& s)
     {
-        swap(s);
+        m_buf = s.m_buf;
+        s.m_buf = nullptr;
+        init(m_buf);
         return *this;
     }
 
@@ -36,10 +39,10 @@ namespace net {
         init(m_buf);
     }
 
-    oendpointstream::oendpointstream(oendpointstream&& s) : std::ostream{std::move(s)}, m_buf{s.m_buf}
+    oendpointstream::oendpointstream(oendpointstream&& s) : std::ostream{s.m_buf}, m_buf{s.m_buf}
     {
-        init(m_buf);
         s.m_buf = nullptr;
+        init(m_buf);
     }
 
     oendpointstream::~oendpointstream()
@@ -50,19 +53,21 @@ namespace net {
 
     oendpointstream& oendpointstream::operator = (oendpointstream&& s)
     {
-        swap(s);
+        m_buf = s.m_buf;
+        s.m_buf = nullptr;
+        init(m_buf);
         return *this;
     }
 
-    endpointstream::endpointstream(endpointbuf_base* sb) : std::iostream{sb}, m_buf{sb}
+    endpointstream::endpointstream(endpointbuf_base* buf) : std::iostream{buf}, m_buf{buf}
     {
         init(m_buf);
     }
 
-    endpointstream::endpointstream(endpointstream&& s) : std::iostream{std::move(s)}, m_buf{s.m_buf}
+    endpointstream::endpointstream(endpointstream&& s) : std::iostream{s.m_buf}, m_buf{s.m_buf}
     {
-        init(m_buf);
         s.m_buf = nullptr;
+        init(m_buf);
     }
 
     endpointstream::~endpointstream()
@@ -73,7 +78,9 @@ namespace net {
 
     endpointstream& endpointstream::operator = (endpointstream&& s)
     {
-        swap(s);
+        m_buf = s.m_buf;
+        s.m_buf = nullptr;
+        init(m_buf);
         return *this;
     }
 

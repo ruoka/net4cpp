@@ -25,6 +25,8 @@ public:
 
 private:
 
+    iendpointstream() = delete;
+
     iendpointstream(const iendpointstream&) = delete;
 
     iendpointstream& operator = (const iendpointstream&) = delete;
@@ -45,6 +47,8 @@ public:
     oendpointstream& operator = (oendpointstream&& s);
 
 private:
+
+    oendpointstream() = delete;
 
     oendpointstream(const oendpointstream&) = delete;
 
@@ -68,6 +72,8 @@ public:
     bool wait_for(const std::chrono::milliseconds& timeout);
 
 private:
+
+    endpointstream() = delete;
 
     endpointstream(const endpointstream&) = delete;
 

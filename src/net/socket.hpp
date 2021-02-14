@@ -29,9 +29,13 @@ public:
     }
 
 private:
+
     socket(socket&) = delete;
+
     socket& operator = (const socket&) = delete;
-    socket& operator = (const socket&&) = delete;
+
+    socket& operator = (socket&&) = delete;
+
     int m_fd;
 };
 

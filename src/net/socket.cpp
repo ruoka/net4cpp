@@ -11,7 +11,7 @@ socket::socket(int domain, int type, int protocol) : m_fd{-1}
 socket::socket(int fd) : m_fd{fd}
 {}
 
-socket::socket(socket&& s)
+socket::socket(socket&& s) : m_fd{-1}
 {
     m_fd = s.m_fd;
     s.m_fd = -1;
