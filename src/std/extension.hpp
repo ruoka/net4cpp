@@ -136,6 +136,25 @@ auto to_iso8601(const std::chrono::time_point<T>& current_time) noexcept
     return os.str();
 }
 
+template<typename T>
+auto to_utc(const std::chrono::time_point<T>& current_time) noexcept
+{
+    const auto midnight = std::chrono::floor<std::chrono::days>(current_time);
+    const auto date = std::chrono::year_month_day{midnight};
+    const auto time = std::chrono::hh_mm_ss{current_time - midnight};
+    const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time.subseconds());
+    // YYYY-MM-DDThh:mm:ss.fffZ
+    auto os = std::ostringstream{};
+    os << std::setw(4) << std::setfill('0') << date.year()
+       << std::setw(2) << std::setfill('0') << date.month()
+       << std::setw(2) << std::setfill('0') << date.day()
+       << std::setw(2) << std::setfill('0') << time.hours()
+       << std::setw(2) << std::setfill('0') << time.minutes() << ':'
+       << std::setw(2) << std::setfill('0') << time.seconds() << '.'
+       << std::setw(3) << std::setfill('0') << milliseconds;
+    return os.str();
+}
+
 inline auto to_time_point(const std::string_view sv)
 {
     // YYYY-MM-DDThh:mm:ss.fffZ
