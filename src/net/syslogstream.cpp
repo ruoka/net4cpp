@@ -18,3 +18,9 @@ namespace net::syslog {
     }
 
 } // namespace net::global
+
+namespace net {
+
+    syslogstream slog = syslogstream{distribute("localhost","syslog")};
+
+} // namespace net

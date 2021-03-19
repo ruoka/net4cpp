@@ -1,9 +1,11 @@
 #pragma once
 
 #include <chrono>
+#include <array>
 #include <sstream>
 #include <iomanip>
 #include <string_view>
+using namespace std::literals;
 
 namespace std
 {
@@ -81,20 +83,18 @@ inline std::string operator+(std::string str, std::string_view sv)
 	return str.append(sv.data(), sv.size());
 }
 
-static const std::string g_number2month[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-
-constexpr auto& to_string(const std::chrono::month& m) noexcept
+inline const std::string& to_string(const std::chrono::month& m) noexcept
 {
+    static const auto number2month = std::array{""s, "Jan"s, "Feb"s, "Mar"s, "Apr"s, "May"s, "Jun"s, "Jul"s, "Aug"s, "Sep"s, "Oct"s, "Nov"s, "Dec"s};
     const auto n = static_cast<unsigned>(m);
-    return g_number2month[n];
+    return number2month[n];
 }
 
-static const std::string g_number2weekday[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-
-constexpr auto& to_string(const std::chrono::weekday& wd) noexcept
+inline const std::string& to_string(const std::chrono::weekday& wd) noexcept
 {
+    static const auto number2weekday = std::array{"Sun"s, "Mon"s, "Tue"s, "Wed"s, "Thu"s, "Fri"s, "Sat"s};
     const auto n = wd.c_encoding();
-    return g_number2weekday[n];
+    return number2weekday[n];
 }
 
 template<typename T>
@@ -172,7 +172,7 @@ inline auto to_time_point(const std::string_view sv)
 }
 
 template<typename T>
-std::string to_string(const std::chrono::time_point<T>& point) noexcept
+auto to_string(const std::chrono::time_point<T>& point) noexcept
 {
     return ext::to_iso8601(point);
 }
@@ -185,18 +185,15 @@ inline auto to_boolean(std::string_view sv)
     throw std::invalid_argument{"No conversion to bool could be done for '"s + sv + "'"s};
 }
 
-static const std::string g_bool2string[] = {"false", "true"};
-
-constexpr const std::string& to_string(bool b) noexcept
+inline const std::string& to_string(bool b) noexcept
 {
-    return g_bool2string[b];
+    static const auto bool2string = std::array{"false"s, "true"s};
+    return bool2string[b];
 }
 
-static const std::string g_null2string = {"null"};
-
-constexpr const std::string& to_string(std::nullptr_t) noexcept
+inline std::string to_string(std::nullptr_t) noexcept
 {
-    return g_null2string;
+    return "null";
 }
 
 inline std::string to_string(std::string_view sv) noexcept

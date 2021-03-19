@@ -37,10 +37,6 @@ namespace syslog {
 
     int getpid();
 
-    const auto hostname = gethostname();
-
-    const auto pid = getpid();
-
 } // namespace syslog
 
 class syslogstream : public oendpointstream
@@ -96,6 +92,9 @@ public:
 
     void header()
     {
+        static const auto hostname = syslog::gethostname();
+        static const auto pid = syslog::getpid();
+
         if(m_level >= m_severity)
         {
             const auto current_time = std::chrono::system_clock::now();
@@ -106,14 +105,13 @@ public:
             // <PRI> Feb 22 21:12 localhost syslog[2112]:
             static_cast<oendpointstream&>(*this)
                     << std::resetiosflags(formatting)
-                    << '<' << priority(m_facility, m_severity)             << '>'  // <PRI>
-                    << std::setw(3) << ext::to_string(date.month())        << ' '  // TIMESTAMP
-                    << std::setw(2) << std::setfill(' ') << date.day()     << ' '
-                    << std::setw(2) << std::setfill('0') << time.hours()   << ':'
-                    << std::setw(2) << std::setfill('0') << time.minutes() << ':'
-                    << std::setw(2) << std::setfill('0') << time.seconds() << ' '
-                    << syslog::hostname                                    << ' ' // HOSTNAME
-                    << m_tag << '[' << syslog::pid << ']' << ':'           << ' ' // TAG[PID]:
+                    << '<' << priority(m_facility, m_severity)              << '>'  // <PRI>
+                    << std::setw(3) << ext::to_string(date.month())         << ' '  // TIMESTAMP
+                    << std::setw(2) << std::setfill(' ') << date.day()      << ' '
+                    << std::setw(2) << std::setfill('0') << time.hours()    << ':'
+                    << std::setw(2) << std::setfill('0') << time.minutes()  << ':'
+                    << std::setw(2) << std::setfill('0') << time.seconds()  << ' '
+                    << hostname << ' ' << m_tag << '[' << pid << ']' << ':' << ' ' // HOSTNAME TAG[PID]:
                     << std::setiosflags(formatting);
         }
     }
@@ -210,12 +208,6 @@ inline auto& flush(syslogstream& sl)
     return sl;
 }
 
-inline auto& initialize_global_syslogstream()
-{
-    static syslogstream log{distribute("localhost","syslog")};
-    return log;
-}
-
-static syslogstream& slog = initialize_global_syslogstream();
+extern syslogstream slog;
 
 } // namespace net

@@ -1,0 +1,7 @@
+PATH=$PATH:/Applications/CMake.app/Contents/bin
+
+git submodule update --init --recursive
+
+git pull --recurse-submodules
+
+make test
