@@ -1,7 +1,7 @@
 CXX = /Library/Developer/CommandLineTools/usr/bin/clang++
 #CXX = clang++
 
-CXXFLAGS = -std=c++2a -MMD -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk # -D DEBUG=1
+CXXFLAGS = -std=c++2a -MMD -Wall -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk # -D DEBUG=1
 
 LDFLAGS =
 

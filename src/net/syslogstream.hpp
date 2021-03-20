@@ -167,45 +167,45 @@ private:
     std::mutex m_mutex;
 };
 
-inline auto& error(syslogstream& sl)
+inline auto& error(syslogstream& ss)
 {
-    sl.severity(syslog::severity::error);
-    sl.header();
-    return sl;
+    ss.severity(syslog::severity::error);
+    ss.header();
+    return ss;
 }
 
-inline auto& warning(syslogstream& sl)
+inline auto& warning(syslogstream& ss)
 {
-    sl.severity(syslog::severity::warning);
-    sl.header();
-    return sl;
+    ss.severity(syslog::severity::warning);
+    ss.header();
+    return ss;
 }
 
-inline auto& notice(syslogstream& sl)
+inline auto& notice(syslogstream& ss)
 {
-    sl.severity(syslog::severity::notice);
-    sl.header();
-    return sl;
+    ss.severity(syslog::severity::notice);
+    ss.header();
+    return ss;
 }
 
-inline auto& info(syslogstream& sl)
+inline auto& info(syslogstream& ss)
 {
-    sl.severity(syslog::severity::info);
-    sl.header();
-    return sl;
+    ss.severity(syslog::severity::info);
+    ss.header();
+    return ss;
 }
 
-inline auto& debug(syslogstream& sl)
+inline auto& debug(syslogstream& ss)
 {
-    sl.severity(syslog::severity::debug);
-    sl.header();
-    return sl;
+    ss.severity(syslog::severity::debug);
+    ss.header();
+    return ss;
 }
 
-inline auto& flush(syslogstream& sl)
+inline auto& flush(syslogstream& ss)
 {
-    sl.flush();
-    return sl;
+    ss.flush();
+    return ss;
 }
 
 extern syslogstream slog;
