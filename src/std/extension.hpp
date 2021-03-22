@@ -1,9 +1,11 @@
 #pragma once
 
 #include <chrono>
+#include <array>
 #include <sstream>
 #include <iomanip>
 #include <string_view>
+using namespace std::literals;
 
 namespace std
 {
@@ -44,57 +46,110 @@ auto& operator << (std::ostream& os, const std::chrono::duration<T,R>& d) noexce
 namespace ext
 {
 
-inline auto stoi(std::string_view sv, std::size_t* pos = nullptr, int base = 10)
+inline auto stoi(std::string_view sv)
 {
-    char* end;
-    auto i = std::strtol(sv.data(), &end, base);
-    if(pos) *pos = std::distance<const char*>(sv.data(), end);
-    return static_cast<std::int32_t>(i);
-}
-
-inline auto stou(std::string_view sv, std::size_t* pos = nullptr, int base = 10)
-{
-    char* end;
-    auto i = std::strtol(sv.data(), &end, base);
-    if(pos) *pos = std::distance<const char*>(sv.data(), end);
-    return static_cast<std::uint32_t>(i);
-}
-
-inline auto stol(std::string_view sv, std::size_t* pos = nullptr, int base = 10)
-{
-    char* end;
-    auto i = std::strtol(sv.data(), &end, base);
-    if(pos) *pos = std::distance<const char*>(sv.data(), end);
+    auto i = 0;
+    if(sv.front() != '-')
+        for(const auto c : sv)
+        {
+            i *= 10;
+            i += c -'0';
+        }
+    else
+        for(const auto c : sv.substr(1))
+        {
+            i *= 10;
+            i -= c -'0';
+        }
     return i;
 }
 
-inline auto stoll(std::string_view sv, std::size_t* pos = nullptr, int base = 10)
+inline auto stol(std::string_view sv)
 {
-    char* end;
-    auto ll = std::strtoll(sv.data(), &end, base);
-    if(pos) *pos = std::distance<const char*>(sv.data(), end);
-    return ll;
+    auto i = 0l;
+    if(sv.front() != '-')
+        for(const auto c : sv)
+        {
+            i *= 10;
+            i += c -'0';
+        }
+    else
+        for(const auto c : sv.substr(1))
+        {
+            i *= 10;
+            i -= c -'0';
+        }
+    return i;
+}
+
+inline auto stoll(std::string_view sv)
+{
+    auto i = 0ll;
+    if(sv.front() != '-')
+        for(const auto c : sv)
+        {
+            i *= 10;
+            i += c -'0';
+        }
+    else
+        for(const auto c : sv.substr(1))
+        {
+            i *= 10;
+            i -= c -'0';
+        }
+    return i;
+}
+
+inline auto stou(std::string_view sv)
+{
+    auto i = 0u;
+    for(const auto c : sv)
+    {
+        i *= 10;
+        i += c -'0';
+    }
+    return i;
+}
+
+inline auto stoul(std::string_view sv)
+{
+    auto i = 0ul;
+    for(const auto c : sv)
+    {
+        i *= 10;
+        i += c -'0';
+    }
+    return i;
+}
+
+inline auto stoull(std::string_view sv)
+{
+    auto i = 0ull;
+    for(const auto c : sv)
+    {
+        i *= 10;
+        i += c -'0';
+    }
+    return i;
 }
 
 inline std::string operator+(std::string str, std::string_view sv)
 {
-	return str.append(sv.data(), sv.size());
+	return str.append(std::string{sv}, sv.size());
 }
 
-static const std::string g_number2month[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-
-constexpr auto& to_string(const std::chrono::month& m) noexcept
+inline const std::string& to_string(const std::chrono::month& m) noexcept
 {
+    static const auto number2month = std::array{""s, "Jan"s, "Feb"s, "Mar"s, "Apr"s, "May"s, "Jun"s, "Jul"s, "Aug"s, "Sep"s, "Oct"s, "Nov"s, "Dec"s};
     const auto n = static_cast<unsigned>(m);
-    return g_number2month[n];
+    return number2month[n];
 }
 
-static const std::string g_number2weekday[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-
-constexpr auto& to_string(const std::chrono::weekday& wd) noexcept
+inline const std::string& to_string(const std::chrono::weekday& wd) noexcept
 {
+    static const auto number2weekday = std::array{"Sun"s, "Mon"s, "Tue"s, "Wed"s, "Thu"s, "Fri"s, "Sat"s};
     const auto n = wd.c_encoding();
-    return g_number2weekday[n];
+    return number2weekday[n];
 }
 
 template<typename T>
@@ -136,24 +191,41 @@ auto to_iso8601(const std::chrono::time_point<T>& current_time) noexcept
     return os.str();
 }
 
+template<typename T>
+auto to_utc(const std::chrono::time_point<T>& current_time) noexcept
+{
+    const auto midnight = std::chrono::floor<std::chrono::days>(current_time);
+    const auto date = std::chrono::year_month_day{midnight};
+    const auto time = std::chrono::hh_mm_ss{current_time - midnight};
+    const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time.subseconds());
+    // YYYYMMDD-HH:MM:SS.sss
+    auto os = std::ostringstream{};
+    os << std::setw(4) << std::setfill('0') << date.year()
+       << std::setw(2) << std::setfill('0') << date.month()
+       << std::setw(2) << std::setfill('0') << date.day()     << '-'
+       << std::setw(2) << std::setfill('0') << time.hours()   << ':'
+       << std::setw(2) << std::setfill('0') << time.minutes() << ':'
+       << std::setw(2) << std::setfill('0') << time.seconds() << '.'
+       << std::setw(3) << std::setfill('0') << milliseconds;
+    return os.str();
+}
+
 inline auto to_time_point(const std::string_view sv)
 {
     // YYYY-MM-DDThh:mm:ss.fffZ
     using namespace std::chrono;
-    const auto YY = year{stoi(sv.substr(0,4))};
+    const auto YYYY = year{stoi(sv.substr(0,4))};
     const auto MM = month{stou(sv.substr(5,2))};
     const auto DD = day{stou(sv.substr(8,2))};
     const auto hh = hours{stoi(sv.substr(11,2))};
     const auto mm = minutes{stoi(sv.substr(14,2))};
     const auto ss = seconds {stoi(sv.substr(17,2))};
     const auto ff = milliseconds{stoi(sv.substr(20,3))};
-    auto point = time_point_cast<milliseconds>(sys_days{YY/MM/DD});
-    point += hh; point += mm; point += ss; point += ff;
-    return point;
+    return sys_days{YYYY/MM/DD} + hh + mm + ss + ff + 0us;
 }
 
 template<typename T>
-std::string to_string(const std::chrono::time_point<T>& point) noexcept
+auto to_string(const std::chrono::time_point<T>& point) noexcept
 {
     return ext::to_iso8601(point);
 }
@@ -166,18 +238,15 @@ inline auto to_boolean(std::string_view sv)
     throw std::invalid_argument{"No conversion to bool could be done for '"s + sv + "'"s};
 }
 
-static const std::string g_bool2string[] = {"false", "true"};
-
-constexpr const std::string& to_string(bool b) noexcept
+inline const std::string& to_string(bool b) noexcept
 {
-    return g_bool2string[b];
+    static const auto bool2string = std::array{"false"s, "true"s};
+    return bool2string[b];
 }
 
-static const std::string g_null2string = {"null"};
-
-constexpr const std::string& to_string(std::nullptr_t) noexcept
+inline std::string to_string(std::nullptr_t) noexcept
 {
-    return g_null2string;
+    return "null";
 }
 
 inline std::string to_string(std::string_view sv) noexcept

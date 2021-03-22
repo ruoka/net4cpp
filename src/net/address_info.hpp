@@ -70,7 +70,7 @@ public:
         return a.m_addrinfo;
     }
 
-    friend addrinfo_iterator end(const address_info& a)
+    friend addrinfo_iterator end(const address_info&)
     {
         return nullptr;
     }

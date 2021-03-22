@@ -41,6 +41,8 @@ m_sockets{}
 
 acceptor::acceptor(std::string_view service) : acceptor("localhost", service) {}
 
+acceptor::acceptor(net::uri uri) : acceptor(uri.host, uri.port == "" ? uri.scheme : uri.port) {}
+
 endpointstream acceptor::accept()
 {
     const auto fd = wait();

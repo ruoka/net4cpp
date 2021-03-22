@@ -267,7 +267,7 @@ private:
 
     router m_router;
 
-    std::string m_host = syslog::hostname;
+    std::string m_host = syslog::gethostname();
 
     std::string m_content_type = "*/*"s;
 

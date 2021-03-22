@@ -5,6 +5,7 @@
 #include <list>
 #include "net/endpointstream.hpp"
 #include "net/socket.hpp"
+#include "net/uri.hpp"
 
 namespace net {
 
@@ -17,6 +18,8 @@ public:
     acceptor(std::string_view host, std::string_view service_or_port);
 
     explicit acceptor(std::string_view service);
+
+    acceptor(net::uri uri);
 
     endpointstream accept();
 
