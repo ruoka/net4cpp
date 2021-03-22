@@ -48,32 +48,89 @@ namespace ext
 
 inline auto stoi(std::string_view sv)
 {
-    return std::stoi(std::string{sv});
+    auto i = 0;
+    if(sv.front() != '-')
+        for(const auto c : sv)
+        {
+            i *= 10;
+            i += c -'0';
+        }
+    else
+        for(const auto c : sv.substr(1))
+        {
+            i *= 10;
+            i -= c -'0';
+        }
+    return i;
 }
 
 inline auto stol(std::string_view sv)
 {
-    return std::stol(std::string{sv});
+    auto i = 0l;
+    if(sv.front() != '-')
+        for(const auto c : sv)
+        {
+            i *= 10;
+            i += c -'0';
+        }
+    else
+        for(const auto c : sv.substr(1))
+        {
+            i *= 10;
+            i -= c -'0';
+        }
+    return i;
 }
 
 inline auto stoll(std::string_view sv)
 {
-    return std::stoll(std::string{sv});
+    auto i = 0ll;
+    if(sv.front() != '-')
+        for(const auto c : sv)
+        {
+            i *= 10;
+            i += c -'0';
+        }
+    else
+        for(const auto c : sv.substr(1))
+        {
+            i *= 10;
+            i -= c -'0';
+        }
+    return i;
 }
 
 inline auto stou(std::string_view sv)
 {
-    return static_cast<unsigned>(std::stoul(std::string{sv}));
+    auto i = 0u;
+    for(const auto c : sv)
+    {
+        i *= 10;
+        i += c -'0';
+    }
+    return i;
 }
 
 inline auto stoul(std::string_view sv)
 {
-    return std::stoul(std::string{sv});
+    auto i = 0ul;
+    for(const auto c : sv)
+    {
+        i *= 10;
+        i += c -'0';
+    }
+    return i;
 }
 
 inline auto stoull(std::string_view sv)
 {
-    return std::stoull(std::string{sv});
+    auto i = 0ull;
+    for(const auto c : sv)
+    {
+        i *= 10;
+        i += c -'0';
+    }
+    return i;
 }
 
 inline std::string operator+(std::string str, std::string_view sv)
