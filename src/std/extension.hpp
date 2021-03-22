@@ -46,41 +46,39 @@ auto& operator << (std::ostream& os, const std::chrono::duration<T,R>& d) noexce
 namespace ext
 {
 
-inline auto stoi(std::string_view sv, std::size_t* pos = nullptr, int base = 10)
+inline auto stoi(std::string_view sv)
 {
-    char* end;
-    auto i = std::strtol(sv.data(), &end, base);
-    if(pos) *pos = std::distance<const char*>(sv.data(), end);
-    return static_cast<std::int32_t>(i);
+    return std::stoi(std::string{sv});
 }
 
-inline auto stou(std::string_view sv, std::size_t* pos = nullptr, int base = 10)
+inline auto stol(std::string_view sv)
 {
-    char* end;
-    auto i = std::strtol(sv.data(), &end, base);
-    if(pos) *pos = std::distance<const char*>(sv.data(), end);
-    return static_cast<std::uint32_t>(i);
+    return std::stol(std::string{sv});
 }
 
-inline auto stol(std::string_view sv, std::size_t* pos = nullptr, int base = 10)
+inline auto stoll(std::string_view sv)
 {
-    char* end;
-    auto i = std::strtol(sv.data(), &end, base);
-    if(pos) *pos = std::distance<const char*>(sv.data(), end);
-    return i;
+    return std::stoll(std::string{sv});
 }
 
-inline auto stoll(std::string_view sv, std::size_t* pos = nullptr, int base = 10)
+inline auto stou(std::string_view sv)
 {
-    char* end;
-    auto ll = std::strtoll(sv.data(), &end, base);
-    if(pos) *pos = std::distance<const char*>(sv.data(), end);
-    return ll;
+    return static_cast<unsigned>(std::stoul(std::string{sv}));
+}
+
+inline auto stoul(std::string_view sv)
+{
+    return std::stoul(std::string{sv});
+}
+
+inline auto stoull(std::string_view sv)
+{
+    return std::stoull(std::string{sv});
 }
 
 inline std::string operator+(std::string str, std::string_view sv)
 {
-	return str.append(sv.data(), sv.size());
+	return str.append(std::string{sv}, sv.size());
 }
 
 inline const std::string& to_string(const std::chrono::month& m) noexcept
@@ -143,12 +141,12 @@ auto to_utc(const std::chrono::time_point<T>& current_time) noexcept
     const auto date = std::chrono::year_month_day{midnight};
     const auto time = std::chrono::hh_mm_ss{current_time - midnight};
     const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time.subseconds());
-    // YYYY-MM-DDThh:mm:ss.fffZ
+    // YYYYMMDD-HH:MM:SS.sss
     auto os = std::ostringstream{};
     os << std::setw(4) << std::setfill('0') << date.year()
        << std::setw(2) << std::setfill('0') << date.month()
-       << std::setw(2) << std::setfill('0') << date.day()
-       << std::setw(2) << std::setfill('0') << time.hours()
+       << std::setw(2) << std::setfill('0') << date.day()     << '-'
+       << std::setw(2) << std::setfill('0') << time.hours()   << ':'
        << std::setw(2) << std::setfill('0') << time.minutes() << ':'
        << std::setw(2) << std::setfill('0') << time.seconds() << '.'
        << std::setw(3) << std::setfill('0') << milliseconds;
@@ -159,16 +157,14 @@ inline auto to_time_point(const std::string_view sv)
 {
     // YYYY-MM-DDThh:mm:ss.fffZ
     using namespace std::chrono;
-    const auto YY = year{stoi(sv.substr(0,4))};
+    const auto YYYY = year{stoi(sv.substr(0,4))};
     const auto MM = month{stou(sv.substr(5,2))};
     const auto DD = day{stou(sv.substr(8,2))};
     const auto hh = hours{stoi(sv.substr(11,2))};
     const auto mm = minutes{stoi(sv.substr(14,2))};
     const auto ss = seconds {stoi(sv.substr(17,2))};
     const auto ff = milliseconds{stoi(sv.substr(20,3))};
-    auto point = time_point_cast<milliseconds>(sys_days{YY/MM/DD});
-    point += hh; point += mm; point += ss; point += ff;
-    return point;
+    return sys_days{YYYY/MM/DD} + hh + mm + ss + ff + 0us;
 }
 
 template<typename T>
