@@ -1,3 +1,4 @@
+#include <iostream> // FIXME
 #include "net/endpointstream.hpp"
 #include "net/endpointbuf.hpp"
 
