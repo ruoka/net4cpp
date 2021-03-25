@@ -3,7 +3,7 @@
 
 namespace net {
 
-socket::socket(int domain, int type, int protocol) : m_fd{-1}
+socket::socket(int domain, int type, int protocol) : m_fd{native_handle_npos}
 {
     m_fd = ::socket(domain, type, protocol);
 }
@@ -11,15 +11,15 @@ socket::socket(int domain, int type, int protocol) : m_fd{-1}
 socket::socket(int fd) : m_fd{fd}
 {}
 
-socket::socket(socket&& s) : m_fd{-1}
+socket::socket(socket&& s) : m_fd{native_handle_npos}
 {
     m_fd = s.m_fd;
-    s.m_fd = -1;
+    s.m_fd = native_handle_npos;
 }
 
 socket::~socket()
 {
-    if(m_fd != -1) net::close(m_fd);
+    if(m_fd != native_handle_npos) net::close(m_fd);
 }
 
 bool socket::wait_for(const std::chrono::milliseconds& timeout) const
