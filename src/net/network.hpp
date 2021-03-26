@@ -1,11 +1,10 @@
 #pragma once
 
-#include <sys/types.h>
-#include <sys/socket.h>
+//#include <sys/types.h>
+//#include <sys/socket.h>
 #include <netdb.h>
-#include <arpa/inet.h>
+//#include <arpa/inet.h>
 #include <unistd.h>
-#include <fcntl.h>
 #include <chrono>
 
 #ifndef IPV6_ADD_MEMBERSHIP
@@ -31,8 +30,6 @@ using ::listen;
 using ::select;
 
 using ::accept;
-
-using ::fcntl;
 
 using ::connect;
 

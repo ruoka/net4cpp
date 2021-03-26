@@ -1,7 +1,6 @@
-#include <sys/types.h>
-#include <unistd.h>
 #include "net/network.hpp"
-#include "syslogstream.hpp"
+#include "net/sender.hpp"
+#include "net/syslogstream.hpp"
 
 namespace net::syslog {
 

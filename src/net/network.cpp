@@ -1,8 +1,12 @@
 #include <cerrno>
+#include <fcntl.h>
 #include "net/network.hpp"
 
 namespace net
 {
+
+using ::fcntl;
+
 // This is C style low-level function that implements connect that supports timeouts
 int connect(int fd, const net::sockaddr* address, net::socklen_t address_len, const std::chrono::milliseconds& timeout)
 {
