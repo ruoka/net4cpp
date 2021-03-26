@@ -82,7 +82,7 @@ DEPENDENCIES = $(MAINS:$(SRCDIR)/%.cpp=$(OBJDIR)/%.d) $(OBJECTS:%.o=%.d) $(TEST_
 ############
 
 .PHONY: all
-all: $(LIBRARY) $(TEST_TARGET)
+all: $(LIBRARY)
 
 .PHONY: lib
 lib: $(LIBRARY) $(INCLUDES)
