@@ -6,7 +6,7 @@ CXX := clang++
 
 ifeq ($(OS),Linux)
 CXX := /usr/lib/llvm-13/bin/clang++
-CXXFLAGS = -I/usr/local/include
+CXXFLAGS = -pthread -I/usr/local/include
 LDFLAGS = -L/usr/local/lib
 endif
 
@@ -15,7 +15,7 @@ CXX := /Library/Developer/CommandLineTools/usr/bin/clang++
 CXXFLAGS = -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
 endif
 
-CXXFLAGS += -std=c++2a -stdlib=libc++ -pthread -Wall -Wextra -I$(SRCDIR)
+CXXFLAGS += -std=c++2a -stdlib=libc++ -Wall -Wextra -I$(SRCDIR)
 
 LDFLAGS +=
 
@@ -71,7 +71,7 @@ $(INCDIR)/%.hpp: $(SRCDIR)/%.hpp
 GTESTLIBS = $(addprefix $(LIBDIR)/, libgtest.a libgtest_main.a)
 
 $(GTESTLIBS):
-	cd $(GTESTDIR) && cmake -DCMAKE_CXX_COMPILER="$(CXX)" -DCMAKE_CXX_FLAGS="$(CXXFLAGS) $(LDFLAGS)" -DCMAKE_INSTALL_PREFIX=.. . && make install
+	cd $(GTESTDIR) && cmake -DCMAKE_CXX_COMPILER="$(CXX)" -DCMAKE_CXX_FLAGS="$(CXXFLAGS)" -DCMAKE_INSTALL_PREFIX=.. . && make install
 
 ############
 
