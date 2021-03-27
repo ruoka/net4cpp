@@ -1,9 +1,23 @@
-CXX = /Library/Developer/CommandLineTools/usr/bin/clang++
-#CXX = clang++
+.DEFAULT_GOAL := all
 
-CXXFLAGS = -std=c++2a -MMD -Wall -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk # -D DEBUG=1
+OS := $(shell uname -s)
 
-LDFLAGS =
+CXX := clang++
+
+ifeq ($(OS),Linux)
+CXX := /usr/lib/llvm-13/bin/clang++
+CXXFLAGS = -I/usr/local/include
+LDFLAGS = -L/usr/local/lib
+endif
+
+ifeq ($(OS),Darwin)
+CXX := /Library/Developer/CommandLineTools/usr/bin/clang++
+CXXFLAGS = -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+endif
+
+CXXFLAGS += -std=c++2a -stdlib=libc++ -pthread -Wall -Wextra -I$(SRCDIR)
+
+LDFLAGS +=
 
 ############
 
@@ -82,7 +96,7 @@ DEPENDENCIES = $(MAINS:$(SRCDIR)/%.cpp=$(OBJDIR)/%.d) $(OBJECTS:%.o=%.d) $(TEST_
 ############
 
 .PHONY: all
-all: $(LIBRARY)
+all: $(LIBRARY) $(TEST_TARGET)
 
 .PHONY: lib
 lib: $(LIBRARY) $(INCLUDES)

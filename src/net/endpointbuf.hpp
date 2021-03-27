@@ -70,8 +70,8 @@ protected:
         auto retry = 0;
         while(buf < pptr())
         {
-            const auto bytes_written = net::write(m_socket, buf, pptr() - buf);
-            //const auto bytes_written = ::sendto(m_socket, buf, pptr() - buf, 0, nullptr, 0);
+            //const auto bytes_written = net::write(m_socket, buf, pptr() - buf);
+            const auto bytes_written = ::sendto(m_socket, buf, pptr() - buf, 0, nullptr, MSG_NOSIGNAL);
             if(bytes_written < 1)
             {
                 if(++retry < 3) continue;

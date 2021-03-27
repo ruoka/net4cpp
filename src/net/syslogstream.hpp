@@ -5,6 +5,7 @@
 #include <array>
 #include <type_traits>
 #include "net/endpointstream.hpp"
+#include "std/extension.hpp"
 
 namespace net {
 namespace syslog {
@@ -93,6 +94,7 @@ public:
 
     void header()
     {
+        using namespace std;
         static const auto hostname = syslog::gethostname();
         static const auto pid = syslog::getpid();
 
@@ -106,13 +108,13 @@ public:
             // <PRI> Feb 22 21:12 localhost syslog[2112]:
             static_cast<oendpointstream&>(*this)
                     << std::resetiosflags(formatting)
-                    << '<' << priority(m_facility, m_severity)                                 << '>'  // <PRI>
-                    << std::setw(3) << to_string(date.month())                                 << ' '  // TIMESTAMP
-                    << std::setw(2) << std::setfill(' ') << static_cast<unsigned>(date.day())  << ' '
-                    << std::setw(2) << std::setfill('0') << time.hours().count()               << ':'
-                    << std::setw(2) << std::setfill('0') << time.minutes().count()             << ':'
-                    << std::setw(2) << std::setfill('0') << time.seconds().count()             << ' '
-                    << hostname << ' ' << m_tag << '[' << pid << ']' << ':' << ' ' // HOSTNAME TAG[PID]:
+                    << '<' << priority(m_facility, m_severity)                   << '>'  // <PRI>
+                    << std::setw(3) << ext::to_string(date.month())              << ' '  // TIMESTAMP
+                    << std::setw(2) << std::setfill(' ') << date.day()           << ' '
+                    << std::setw(2) << std::setfill('0') << time.hours()         << ':'
+                    << std::setw(2) << std::setfill('0') << time.minutes()       << ':'
+                    << std::setw(2) << std::setfill('0') << time.seconds()       << ' '
+                    << hostname << ' ' << m_tag << '[' << pid << ']' << ':'      << ' ' // HOSTNAME TAG[PID]:
                     << std::setiosflags(formatting);
         }
     }
@@ -155,14 +157,6 @@ private:
         p *= static_cast<int>(f);
         p += static_cast<int>(s);
         return p;
-    }
-
-    const std::string& to_string(const std::chrono::month& m) noexcept
-    {
-        using namespace std::string_literals;
-        static const auto number2month = std::array{""s, "Jan"s, "Feb"s, "Mar"s, "Apr"s, "May"s, "Jun"s, "Jul"s, "Aug"s, "Sep"s, "Oct"s, "Nov"s, "Dec"s};
-        const auto n = static_cast<unsigned>(m);
-        return number2month[n];
     }
 
     syslog::facility m_facility;

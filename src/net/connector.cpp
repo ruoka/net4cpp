@@ -33,14 +33,16 @@ endpointstream connect(std::string_view host, std::string_view service_or_port, 
         if(!s)
             continue;
 
+        #ifdef NET_USE_SO_NOSIGPIPE
         auto yes = 1;
-        auto status = net::setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof yes);
-        if(status < 0)
+        const auto status1 = net::setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof yes);
+        if(status1 < 0)
             continue;
+        #endif
 
-        status = net::connect(s, address.ai_addr, address.ai_addrlen, timeout);
-        //auto status = net::connect(s, address.ai_addr, address.ai_addrlen);
-        if(status < 0)
+        const auto status2 = net::connect(s, address.ai_addr, address.ai_addrlen, timeout);
+        //const auto status2 = net::connect(s, address.ai_addr, address.ai_addrlen);
+        if(status2 < 0)
             continue;
 
         return new endpointbuf<tcp_buffer_size>{std::move(s)};
@@ -53,7 +55,7 @@ endpointstream connect(const uri& url, const std::chrono::milliseconds& timeout)
 {
     const auto host = std::string{url.host};
     const auto port = std::string{url.port == ""s ? url.scheme : url.port};
-    return connect(host,port);
+    return connect(host,port,timeout);
 }
 
 } // namespace net

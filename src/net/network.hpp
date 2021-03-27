@@ -1,20 +1,24 @@
 #pragma once
 
-//#include <sys/types.h>
-//#include <sys/socket.h>
 #include <netdb.h>
-//#include <arpa/inet.h>
 #include <unistd.h>
 #include <chrono>
 
 #ifndef IPV6_ADD_MEMBERSHIP
 #define IPV6_ADD_MEMBERSHIP IPV6_JOIN_GROUP
 #endif
+
 #ifndef IPV6_DROP_MEMBERSHIP
 #define IPV6_DROP_MEMBERSHIP IPV6_LEAVE_GROUP
 #endif
-#ifndef SO_NOSIGPIPE
-#define SO_NOSIGPIPE MSG_NOSIGNAL
+
+#ifndef MSG_NOSIGNAL
+# define MSG_NOSIGNAL 0
+# ifdef SO_NOSIGPIPE
+#  define NET_USE_SO_NOSIGPIPE
+# else
+#  error "Cannot block SIGPIPE!"
+# endif
 #endif
 
 namespace net {
