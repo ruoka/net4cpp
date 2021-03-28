@@ -11,6 +11,8 @@ public:
     explicit endpointbuf_base(socket&& s) : m_socket{std::move(s)}
     {}
 
+    virtual ~endpointbuf_base() = default;
+
     bool wait_for(const std::chrono::milliseconds& timeout) const
     {
         return m_socket.wait_for(timeout);
