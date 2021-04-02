@@ -38,10 +38,10 @@ class address_info
 {
 public:
 
-    address_info(const std::string& node, const std::string& service_or_port, int socktype, int flags = AI_ALL, int family = AF_UNSPEC) : m_addrinfo{nullptr}
+    address_info(std::string_view node, std::string_view service_or_port, int socktype, int flags = AI_ALL, int family = AF_UNSPEC) : m_addrinfo{nullptr}
     {
         const auto hints = net::addrinfo{flags,family,socktype,0,0,nullptr,nullptr,nullptr};
-        const auto error = ::getaddrinfo(node.empty() ? nullptr : node.c_str(), service_or_port.c_str(), &hints, &m_addrinfo);
+        const auto error = ::getaddrinfo(node.empty() ? nullptr : node.data(), service_or_port.data(), &hints, &m_addrinfo);
         if(error) throw std::system_error{error, std::system_category(), "address resolution failed"};
     }
 
