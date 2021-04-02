@@ -45,7 +45,8 @@ class syslogstream : public oendpointstream
 {
 public:
 
-    syslogstream(oendpointstream&& s) :
+    syslogstream(oendpointstream&& s)
+    try :
         oendpointstream{std::move(s)},
         m_facility{syslog::facility::user},
         m_severity{syslog::severity::debug},
@@ -53,6 +54,10 @@ public:
         m_tag{"syslogstream"},
         m_mutex{}
     {}
+    catch(...)
+    {
+        std::cerr << "failed to create datagram socket for syslog" << std::endl;
+    }
 
     void redirect(std::ostream& os)
     {

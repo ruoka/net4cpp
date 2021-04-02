@@ -20,6 +20,6 @@ namespace net::syslog {
 
 namespace net {
 
-    syslogstream slog = syslogstream{distribute("localhost","syslog")};
+    syslogstream slog = syslogstream{distribute("","syslog")};
 
 } // namespace net
