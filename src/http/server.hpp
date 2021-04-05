@@ -171,12 +171,15 @@ private:
         return m_content_type;
     }
 
-    void handle(endpointstream client) // TODO: Fix exceptions!
+    void handle(endpointstream client)
     {
         while(client)
         {
             auto method = ""s, uri = ""s, version = ""s;
             client >> method >> uri >> version;
+
+            if(not client.good()) break;
+
             slog << info << "HTTP request \"" << method << ' ' << uri << ' ' << version << "\"" << flush;
 
             client >> std::ws;
@@ -261,6 +264,7 @@ private:
                        << (method != "HEAD"s ? content : ""s) << flush;
             }
         }
+        slog << info << "connection closed" << flush;
     }
 
     using router = std::map<std::string,std::map<std::string,controller>, std::less<>>;

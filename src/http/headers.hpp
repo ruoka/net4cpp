@@ -29,7 +29,7 @@ private:
 
 inline std::istream& operator >> (std::istream &is,  headers &hdrs)
 {
-    while(is.peek() != '\r')
+    while(is.good() and is.peek() != '\r')
     {
         auto name = ""s, value = ""s;
         getline(is, name, ':');
