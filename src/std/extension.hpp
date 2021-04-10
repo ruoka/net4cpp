@@ -264,6 +264,11 @@ inline void to_upper(std::string& str) noexcept
     for(auto& c : str) c = std::toupper(c);
 }
 
+inline void to_lower(std::string& str) noexcept
+{
+    for(auto& c : str) c = std::tolower(c);
+}
+
 inline std::string& trim_right(std::string& str, const char* ws = " \f\n\r\t\v")
 {
     return str.erase(str.find_last_not_of(ws) + 1);

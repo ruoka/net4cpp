@@ -16,7 +16,7 @@ public:
 
     using value = std::string;
 
-    auto count(const name& n) {return m_values.count(n);};
+    auto contains(const name& n) {return m_values.contains(n);};
 
     const value& operator[](const name& n) const {return m_values.at(n);}
 
@@ -37,6 +37,7 @@ inline std::istream& operator >> (std::istream &is,  headers &hdrs)
         ext::trim(name);
         ext::trim(value);
         slog << info << "HTTP request header \"" << name << "\": \"" << value << "\"" << flush;
+        ext::to_lower(name);
         hdrs.m_values.emplace(std::move(name), std::move(value));
     }
     return is;
