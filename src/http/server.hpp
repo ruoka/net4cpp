@@ -178,6 +178,7 @@ private:
     }
 
     void handle(endpointstream client)
+    try
     {
         while(client)
         {
@@ -209,7 +210,7 @@ private:
             for(auto& c : body)
                 c = client.get();
 
-            slog << info << "HTTP request body \"" << body << "\"" << flush;
+            slog << debug << "HTTP request body \"" << body << "\"" << flush;
 
             if(version != "HTTP/1.1")
             {
@@ -280,6 +281,17 @@ private:
             }
         }
         slog << info << "connection closed" << flush;
+    }
+    catch(const std::exception& e)
+    {
+        client << "HTTP/1.0 500 Internal Server Error" << crlf
+               << "Date: " << date()                   << crlf
+               << "Server: " << host()                 << crlf
+               << "Content-Type: " << content_type()   << crlf
+               << "Content-Length: 0"                  << crlf
+               << crlf << flush;
+
+        net::slog << net::error << e.what() << net::flush;
     }
 
     using router = std::map<std::string,std::map<std::string,controller>, std::less<>>;
