@@ -124,7 +124,7 @@ public:
 
     void listen(std::string_view serice_or_port = "http")
     {
-        auto endpoint = net::acceptor{"localhost"sv, serice_or_port};
+        auto endpoint = net::acceptor{"0.0.0.0", serice_or_port};
         endpoint.timeout(0s); // no timeout
         slog << notice << "Started up at " << endpoint.host() << ":" << endpoint.service_or_port() << flush;
         while(true)
