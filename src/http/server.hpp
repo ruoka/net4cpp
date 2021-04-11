@@ -264,6 +264,7 @@ private:
                            << "Content-Type: " << type                                    << crlf
                            << "Content-Length: " << content.length()                      << crlf
                            << "Access-Control-Allow-Methods: " << methods()               << crlf
+                           << "Cache-Control: private"                                    << crlf
                            << "Access-Control-Allow-Origin: http://localhost:8080"        << crlf // FIXME
                            << "Access-Control-Allow-Headers: Content-Type, Authorization" << crlf
                            << "Access-Control-Allow-Credentials: true"                    << crlf
