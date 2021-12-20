@@ -2,8 +2,6 @@
 
 OS := $(shell uname -s)
 
-CXX := clang++
-
 ifeq ($(OS),Linux)
 CXX := /usr/lib/llvm-13/bin/clang++
 CXXFLAGS = -pthread -I/usr/local/include
