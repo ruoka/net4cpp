@@ -223,7 +223,7 @@ TEST(NetURI,ParseRelative3)
 
 TEST(NetURI,PortWithoutHost)
 {
-    auto raw = "FIXT1.1://KAKE@:2112/xxx?tail=10"s;
+    auto raw = "FIXT.1.1://KAKE@:2112/xxx?tail=10"s;
 
     auto parsed = net::uri{raw};
 
@@ -240,7 +240,7 @@ TEST(NetURI,PortWithoutHost)
     std::cout << "Fragment: " << parsed.fragment << std::endl;
 
     ASSERT_TRUE(parsed.absolute);
-    ASSERT_EQ(parsed.scheme, "FIXT1.1");
+    ASSERT_EQ(parsed.scheme, "FIXT.1.1");
     ASSERT_EQ(parsed.userinfo, "KAKE");
     ASSERT_EQ(parsed.host, "");
     ASSERT_EQ(parsed.port, "2112");
