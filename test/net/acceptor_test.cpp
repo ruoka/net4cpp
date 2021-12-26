@@ -25,11 +25,11 @@ TEST(NetAcceptorTest,Accept)
     auto t1 = thread {
     []{
         auto ator = acceptor{"localhost","50001"};
+        auto stream = net::endpointstream{nullptr};
         auto host = ""s;
         auto port = ""s;
-        auto c = net::endpointstream{nullptr};
-        EXPECT_NO_THROW(c = ator.accept(host, port));
-        EXPECT_FALSE(!c);
+        EXPECT_NO_THROW(std::tie(stream,host,port) = ator.accept());
+        EXPECT_FALSE(!stream);
         EXPECT_EQ(host,"localhost");
         EXPECT_GT(port,"49152");
         EXPECT_LT(port,"65535");
@@ -52,7 +52,7 @@ TEST(NetAcceptorTest,Timeout)
 {
     auto ator = acceptor{"1999"};
     ator.timeout(1s);
-    EXPECT_THROW(endpointstream eps{ator.accept()}, system_error);
+    EXPECT_THROW(ator.accept(), system_error);
 }
 
 TEST(NetAcceptorTest,CommandLine)
@@ -60,13 +60,13 @@ TEST(NetAcceptorTest,CommandLine)
     auto ator = acceptor{"1999"};
     while(true)
     {
-        auto s = ator.accept();
-        s << "Welcome to Hello Yellow Echo Server!" << endl;
-        while(s)
+        auto [stream,client,port] = ator.accept();
+        stream << "Welcome to Hello Yellow Echo Server!" << endl;
+        while(stream)
         {
             auto echo = ""s;
-            getline(s, echo);
-            s << echo << endl;
+            getline(stream, echo);
+            stream << echo << endl;
             clog << echo << endl;
         }
     }

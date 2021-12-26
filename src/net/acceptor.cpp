@@ -43,25 +43,7 @@ acceptor::acceptor(std::string_view service) : acceptor("localhost", service) {}
 
 acceptor::acceptor(net::uri uri) : acceptor(uri.host, uri.port == "" ? uri.scheme : uri.port) {}
 
-endpointstream acceptor::accept()
-{
-    const auto fd = wait();
-
-    net::socket s = net::accept(fd, nullptr, nullptr);
-    if(!s)
-        throw std::system_error{errno, std::system_category()};
-
-    #ifdef NET_USE_SO_NOSIGPIPE
-    auto yes = 1;
-    const auto status = net::setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof yes);
-    if(status)
-        throw std::system_error{errno, std::system_category()};
-    #endif
-
-    return new endpointbuf<tcp_buffer_size>{std::move(s)};
-}
-
-endpointstream acceptor::accept(std::string& peer, std::string& port)
+std::tuple<acceptor::stream,acceptor::client,acceptor::port> acceptor::accept()
 {
     const auto fd = wait();
 
@@ -84,9 +66,7 @@ endpointstream acceptor::accept(std::string& peer, std::string& port)
     if(status2)
         throw std::system_error{errno, std::system_category()};
 
-    peer.assign(hbuf);
-    port.assign(sbuf);
-    return new endpointbuf<tcp_buffer_size>{std::move(s)};
+    return {new endpointbuf<tcp_buffer_size>{std::move(s)}, hbuf, sbuf};
 }
 
 int acceptor::wait()

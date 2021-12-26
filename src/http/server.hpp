@@ -129,12 +129,9 @@ public:
         slog << notice << "Started up at " << endpoint.host() << ":" << endpoint.service_or_port() << flush;
         while(true)
         {
-            auto host = ""s, port = ""s;
-            auto client = endpoint.accept(host, port);
-            slog << notice << "Accepted connection from " << host << ":" << port << flush;
-            auto worker = std::thread{[&]{handle(std::move(client));}};
-            worker.detach();
-            std::this_thread::sleep_for(1ms);
+            auto client = endpoint.accept();
+            slog << notice << "Accepted connection from " << std::get<1>(client) << ":" << std::get<2>(client) << flush;
+            std::thread{[&]{handle(std::move(std::get<0>(client)));}}.detach();
         }
     }
 

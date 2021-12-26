@@ -33,7 +33,7 @@ TEST_F(NetAcceptorAndConnectorTest,RunTwoThreads)
                 auto l = unique_lock<mutex>{m};
                 SUCCEED() << "Accepting...  " << ator.host() << '.' << ator.service_or_port() << endl;
             }
-            auto os = ator.accept();
+            auto [os,host,port] = ator.accept();
             for(auto i : test)
             {
                 os << i << endl;

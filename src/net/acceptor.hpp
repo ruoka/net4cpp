@@ -15,15 +15,17 @@ class acceptor
 {
 public:
 
+    using stream = endpointstream;
+    using client = std::string;
+    using port = std::string;
+
     acceptor(std::string_view host, std::string_view service_or_port);
 
     explicit acceptor(std::string_view service);
 
-    acceptor(net::uri uri);
+    explicit acceptor(net::uri uri);
 
-    endpointstream accept();
-
-    endpointstream accept(std::string& peer, std::string& port);
+    std::tuple<stream,client,port> accept();
 
     const auto& host() const
     {
