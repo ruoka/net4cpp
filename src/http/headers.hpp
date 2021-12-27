@@ -1,7 +1,6 @@
 #pragma once
 #include <map>
 #include "std/extension.hpp"
-#include "net/syslogstream.hpp"
 
 namespace http
 {
@@ -22,6 +21,8 @@ public:
 
     friend std::istream& operator >> (std::istream&, headers&);
 
+    friend std::ostream& operator << (std::ostream&, const headers&);
+
 private:
 
     std::map<name,value> m_values;
@@ -33,14 +34,20 @@ inline std::istream& operator >> (std::istream &is,  headers &hdrs)
     {
         auto name = ""s, value = ""s;
         getline(is, name, ':');
-        getline(is, value);
         ext::trim(name);
+        getline(is, value);
         ext::trim(value);
-        slog << info << "HTTP request header \"" << name << "\": \"" << value << "\"" << flush;
         ext::to_lower(name);
         hdrs.m_values.emplace(std::move(name), std::move(value));
     }
     return is;
+};
+
+inline std::ostream& operator << (std::ostream &os, const headers &hdrs)
+{
+    for(const auto &[name,value] : hdrs.m_values)
+        os << name << ": " << value << crlf;
+    return os;
 };
 
 } // namespace http

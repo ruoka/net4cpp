@@ -6,6 +6,7 @@
 #include <string>
 #include <thread>
 #include "net/acceptor.hpp"
+#include "net/syslogstream.hpp"
 #include "http/headers.hpp"
 
 namespace http {
