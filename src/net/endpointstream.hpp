@@ -98,10 +98,23 @@ inline std::ostream& crlf(std::ostream& os)
     return os;
 }
 
+inline std::istream& crlf(std::istream& is)
+{
+    if(is.peek() == '\r') is.get();
+    if(is.peek() == '\n') is.get();
+    return is;
+}
+
 inline std::ostream& newl(std::ostream& os)
 {
     os.put('\n');
     return os;
+}
+
+inline std::istream& newl(std::istream& is)
+{
+    if(is.peek() == '\n') is.get();
+    return is;
 }
 
 } // namespace net
