@@ -3,14 +3,18 @@
 OS := $(shell uname -s)
 
 ifeq ($(OS),Linux)
-CXX := /usr/lib/llvm-13/bin/clang++
+CXX := /usr/lib/llvm-14/bin/clang++
 CXXFLAGS = -pthread -I/usr/local/include
 LDFLAGS = -L/usr/local/lib
 endif
 
 ifeq ($(OS),Darwin)
-CXX := /Library/Developer/CommandLineTools/usr/bin/clang++
-CXXFLAGS = -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+CXX := /opt/bin/clang++
+CXXFLAGS += -isystem /opt/include/c++/v1
+LDFLAGS += -L/opt/lib
+LDFLAGS += -Wl,-rpath,/opt/lib
+#CXX := /Library/Developer/CommandLineTools/usr/bin/clang++
+#CXXFLAGS = -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
 endif
 
 CXXFLAGS += -std=c++20 -stdlib=libc++ -Wall -Wextra -I$(SRCDIR)
@@ -69,7 +73,8 @@ $(INCDIR)/%.hpp: $(SRCDIR)/%.hpp
 GTESTLIBS = $(addprefix $(LIBDIR)/, libgtest.a libgtest_main.a)
 
 $(GTESTLIBS):
-	cd $(GTESTDIR) && cmake -DCMAKE_CXX_COMPILER="$(CXX)" -DCMAKE_CXX_FLAGS="$(CXXFLAGS)" -DCMAKE_INSTALL_PREFIX=.. . && make install
+	cd $(GTESTDIR) && cmake -DCMAKE_INSTALL_PREFIX=.. . && make install
+# 	cd $(GTESTDIR) && cmake -DCMAKE_CXX_COMPILER="$(CXX)" -DCMAKE_CXX_FLAGS="$(CXXFLAGS)" -DCMAKE_INSTALL_PREFIX=.. . && make install
 
 ############
 
@@ -94,7 +99,7 @@ DEPENDENCIES = $(MAINS:$(SRCDIR)/%.cpp=$(OBJDIR)/%.d) $(OBJECTS:%.o=%.d) $(TEST_
 ############
 
 .PHONY: all
-all: $(LIBRARY) $(TEST_TARGET)
+all: $(LIBRARY)
 
 .PHONY: lib
 lib: $(LIBRARY) $(INCLUDES)
