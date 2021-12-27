@@ -123,17 +123,17 @@ public:
         return m_router[path]["DELETE"s];
     }
 
-    void listen(std::string_view serice_or_port = "http")
+    void listen(std::string_view service_or_port = "http")
     {
-        auto endpoint = net::acceptor{"0.0.0.0", serice_or_port};
+        slog << info << "Starting up at "s << service_or_port << flush;
+        auto endpoint = net::acceptor{"0.0.0.0", service_or_port};
         endpoint.timeout(0s); // no timeout
         slog << notice << "Started up at " << endpoint.host() << ":" << endpoint.service_or_port() << flush;
         while(true)
         {
+            slog << notice << "Accepting connections" << flush;
             auto client = endpoint.accept();
-            slog << notice << "Accepted connection from " << std::get<1>(client) << ":" << std::get<2>(client) << flush;
-            std::thread{[&]{handle(std::move(std::get<0>(client)));}}.detach();
-            std::this_thread::sleep_for(1ms);
+            std::thread{[client = std::move(client), this]() mutable {handle(client);}}.detach();
         }
     }
 
@@ -176,120 +176,120 @@ private:
         return m_content_type;
     }
 
-    void handle(endpointstream client)
-    try
+    void handle(auto& client)
     {
-        while(client)
+        auto& [stream,endpoint,port] = client;
+        slog << notice << "Accepted connection from " << endpoint << ":" << port << flush;
+
+        try
         {
-            auto method = ""s, uri = ""s, version = ""s;
-            client >> method >> uri >> version;
-
-            if(not client.good()) break;
-
-            slog << info << "HTTP request \"" << method << ' ' << uri << ' ' << version << "\"" << flush;
-
-            client >> std::ws;
-
-            auto headers = http::headers{};
-            client >> headers;
-
-            client.ignore(2); // crlf
-
-            auto content_length = 0ull;
-            if(headers.contains("content-length"))
-                content_length = std::stoll(headers["content-length"]);
-
-            auto authorization = ""s;
-            if(headers.contains("authorization"))
-                authorization = headers["authorization"];
-
-            auto body = std::string(content_length,' ');
-
-            for(auto& c : body)
-                c = client.get();
-
-            slog << debug << "HTTP request body \"" << body << "\"" << flush;
-
-            if(version != "HTTP/1.1")
+            while(stream)
             {
-                client << "HTTP/1.1 505 HTTP Version Not Supported" << crlf
-                       << "Date: "         << date()                << crlf
-                       << "Server: "       << host()                << crlf
-                       << "Content-Type: " << content_type()        << crlf
-                       << "Content-Length: 0"                       << crlf
-                       << crlf << flush;
-            }
-            else if(not m_methods.contains(method))
-            {
-                client << "HTTP/1.1 400 Bad Request"                    << crlf
-                       << "Date: "         << date()                    << crlf
-                       << "Server: "       << host()                    << crlf
-                       << "Content-Type: " << content_type()            << crlf
-                       << "Content-Length: 0"                           << crlf
-                       << "Access-Control-Allow-Methods: " << methods() << crlf
-                       << crlf << flush;
-            }
-            else if(uri == "/favicon.ico")
-            {
-                client << "HTTP/1.1 404 Not Found"           << crlf
-                       << "Date: "         << date()         << crlf
-                       << "Server: "       << host()         << crlf
-                       << "Content-Type: " << content_type() << crlf
-                       << "Content-Length: 0"                << crlf
-                       << crlf << flush;
-            }
-            else if(not std::regex_match(uri,std::regex(m_public_paths)) and not m_credentials.contains(authorization))
-            {
-                client << "HTTP/1.1 401 Unauthorized status"                     << crlf
-                       << "Date: "         << date()                             << crlf
-                       << "Server: "       << host()                             << crlf
-                       << "Content-Type: " << content_type()                     << crlf
-                       << "Content-Length: 0"                                    << crlf
-                       << "WWW-Authenticate: Basic realm=\"User Visible Realm\"" << crlf
-                       << crlf << flush;
-            }
-            else
-            {
-                auto content = ""s,  type = ""s;
+                auto method = ""s, uri = ""s, version = ""s;
+                stream >> method >> uri >> version >> crlf;
 
-                for(auto& [path,controller] : m_router)
-                    if(std::regex_match(uri,std::regex(path)))
-                        std::tie(content,type) = controller[method].render(uri,body);
+                if(not stream.good()) break;
 
-                if(not type.empty())
-                    client << "HTTP/1.1 200 OK"                                           << crlf
-                           << "Date: " << date()                                          << crlf
-                           << "Server: " << host()                                        << crlf
-                           << "Content-Type: " << type                                    << crlf
-                           << "Content-Length: " << content.length()                      << crlf
-                           << "Access-Control-Allow-Methods: " << methods()               << crlf
-                           << "Cache-Control: private"                                    << crlf
-                           << "Access-Control-Allow-Origin: http://localhost:8080"        << crlf // FIXME
-                           << "Access-Control-Allow-Headers: Content-Type, Authorization" << crlf
-                           << "Access-Control-Allow-Credentials: true"                    << crlf
-                           << crlf
-                           << (method != "HEAD"s ? content : ""s) << flush;
-                else
-                    client << "HTTP/1.0 404 Not Found"                                    << crlf
-                           << "Date: " << date()                                          << crlf
-                           << "Server: " << host()                                        << crlf
-                           << "Content-Type: " << content_type()                          << crlf
-                           << "Content-Length: 0"                                         << crlf
+                slog << info << "HTTP request \"" << method << ' ' << uri << ' ' << version << "\"" << flush;
+
+                auto headers = http::headers{};
+                stream >> headers >> crlf;
+
+                auto authorization = ""s;
+                if(headers.contains("authorization"))
+                    authorization = headers["authorization"];
+
+                auto content_length = 0ull;
+                if(headers.contains("content-length"))
+                    content_length = std::stoll(headers["content-length"]);
+
+                auto body = std::string(content_length,' ');
+                for(auto& c : body)
+                    c = stream.get();
+
+                slog << debug << "HTTP request body \"" << body << "\"" << flush;
+
+                if(version != "HTTP/1.1")
+                {
+                    stream << "HTTP/1.1 505 HTTP Version Not Supported" << crlf
+                           << "Date: "         << date()                << crlf
+                           << "Server: "       << host()                << crlf
+                           << "Content-Type: " << content_type()        << crlf
+                           << "Content-Length: 0"                       << crlf
                            << crlf << flush;
-            }
-        }
-        slog << info << "connection closed" << flush;
-    }
-    catch(const std::exception& e)
-    {
-        client << "HTTP/1.0 500 Internal Server Error" << crlf
-               << "Date: " << date()                   << crlf
-               << "Server: " << host()                 << crlf
-               << "Content-Type: " << content_type()   << crlf
-               << "Content-Length: 0"                  << crlf
-               << crlf << flush;
+                }
+                else if(not m_methods.contains(method))
+                {
+                    stream << "HTTP/1.1 400 Bad Request"                    << crlf
+                           << "Date: "         << date()                    << crlf
+                           << "Server: "       << host()                    << crlf
+                           << "Content-Type: " << content_type()            << crlf
+                           << "Content-Length: 0"                           << crlf
+                           << "Access-Control-Allow-Methods: " << methods() << crlf
+                           << crlf << flush;
+                }
+                else if(uri == "/favicon.ico")
+                {
+                    stream << "HTTP/1.1 404 Not Found"           << crlf
+                           << "Date: "         << date()         << crlf
+                           << "Server: "       << host()         << crlf
+                           << "Content-Type: " << content_type() << crlf
+                           << "Content-Length: 0"                << crlf
+                           << crlf << flush;
+                }
+                else if(not std::regex_match(uri,std::regex(m_public_paths)) and not m_credentials.contains(authorization))
+                {
+                    stream << "HTTP/1.1 401 Unauthorized status"                     << crlf
+                           << "Date: "         << date()                             << crlf
+                           << "Server: "       << host()                             << crlf
+                           << "Content-Type: " << content_type()                     << crlf
+                           << "Content-Length: 0"                                    << crlf
+                           << "WWW-Authenticate: Basic realm=\"User Visible Realm\"" << crlf
+                           << crlf << flush;
+                }
+                else
+                {
+                    auto content = ""s,  type = ""s;
 
-        net::slog << net::error << e.what() << net::flush;
+                    for(auto& [path,controller] : m_router)
+                        if(std::regex_match(uri,std::regex(path)))
+                            std::tie(content,type) = controller[method].render(uri,body);
+
+                    if(not type.empty())
+                        stream << "HTTP/1.1 200 OK"                                           << crlf
+                               << "Date: " << date()                                          << crlf
+                               << "Server: " << host()                                        << crlf
+                               << "Content-Type: " << type                                    << crlf
+                               << "Content-Length: " << content.length()                      << crlf
+                               << "Access-Control-Allow-Methods: " << methods()               << crlf
+                               << "Cache-Control: private"                                    << crlf
+                               << "Access-Control-Allow-Origin: http://localhost:8080"        << crlf // FIXME
+                               << "Access-Control-Allow-Headers: Content-Type, Authorization" << crlf
+                               << "Access-Control-Allow-Credentials: true"                    << crlf
+                               << crlf
+                               << (method != "HEAD"s ? content : ""s) << flush;
+                    else
+                        stream << "HTTP/1.0 404 Not Found"                                    << crlf
+                               << "Date: " << date()                                          << crlf
+                               << "Server: " << host()                                        << crlf
+                               << "Content-Type: " << content_type()                          << crlf
+                               << "Content-Length: 0"                                         << crlf
+                               << crlf << flush;
+                }
+            }
+            slog << info << "connection closed" << flush;
+        }
+        catch(const std::exception& e)
+        {
+            stream << "HTTP/1.0 500 Internal Server Error" << crlf
+                   << "Date: " << date()                   << crlf
+                   << "Server: " << host()                 << crlf
+                   << "Content-Type: " << content_type()   << crlf
+                   << "Content-Length: 0"                  << crlf
+                   << crlf << flush;
+
+            slog << net::error << e.what() << net::flush;
+        }
     }
 
     using router = std::map<std::string,std::map<std::string,controller>, std::less<>>;
