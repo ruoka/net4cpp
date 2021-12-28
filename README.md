@@ -7,13 +7,13 @@ Network library based on C++20 standard
 try
 {
     auto ator = acceptor{"::1", "2112"}; // IPv6 localhost
-    auto s = ator.accept();
+    auto [stream,client,port] = ator.accept();
 
-    while(s)
+    while(stream)
     {
         auto echo = ""s;
-        getline(s, echo);
-        s << echo << endl;
+        getline(stream, echo);
+        stream << echo << endl;
         clog << echo << endl;
     }
 }
