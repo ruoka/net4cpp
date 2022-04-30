@@ -20,7 +20,11 @@ public:
 
     ~socket();
 
+    // checks ready for read
     bool wait_for(const std::chrono::milliseconds& timeout) const;
+
+    // checks ready for send
+    bool wait() const;
 
     operator native_handle_type() const
     {

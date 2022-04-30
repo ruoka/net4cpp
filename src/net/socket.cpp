@@ -31,7 +31,18 @@ bool socket::wait_for(const std::chrono::milliseconds& timeout) const
         static_cast<decltype(tv.tv_sec)>(timeout.count() / 1000),
         static_cast<decltype(tv.tv_usec)>(timeout.count() % 1000 * 1000)
     };
+    // checks ready for read
     const auto result = net::select(m_fd+1, &fds, nullptr, nullptr, &tv);
+    return result > 0;
+}
+
+bool socket::wait() const
+{
+    auto fds = net::fd_set{};
+    FD_ZERO(&fds);
+    FD_SET(m_fd, &fds);
+    // checks ready for send
+    const auto result = net::select(m_fd+1, nullptr, &fds, nullptr, nullptr);
     return result > 0;
 }
 

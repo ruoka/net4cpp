@@ -76,6 +76,7 @@ protected:
             const auto bytes_written = ::sendto(m_socket, buf, pptr() - buf, 0, nullptr, MSG_NOSIGNAL);
             if(bytes_written < 1)
             {
+                if((errno == EWOULDBLOCK or errno == EAGAIN) and m_socket.wait()) continue;
                 if(++retry < 3) continue;
                 else return -1;
             }
