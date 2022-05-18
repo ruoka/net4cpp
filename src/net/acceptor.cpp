@@ -62,7 +62,7 @@ std::tuple<acceptor::stream,acceptor::client,acceptor::port> acceptor::accept()
 
     char hbuf[NI_MAXHOST];
     char sbuf[NI_MAXSERV];
-    const auto status2 = net::getnameinfo(reinterpret_cast<net::sockaddr*>(&sas), saslen, hbuf, sizeof hbuf, sbuf, sizeof sbuf, 0);
+    const auto status2 = net::getnameinfo(reinterpret_cast<net::sockaddr*>(&sas), saslen, hbuf, sizeof hbuf, sbuf, sizeof sbuf, NI_NUMERICHOST);
     if(status2)
         throw std::system_error{errno, std::system_category(),"getnameinfo failed"};
 
