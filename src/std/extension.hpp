@@ -84,16 +84,16 @@ inline std::string operator+(std::string str, std::string_view sv)
 
 inline auto& to_string(const std::chrono::month& m) noexcept
 {
-    static const std::string g_number2month[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    static const std::string number2month[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     const auto n = static_cast<unsigned>(m);
-    return g_number2month[n];
+    return number2month[n];
 }
 
 inline auto& to_string(const std::chrono::weekday& wd) noexcept
 {
-    const std::string g_number2weekday[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    static const std::string number2weekday[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
     const auto n = wd.c_encoding();
-    return g_number2weekday[n];
+    return number2weekday[n];
 }
 
 template<typename T>
@@ -174,14 +174,14 @@ constexpr const std::string& to_string(bool b) noexcept
 
 inline const std::string& to_string(std::nullptr_t) noexcept
 {
-    static const std::string g_null2string = {"null"};
-    return g_null2string;
+    static const std::string null2string = {"null"};
+    return null2string;
 }
 
 inline const std::string& to_string(std::monostate) noexcept
  {
-    static const std::string g_null2string = {"null"};
-    return g_null2string;
+    static const std::string null2string = {"null"};
+    return null2string;
  }
 
 inline std::string to_string(std::string_view sv) noexcept
