@@ -11,10 +11,10 @@
 	// "features": {},
 
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	// "forwardPorts": [],
+	"forwardPorts": [2112],
 
 	// Use 'postCreateCommand' to run commands after the container is created.
-	// "postCreateCommand": "gcc -v",
+	"postCreateCommand": "/usr/lib/llvm-15/bin/clang++ -v",
 
 	// Configure tool-specific properties.
 	// "customizations": {},

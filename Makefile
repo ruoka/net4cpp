@@ -10,6 +10,7 @@ LDFLAGS = -L/usr/local/lib
 endif
 
 ifeq ($(OS),Darwin)
+C := /opt/bin/clang
 CXX := /opt/bin/clang++
 CXXFLAGS += -isystem /opt/include/c++/v1
 LDFLAGS += -L/opt/lib
