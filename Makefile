@@ -3,7 +3,7 @@
 OS := $(shell uname -s)
 
 ifeq ($(OS),Linux)
-CXX := /usr/lib/llvm-14/bin/clang++
+CXX := /usr/lib/llvm-15/bin/clang++
 CXXFLAGS = -pthread -I/usr/local/include
 LDFLAGS = -L/usr/local/lib
 endif
