@@ -3,6 +3,7 @@
 OS := $(shell uname -s)
 
 ifeq ($(OS),Linux)
+C :=  /usr/lib/llvm-15/bin/clang
 CXX := /usr/lib/llvm-15/bin/clang++
 CXXFLAGS = -pthread -I/usr/local/include
 LDFLAGS = -L/usr/local/lib
@@ -73,8 +74,7 @@ $(INCDIR)/%.hpp: $(SRCDIR)/%.hpp
 GTESTLIBS = $(addprefix $(LIBDIR)/, libgtest.a libgtest_main.a)
 
 $(GTESTLIBS):
-	cd $(GTESTDIR) && cmake -DCMAKE_INSTALL_PREFIX=.. . && make install
-# 	cd $(GTESTDIR) && cmake -DCMAKE_CXX_COMPILER="$(CXX)" -DCMAKE_CXX_FLAGS="$(CXXFLAGS)" -DCMAKE_INSTALL_PREFIX=.. . && make install
+	cd $(GTESTDIR) && cmake -DCMAKE_C_COMPILER="$(C)" -DCMAKE_CXX_COMPILER="$(CXX)" -DCMAKE_CXX_FLAGS="$(CXXFLAGS)" -DCMAKE_INSTALL_PREFIX=.. . && make install
 
 ############
 
