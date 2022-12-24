@@ -10,13 +10,14 @@ LDFLAGS = -L/usr/local/lib
 endif
 
 ifeq ($(OS),Darwin)
-C := /opt/bin/clang
-CXX := /opt/bin/clang++
-CXXFLAGS += -isystem /opt/include/c++/v1
-LDFLAGS += -L/opt/lib
-LDFLAGS += -Wl,-rpath,/opt/lib
-#CXX := /Library/Developer/CommandLineTools/usr/bin/clang++
-#CXXFLAGS = -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+#C := /opt/bin/clang
+#CXX := /opt/bin/clang++
+#CXXFLAGS += -isystem /opt/include/c++/v1
+#LDFLAGS += -L/opt/lib
+#LDFLAGS += -Wl,-rpath,/opt/lib
+C := /Library/Developer/CommandLineTools/usr/bin/clang
+CXX := /Library/Developer/CommandLineTools/usr/bin/clang++
+CXXFLAGS = -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
 endif
 
 CXXFLAGS += -std=c++20 -stdlib=libc++ -Wall -Wextra -I$(SRCDIR)
