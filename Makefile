@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := all
 
 OS := $(shell uname -s)
+CXX := clang++
 
 ifeq ($(OS),Linux)
 CC := /usr/lib/llvm-15/bin/clang
