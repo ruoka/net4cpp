@@ -5,10 +5,19 @@
         "*.c++": "cpp",
         "*.c++m": "cpp"
     },
-    "C_Cpp.default.compilerPath": "/usr/lib/llvm-15/bin/clang++",
-    "C_Cpp.default.cppStandard": "c++20",
-    "C_Cpp.default.includePath": ["${workspaceFolder}/src","${workspaceFolder}/include"], 
-    "C_Cpp.default.intelliSenseMode": "clang-x64",
-    "C_Cpp.errorSquiggles": "Enabled",
-    "terminal.integrated.gpuAcceleration": "off"
+"C_Cpp.default.compilerPath": "/usr/lib/llvm-15/bin/clang++",
+"C_Cpp.default.cppStandard": "c++20",
+"C_Cpp.default.includePath": ["${workspaceFolder}/src","${workspaceFolder}/include"], 
+"C_Cpp.default.intelliSenseMode": "clang-x64",
+"C_Cpp.errorSquiggles": "enabled",
+"terminal.integrated.gpuAcceleration": "off",
+"C_Cpp.default.configurationProvider": "ms-vscode.makefile-tools",
+"makefile.launchConfigurations": [
+    {
+        "cwd": "/workspaces/net4cpp/bin",
+        "binaryPath": "/workspaces/net4cpp/bin/test",
+        "binaryArgs": ["--gtest_filter=-*CommandLine:HttpServerTest*:NetReceiverAndSenderTest*"]
+    }
+],
+"git.ignoredRepositories": ["/workspaces/net4cpp/googletest"]
 }
