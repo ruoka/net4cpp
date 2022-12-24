@@ -3,19 +3,14 @@
 OS := $(shell uname -s)
 
 ifeq ($(OS),Linux)
-C :=  /usr/lib/llvm-15/bin/clang
+CC := /usr/lib/llvm-15/bin/clang
 CXX := /usr/lib/llvm-15/bin/clang++
 CXXFLAGS = -pthread -I/usr/local/include
 LDFLAGS = -L/usr/local/lib
 endif
 
 ifeq ($(OS),Darwin)
-#C := /opt/bin/clang
-#CXX := /opt/bin/clang++
-#CXXFLAGS += -isystem /opt/include/c++/v1
-#LDFLAGS += -L/opt/lib
-#LDFLAGS += -Wl,-rpath,/opt/lib
-C := /Library/Developer/CommandLineTools/usr/bin/clang
+CC := /Library/Developer/CommandLineTools/usr/bin/clang
 CXX := /Library/Developer/CommandLineTools/usr/bin/clang++
 CXXFLAGS = -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
 endif
@@ -27,18 +22,15 @@ LDFLAGS +=
 ############
 
 SRCDIR = src
-
 TESTDIR = test
-
 OBJDIR = obj
-
 BINDIR = bin
-
 LIBDIR = lib
-
 INCDIR = include
-
 GTESTDIR = googletest
+
+.SUFFIXES:
+.SUFFIXES: .cpp .hpp .o .a
 
 ############
 
@@ -77,7 +69,7 @@ GTESTLIBS = $(addprefix $(LIBDIR)/, libgtest.a libgtest_main.a)
 
 $(GTESTLIBS):
 	git submodule update --init --recursive --depth 1
-	cd $(GTESTDIR) && cmake -DCMAKE_C_COMPILER="$(C)" -DCMAKE_CXX_COMPILER="$(CXX)" -DCMAKE_CXX_FLAGS="$(CXXFLAGS)" -DCMAKE_INSTALL_PREFIX=.. && make install
+	cd $(GTESTDIR) && cmake  -DCMAKE_INSTALL_PREFIX=.. -DCMAKE_C_COMPILER="$(CC)" -DCMAKE_CXX_COMPILER="$(CXX)" -DCMAKE_CXX_FLAGS="$(CXXFLAGS)" . && make install
 
 ############
 
@@ -113,22 +105,11 @@ test: $(TEST_TARGET)
 
 .PHONY: clean
 clean:
-	@rm -rf $(OBJDIR)
-	@rm -rf $(BINDIR)
-	@rm -rf $(LIBDIR)
-	@rm -rf $(INCDIR)
+	@rm -rf $(OBJDIR) $(BINDIR) $(LIBDIR) $(INCDIR)
 
 .PHONY: dump
 dump:
-	@echo $(SOURCES)
-	@echo $(OBJECTS)
-	@echo $(LIBRARY)
-	@echo $(HEADERS)
-	@echo $(INCLUDES)
-	@echo $(TEST_SOURCES)
-	@echo $(TEST_OBJECTS)
-	@echo $(TEST_TARGET)
-	@echo $(GTESTLIBS)
-	@echo $(DEPENDENCIES)
+	$(foreach v, $(sort $(.VARIABLES)), $(if $(filter file,$(origin $(v))), $(info $(v)=$($(v)))))
+	@echo ''
 
 -include $(DEPENDENCIES)
