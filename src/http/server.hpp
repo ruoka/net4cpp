@@ -195,6 +195,10 @@ private:
                 auto headers = http::headers{};
                 stream >> headers >> crlf;
 
+                auto origin = "*"s;
+                if(headers.contains("origin"))
+                    origin = headers["origin"];
+
                 auto authorization = ""s;
                 if(headers.contains("authorization"))
                     authorization = headers["authorization"];
@@ -263,9 +267,9 @@ private:
                                << "Content-Length: " << content.length()                      << crlf
                                << "Access-Control-Allow-Methods: " << methods()               << crlf
                                << "Cache-Control: private"                                    << crlf
-                               << "Access-Control-Allow-Headers: Authorization"               << crlf
-//                             << "Access-Control-Allow-Origin: http://localhost:8080"        << crlf // FIXME
-//                             << "Access-Control-Allow-Credentials: true"                    << crlf
+                               << "Access-Control-Allow-Origin: " << origin                   << crlf
+                               << "Access-Control-Allow-Headers: Content-Type, Authorization" << crlf
+                               << "Access-Control-Allow-Credentials: true"                    << crlf
                                << crlf
                                << (method != "HEAD"s ? content : ""s) << flush;
                     else
@@ -274,6 +278,11 @@ private:
                                << "Server: " << host()                                        << crlf
                                << "Content-Type: " << content_type()                          << crlf
                                << "Content-Length: 0"                                         << crlf
+                               << "Access-Control-Allow-Methods: " << methods()               << crlf
+                               << "Cache-Control: private"                                    << crlf
+                               << "Access-Control-Allow-Origin: " << origin                   << crlf
+                               << "Access-Control-Allow-Headers: Content-Type, Authorization" << crlf
+                               << "Access-Control-Allow-Credentials: true"                    << crlf
                                << crlf << flush;
                 }
             }
