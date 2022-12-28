@@ -95,6 +95,9 @@ TEST(StdExtension,String2TimePoint)
     ASSERT_EQ(system_clock::time_point{1min}, to_time_point("1970-01-01T00:01:00.000Z"s));
     ASSERT_EQ(system_clock::time_point{1h}, to_time_point("1970-01-01T01:00:00.000Z"s));
     ASSERT_EQ(system_clock::time_point{12h}, to_time_point("1970-01-01T12:00:00.000Z"s));
+    ASSERT_EQ(system_clock::time_point{days{1}}, to_time_point("1970-01-02T00:00:00.000Z"s));
+//  ASSERT_EQ(system_clock::time_point{months{1}}, to_time_point("1970-02-01T00:00:00.000Z"s));
+//  ASSERT_EQ(system_clock::time_point{years{1}}, to_time_point("1971-01-01T00:00:00.000Z"s));
 }
 
 TEST(StdExtension,Boolean2String)
@@ -119,4 +122,17 @@ TEST(StdExtension,Nullptr2String)
 TEST(StdExtension,String2String)
 {
     ASSERT_EQ("abcdefg1234567"s, to_string("abcdefg1234567"s));
+}
+
+TEST(StdExtension,StringView2Integer)
+{
+    auto test = "12345"sv;
+    ASSERT_EQ(12345, stoi(test));
+    ASSERT_EQ(123, stoi(test.substr(0,3)));
+    ASSERT_EQ(12345u, stou(test));
+    ASSERT_EQ(123u, stou(test.substr(0,3)));
+    ASSERT_EQ(12345l, stol(test));
+    ASSERT_EQ(123l, stol(test.substr(0,3)));
+    ASSERT_EQ(12345ll, stoll(test));
+    ASSERT_EQ(123ll, stoll(test.substr(0,3)));
 }

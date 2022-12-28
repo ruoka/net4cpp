@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <string_view>
 #include <variant>
+#include <charconv>
 
 namespace std
 {
@@ -45,35 +46,31 @@ auto& operator << (std::ostream& os, const std::chrono::duration<T,R>& d) noexce
 namespace ext
 {
 
-inline auto stoi(std::string_view sv, std::size_t* pos = nullptr, int base = 10)
+inline auto stoi(std::string_view sv, int base = 10)
 {
-    char* end;
-    auto i = std::strtol(sv.data(), &end, base);
-    if(pos) *pos = std::distance<const char*>(sv.data(), end);
-    return static_cast<std::int32_t>(i);
-}
-
-inline auto stou(std::string_view sv, std::size_t* pos = nullptr, int base = 10)
-{
-    char* end;
-    auto i = std::strtol(sv.data(), &end, base);
-    if(pos) *pos = std::distance<const char*>(sv.data(), end);
-    return static_cast<std::uint32_t>(i);
-}
-
-inline auto stol(std::string_view sv, std::size_t* pos = nullptr, int base = 10)
-{
-    char* end;
-    auto i = std::strtol(sv.data(), &end, base);
-    if(pos) *pos = std::distance<const char*>(sv.data(), end);
+    auto i = 0;
+    std::from_chars(sv.data(),sv.data()+sv.size(),i,base);
     return i;
 }
 
-inline auto stoll(std::string_view sv, std::size_t* pos = nullptr, int base = 10)
+inline auto stou(std::string_view sv, int base = 10)
 {
-    char* end;
-    auto ll = std::strtoll(sv.data(), &end, base);
-    if(pos) *pos = std::distance<const char*>(sv.data(), end);
+    auto u = 0u;
+    std::from_chars(sv.data(),sv.data()+sv.size(),u,base);
+    return u;
+}
+
+inline auto stol(std::string_view sv, int base = 10)
+{
+    auto l = 0l;
+    std::from_chars(sv.data(),sv.data()+sv.size(),l,base);
+    return l;
+}
+
+inline auto stoll(std::string_view sv, int base = 10)
+{
+    auto ll = 0l;
+    std::from_chars(sv.data(),sv.data()+sv.size(),ll,base);
     return ll;
 }
 
