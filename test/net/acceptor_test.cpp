@@ -30,7 +30,8 @@ TEST(NetAcceptorTest,Accept)
         auto port = ""s;
         EXPECT_NO_THROW(std::tie(stream,host,port) = ator.accept());
         EXPECT_FALSE(!stream);
-        EXPECT_EQ(host,"localhost");
+//      EXPECT_EQ(host,"localhost");
+        EXPECT_EQ(host,"::1");
         EXPECT_GT(port,"49152");
         EXPECT_LT(port,"65535");
     }};
