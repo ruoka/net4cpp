@@ -22,12 +22,13 @@ LDFLAGS +=
 
 ############
 
+PREFIX = .
 SRCDIR = src
 TESTDIR = test
 OBJDIR = obj
 BINDIR = bin
-LIBDIR = lib
-INCDIR = include
+LIBDIR = $(PREFIX)/lib
+INCDIR = $(PREFIX)/include
 GTESTDIR = googletest
 
 .SUFFIXES:
