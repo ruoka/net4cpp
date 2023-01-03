@@ -44,14 +44,14 @@ auto to_rfc1123(const std::chrono::time_point<T>& current_time) noexcept
 
 inline auto to_time_point(const std::string_view sv)
 {
-    // YYYYMMDD-HH:MM:SS.sss
-    assert(sv.size() > 7);
+    // YYYY-MM-DDTHH:MM:SS.sssZ
+    assert(sv.size() > 9);
     auto YYYY = 0; auto MM = 0u, DD = 0u, hh = 0u, mm = 0u, ss = 0u, fff = 0u;
     auto res = std::from_chars_result{sv.data(),std::errc()};
     res = std::from_chars(res.ptr,res.ptr+4,YYYY);
-    res = std::from_chars(res.ptr,res.ptr+2,MM);
-    res = std::from_chars(res.ptr,res.ptr+2,DD);
-    if(sv.length() == 21)
+    res = std::from_chars(++res.ptr,res.ptr+2,MM);
+    res = std::from_chars(++res.ptr,res.ptr+2,DD);
+    if(sv.length() == 24)
     {
         res = std::from_chars(++res.ptr,res.ptr+2,hh);
         res = std::from_chars(++res.ptr,res.ptr+2,mm);

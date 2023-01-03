@@ -17,42 +17,42 @@ class controller
 {
 public:
 
-    using callback = std::function<std::string(std::string_view,std::string_view)>;
+    using callback = std::function<std::string(std::string_view,std::string_view,const http::headers&)>;
 
     void text(const std::string& content)
     {
         m_content_type = "text/plain"s;
-        m_callback = [&](std::string_view,std::string_view){return content;};
+        m_callback = [&](std::string_view,std::string_view,const http::headers&){return content;};
     }
 
     void html(const std::string& content)
     {
         m_content_type = "text/html"s;
-        m_callback = [&](std::string_view,std::string_view){return content;};
+        m_callback = [&](std::string_view,std::string_view,const http::headers&){return content;};
     }
 
     void css(const std::string& content)
     {
         m_content_type = "text/css"s;
-        m_callback = [&](std::string_view,std::string_view){return content;};
+        m_callback = [&](std::string_view,std::string_view,const http::headers&){return content;};
     }
 
     void script(const std::string& content)
     {
         m_content_type = "application/javascript"s;
-        m_callback = [&](std::string_view,std::string_view){return content;};
+        m_callback = [&](std::string_view,std::string_view,const http::headers&){return content;};
     }
 
     void json(const std::string& content)
     {
         m_content_type = "application/json"s;
-        m_callback = [&](std::string_view,std::string_view){return content;};
+        m_callback = [&](std::string_view,std::string_view,const http::headers&){return content;};
     }
 
     void xml(const std::string& content)
     {
         m_content_type = "application/xml"s;
-        m_callback = [&](std::string_view,std::string_view){return content;};
+        m_callback = [&](std::string_view,std::string_view,const http::headers&){return content;};
     }
 
     void response(std::string_view content_type, callback cb)
@@ -61,9 +61,9 @@ public:
         m_callback = cb;
     }
 
-    std::tuple<std::string,std::string> render(std::string_view request = "", std::string_view body = "") const
+    std::tuple<std::string,std::string> render(std::string_view request, std::string_view body, const http::headers& headers) const
     {
-        return {m_callback(request,body),m_content_type};
+        return {m_callback(request,body,headers),m_content_type};
     }
 
     void content_type(std::string_view type)
@@ -80,7 +80,7 @@ private:
 
     std::string m_content_type = "*/*"s;
 
-    callback m_callback = [](std::string_view, std::string_view){return "Not Found"s;};
+    callback m_callback = [](std::string_view, std::string_view, const http::headers&){return "Not Found"s;};
 };
 
 class server
@@ -257,7 +257,7 @@ private:
 
                     for(auto& [path,controller] : m_router)
                         if(std::regex_match(uri,std::regex(path)))
-                            std::tie(content,type) = controller[method].render(uri,body);
+                            std::tie(content,type) = controller[method].render(uri,body,headers);
 
                     if(not type.empty())
                         stream << "HTTP/1.1 200 OK"                                           << crlf
