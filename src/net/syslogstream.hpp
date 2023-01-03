@@ -113,13 +113,13 @@ public:
             // <PRI> Feb 22 21:12 localhost syslog[2112]:
             static_cast<oendpointstream&>(*this)
                     << std::resetiosflags(formatting)
-                    << '<' << priority(m_facility, m_severity)                   << '>'  // <PRI>
-                    << std::setw(3) << ext::to_string(date.month())              << ' '  // TIMESTAMP
-                    << std::setw(2) << std::setfill(' ') << date.day()           << ' '
-                    << std::setw(2) << std::setfill('0') << time.hours()         << ':'
-                    << std::setw(2) << std::setfill('0') << time.minutes()       << ':'
-                    << std::setw(2) << std::setfill('0') << time.seconds()       << ' '
-                    << hostname << ' ' << m_tag << '[' << pid << ']' << ':'      << ' ' // HOSTNAME TAG[PID]:
+                    << '<' << priority(m_facility, m_severity)                     << '>'  // <PRI>
+                    << std::setw(3) << ext::to_string(date.month())                << ' '  // TIMESTAMP
+                    << std::setw(2) << std::setfill(' ') << (unsigned)date.day()   << ' '
+                    << std::setw(2) << std::setfill('0') << time.hours().count()   << ':'
+                    << std::setw(2) << std::setfill('0') << time.minutes().count() << ':'
+                    << std::setw(2) << std::setfill('0') << time.seconds().count() << ' '
+                    << hostname << ' ' << m_tag << '[' << pid << ']' << ':'        << ' ' // HOSTNAME TAG[PID]:
                     << std::setiosflags(formatting);
         }
     }
