@@ -4,6 +4,7 @@
 #include <sstream>
 #include <iomanip>
 #include <charconv>
+#include <cassert>
 
 namespace ext
 {
