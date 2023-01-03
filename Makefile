@@ -1,5 +1,7 @@
 .DEFAULT_GOAL := all
 
+PROJECT := $(lastword $(notdir $(CURDIR)))
+
 OS := $(shell uname -s)
 CXX := clang++
 
@@ -26,10 +28,10 @@ PREFIX = .
 SRCDIR = src
 TESTDIR = test
 OBJDIR = obj
-BINDIR = bin
+BINDIR =$(PREFIX)/bin
 LIBDIR = $(PREFIX)/lib
 INCDIR = $(PREFIX)/include
-GTESTDIR = googletest
+GTESTDIR = $(PREFIX)/googletest
 
 .SUFFIXES:
 .SUFFIXES: .cpp .hpp .o .a
@@ -79,7 +81,7 @@ TEST_SOURCES = $(call rwildcard,$(TESTDIR)/,*.cpp)
 
 TEST_OBJECTS = $(TEST_SOURCES:$(TESTDIR)/%.cpp=$(OBJDIR)/$(TESTDIR)/%.o)
 
-TEST_TARGET = $(BINDIR)/test
+TEST_TARGET = $(BINDIR)/test_$(PROJECT)
 
 $(OBJDIR)/$(TESTDIR)/%.o: $(TESTDIR)/%.cpp $(GTESTLIBS) $(INCLUDES)
 	@mkdir -p $(@D)
