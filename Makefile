@@ -2,8 +2,9 @@
 
 PROJECT := $(lastword $(notdir $(CURDIR)))
 
+ifeq ($(MAKELEVEL),0)
+
 OS := $(shell uname -s)
-CXX := clang++
 
 ifeq ($(OS),Linux)
 CC := /usr/lib/llvm-15/bin/clang
@@ -18,8 +19,11 @@ CXX := /Library/Developer/CommandLineTools/usr/bin/clang++
 CXXFLAGS = -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
 endif
 
-CXXFLAGS += -std=c++20 -stdlib=libc++ -MMD -Wall -Wextra -I$(SRCDIR)
+CXXFLAGS += -std=c++20 -stdlib=libc++ -Wall -Wextra
 
+endif #($(MAKELEVEL),0)
+
+CXXFLAGS += -MMD -I$(SRCDIR)
 LDFLAGS +=
 
 ############
