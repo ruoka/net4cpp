@@ -1,3 +1,5 @@
+.SUFFIXES:
+.SUFFIXES: .cpp .hpp .o .a .c++m
 .DEFAULT_GOAL := all
 
 PROJECT := $(lastword $(notdir $(CURDIR)))
@@ -30,15 +32,13 @@ LDFLAGS +=
 
 PREFIX = .
 SRCDIR = src
-TESTDIR = test
 OBJDIR = obj
+TESTDIR = test
 BINDIR =$(PREFIX)/bin
 LIBDIR = $(PREFIX)/lib
 INCDIR = $(PREFIX)/include
+PCMDIR = $(PREFIX)/pcm
 GTESTDIR = $(PREFIX)/googletest
-
-.SUFFIXES:
-.SUFFIXES: .cpp .hpp .o .a
 
 ############
 
@@ -47,11 +47,31 @@ rwildcard = $(wildcard $1$2) $(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2
 
 ############
 
+ifeq ($(basename $(basename $(shell $(CXX) -dumpversion))),15) # This section only works with Clang 15 and above
+
+MODULES = $(call rwildcard,$(SRCDIR)/,*.c++m)
+
+PCMS = $(MODULES:$(SRCDIR)/%.c++m=$(PCMDIR)/%.pcm)
+
+OBJECTS += $(MODULES:$(SRCDIR)/%.c++m=$(OBJDIR)/%.o)
+
+$(PCMDIR)/%.pcm: $(SRCDIR)/%.c++m
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $< --precompile -c -o $@
+
+$(OBJDIR)/%.o: $(PCMDIR)/%.pcm
+	@mkdir -p $(@D)
+	$(CXX) $< -c -o $@
+
+endif # Clang 15 and above
+
+############
+
 SOURCES = $(call rwildcard,$(SRCDIR)/,*.cpp)
 
-OBJECTS = $(SOURCES:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o)
+OBJECTS += $(SOURCES:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o)
 
-LIBRARY = $(addprefix $(LIBDIR)/, libnet4cpp.a)
+LIBRARY = $(addprefix $(LIBDIR)/, lib$(PROJECT).a)
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.cpp
 	@mkdir -p $(@D)
@@ -102,10 +122,13 @@ DEPENDENCIES = $(MAINS:$(SRCDIR)/%.cpp=$(OBJDIR)/%.d) $(OBJECTS:%.o=%.d) $(TEST_
 ############
 
 .PHONY: all
-all: $(LIBRARY)
+all: lib
 
 .PHONY: lib
-lib: $(LIBRARY) $(INCLUDES)
+lib: $(INCLUDES) $(LIBRARY)
+
+.PHONY: module
+module: $(PCMS) $(LIBRARY)
 
 .PHONY: test
 test: $(TEST_TARGET)
@@ -113,7 +136,7 @@ test: $(TEST_TARGET)
 
 .PHONY: clean
 clean:
-	@rm -rf $(OBJDIR) $(BINDIR) $(LIBDIR) $(INCDIR)
+	@rm -rf $(OBJDIR) $(BINDIR) $(LIBDIR) $(INCDIR) $(PCMDIR)
 
 .PHONY: dump
 dump:
