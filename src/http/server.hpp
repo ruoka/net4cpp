@@ -66,16 +66,6 @@ public:
         return {m_callback(request,body,headers),m_content_type};
     }
 
-    void content_type(std::string_view type)
-    {
-        m_content_type = type;
-    }
-
-    const std::string& content_type() const
-    {
-        return m_content_type;
-    }
-
 private:
 
     std::string m_content_type = "*/*"s;
