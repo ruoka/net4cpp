@@ -148,19 +148,11 @@ public:
         return *this;
     }
 
-    template <typename T,
-              typename = std::enable_if_t<!std::is_pointer_v<T>>>
-    auto& operator<< (const T& type)
+    template <typename T> requires (not std::is_pointer_v<T>)
+    auto& operator<< (T&& type)
     {
         if(m_level >= m_severity)
             static_cast<oendpointstream&>(*this) << type;
-        return *this;
-    }
-
-    auto& operator<< (const char* str)
-    {
-        if(m_level >= m_severity)
-            static_cast<oendpointstream&>(*this) << str;
         return *this;
     }
 

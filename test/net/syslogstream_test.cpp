@@ -10,7 +10,7 @@ protected:
 
     void SetUp()
     {
-        slog.tag("googletest");
+        slog.appname("googletest");
         slog.facility(syslog::facility::local0);
         slog.level(syslog::severity::info);
     }

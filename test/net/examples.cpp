@@ -56,7 +56,7 @@ TEST(ExampleSyslog,CommandLine)
 {
     slog.level(syslog::severity::info);
     slog.facility(syslog::facility::local0);
-    slog.tag("example");
+    slog.appname("example");
 
     auto clothes = "shirts"s; auto spouse = "wife"; auto wrong = false;
 
