@@ -131,7 +131,7 @@ public:
             const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time.subseconds());
             const auto formatting = flags();
             // <PRI>1 YYYY-MM-DDThh:mm:ss.fffZ
-s            static_cast<oendpointstream&>(*this)
+            static_cast<oendpointstream&>(*this)
                     << std::resetiosflags(formatting)
                     << '<' << priority(m_facility, m_severity) << '>'                      // <PRI>
                     << syslog::version << ' '                                              // 1
