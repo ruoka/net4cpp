@@ -1,5 +1,8 @@
 #pragma once
 
+// https://www.rfc-editor.org/rfc/rfc3164.txt
+// https://www.rfc-editor.org/rfc/rfc5424.txt
+
 #include <mutex>
 #include <iomanip>
 #include <array>
@@ -9,6 +12,8 @@
 
 namespace net {
 namespace syslog {
+
+    const int version = 1;
 
     enum class facility : int
     {
@@ -51,7 +56,9 @@ public:
         m_facility{syslog::facility::user},
         m_severity{syslog::severity::debug},
         m_level{syslog::severity::debug},
-        m_tag{"syslogstream"},
+        m_appname{"syslogstream"},
+        m_msgid{"-"},
+        m_structured_data{"-"},
         m_mutex{}
     {}
     catch(...)
@@ -86,9 +93,15 @@ public:
         m_level = static_cast<syslog::severity>(s);
     }
 
-    void tag(std::string_view tag)
+    void appname(std::string_view app)
     {
-        m_tag = tag;
+        m_appname = app;
+    }
+
+    [[deprecated("Use appname() instead.")]]
+    void tag(std::string_view app)
+    {
+        m_appname = app;
     }
 
     void severity(syslog::severity s)
@@ -101,25 +114,30 @@ public:
     {
         using namespace std;
         static const auto hostname = syslog::gethostname();
-        static const auto pid = syslog::getpid();
+        static const auto procid = syslog::getpid();
 
         if(m_level >= m_severity)
         {
-            const auto current_time = std::chrono::system_clock::now();
+            const auto current_time = std::chrono::system_clock::now(); // FIXME use utc_clock
             const auto midnight = std::chrono::floor<std::chrono::days>(current_time);
             const auto date = std::chrono::year_month_day{midnight};
             const auto time = std::chrono::hh_mm_ss{current_time - midnight};
+            const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time.subseconds());
             const auto formatting = flags();
-            // <PRI> Feb 22 21:12 localhost syslog[2112]:
+            // <PRI>1 YYYY-MM-DDThh:mm:ss.fffZ localhost syslog[2112]:
             static_cast<oendpointstream&>(*this)
                     << std::resetiosflags(formatting)
-                    << '<' << priority(m_facility, m_severity)                     << '>'  // <PRI>
-                    << std::setw(3) << ext::to_string(date.month())                << ' '  // TIMESTAMP
-                    << std::setw(2) << std::setfill(' ') << (unsigned)date.day()   << ' '
-                    << std::setw(2) << std::setfill('0') << time.hours().count()   << ':'
-                    << std::setw(2) << std::setfill('0') << time.minutes().count() << ':'
-                    << std::setw(2) << std::setfill('0') << time.seconds().count() << ' '
-                    << hostname << ' ' << m_tag << '[' << pid << ']' << ':'        << ' ' // HOSTNAME TAG[PID]:
+                    << '<' << priority(m_facility, m_severity) << '>'                      // <PRI>
+                    << syslog::version << ' '                                              // 1
+                    << std::setw(4) << std::setfill('0') << (int)date.year()        << '-' // YYYY-
+                    << std::setw(2) << std::setfill('0') << (unsigned)date.month()  << '-' // MM-
+                    << std::setw(2) << std::setfill('0') << (unsigned)date.day()    << 'T' // DDT
+                    << std::setw(2) << std::setfill('0') << time.hours().count()    << ':' // hh:
+                    << std::setw(2) << std::setfill('0') << time.minutes().count()  << ':' // mm:
+                    << std::setw(2) << std::setfill('0') << time.seconds().count()  << '.' // ss.
+                    << std::setw(3) << std::setfill('0') << milliseconds.count()    << 'Z' // fffZ
+                    // HOSTNAME APP-NAME PROCID STRUCTURED-DATA
+                    << ' ' << hostname << ' ' << m_appname << ' ' << procid << ' ' << m_msgid << ' ' << m_structured_data << ' '
                     << std::setiosflags(formatting);
         }
     }
@@ -170,7 +188,11 @@ private:
 
     syslog::severity m_level;
 
-    std::string m_tag;
+    std::string m_appname;
+
+    std::string m_msgid;
+
+    std::string m_structured_data;
 
     std::mutex m_mutex;
 };
