@@ -115,13 +115,13 @@ public:
 
     void listen(std::string_view service_or_port = "http")
     {
-        slog << notice << "HTTP server starting up at "s << service_or_port << flush;
+        slog << notice("http") << "starting up at "s << service_or_port << flush;
         auto endpoint = net::acceptor{"0.0.0.0", service_or_port};
         endpoint.timeout(0s); // no timeout
-        slog << notice << "HTTP server started up at " << endpoint.host() << ":" << endpoint.service_or_port() << flush;
+        slog << notice("http") << "started up at " << endpoint.host() << ":" << endpoint.service_or_port() << flush;
         while(true)
         {
-            slog << info << "HTTP server accepting connections" << flush;
+            slog << info("http") << "accepting connections" << flush;
             auto client = endpoint.accept();
             std::thread{[client = std::move(client), this]() mutable {handle(client);}}.detach();
         }
@@ -169,7 +169,7 @@ private:
     void handle(auto& client)
     {
         auto& [stream,endpoint,port] = client;
-        slog << notice << "HTTP server accepted connection from " << endpoint << ":" << port << flush;
+        slog << notice("http") << "accepted connection from " << endpoint << ":" << port << flush;
 
         try
         {
@@ -180,7 +180,7 @@ private:
 
                 if(not stream.good()) break;
 
-                slog << notice << "HTTP request \"" << method << ' ' << uri << ' ' << version << "\"" << flush;
+                slog << notice("http") << "request \"" << method << ' ' << uri << ' ' << version << "\"" << flush;
 
                 auto headers = http::headers{};
                 stream >> headers >> crlf;
@@ -201,7 +201,7 @@ private:
                 for(auto& c : body)
                     c = stream.get();
 
-                slog << debug << "HTTP request body \"" << body << "\"" << flush;
+                slog << debug("http") << "request body \"" << body << "\"" << flush;
 
                 if(version != "HTTP/1.1")
                 {
@@ -276,7 +276,7 @@ private:
                                << crlf << flush;
                 }
             }
-            slog << info << "HTTP server connection closed" << flush;
+            slog << info("http") << "connection closed" << flush;
         }
         catch(const std::exception& e)
         {
@@ -287,7 +287,7 @@ private:
                    << "Content-Length: 0"                  << crlf
                    << crlf << flush;
 
-            slog << net::error << "HTTP server error: " << std::quoted(e.what()) << net::flush;
+            slog << error("http") << "error: " << std::quoted(e.what()) << net::flush;
         }
     }
 

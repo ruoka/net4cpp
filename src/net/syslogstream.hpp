@@ -44,6 +44,11 @@ namespace syslog {
 
     int getpid();
 
+    struct helper
+    {
+        syslog::severity severity;
+        std::string_view msgid;
+    };
 } // namespace syslog
 
 class syslogstream : public oendpointstream
@@ -143,22 +148,30 @@ public:
                     << std::setw(2) << std::setfill('0') << time.seconds().count()  << '.' // ss.
                     << std::setw(3) << std::setfill('0') << milliseconds.count()    << 'Z' // fffZ
                     // SP HOSTNAME SP APP-NAME SP PROCID SP MSGID SP BOM
-                    << ' ' << hostname << ' ' << m_appname << ' ' << procid << ' ' << m_msgid << ' ' << m_structured_data << "BOM"
+                    << ' ' << hostname << ' ' << m_appname << ' ' << procid << ' ' << m_msgid << ' ' << m_structured_data << " BOM"
                     << std::setiosflags(formatting);
         }
     }
 
-    auto& operator<< (syslogstream& (*pf)(syslogstream&))
-    {
-        (*pf)(*this);
-        return *this;
-    }
-
-    template <typename T> requires (not std::is_pointer_v<T>)
-    auto& operator<< (T&& type)
+    template <typename T> requires (not std::is_pointer_v<T> and not std::same_as<std::remove_cvref_t<T>,syslog::helper>)
+    auto& operator << (T&& type)
     {
         if(m_level >= m_severity)
             static_cast<oendpointstream&>(*this) << type;
+        return *this;
+    }
+
+    auto& operator << (syslog::helper&& h)
+    {
+        severity(h.severity);
+        msgid(h.msgid);
+        header();
+        return *this;
+    }
+
+    auto& operator << (syslogstream& (*pf)(syslogstream&))
+    {
+        (*pf)(*this);
         return *this;
     }
 
@@ -195,71 +208,57 @@ private:
     std::mutex m_mutex;
 };
 
-struct helper
-{
-    syslog::severity severity;
-    std::string_view msgid;
-};
-
-inline syslogstream& operator<<(syslogstream& ss, helper&& h)
-{
-    ss.severity(h.severity);
-    ss.msgid(h.msgid);
-    ss.header();
-    return ss;
-}
-
 inline syslogstream& error(syslogstream& ss)
 {
-    ss << helper{syslog::severity::error,"-"};
+    ss << syslog::helper{syslog::severity::error,"-"};
     return ss;
 }
 
-inline helper error(std::string_view msgid = "-")
+inline syslog::helper error(std::string_view msgid = "-")
 {
     return {syslog::severity::error,msgid};
 }
 
 inline syslogstream& warning(syslogstream& ss)
 {
-    ss << helper{syslog::severity::warning,"-"};
+    ss << syslog::helper{syslog::severity::warning,"-"};
     return ss;
 }
 
-inline helper warning(std::string_view msgid = "-")
+inline syslog::helper warning(std::string_view msgid = "-")
 {
     return {syslog::severity::warning,msgid};
 }
 
 inline syslogstream& notice(syslogstream& ss)
 {
-    ss << helper{syslog::severity::notice,"-"};
+    ss << syslog::helper{syslog::severity::notice,"-"};
     return ss;
 }
 
-inline helper notice(std::string_view msgid = "-")
+inline syslog::helper notice(std::string_view msgid = "-")
 {
     return {syslog::severity::notice,msgid};
 }
 
 inline syslogstream& info(syslogstream& ss)
 {
-    ss << helper{syslog::severity::info,"-"};
+    ss << syslog::helper{syslog::severity::info,"-"};
     return ss;
 }
 
-inline helper info(std::string_view msgid = "-")
+inline syslog::helper info(std::string_view msgid = "-")
 {
     return {syslog::severity::info,msgid};
 }
 
 inline syslogstream& debug(syslogstream& ss)
 {
-    ss << helper{syslog::severity::debug,"-"};
+    ss << syslog::helper{syslog::severity::debug,"-"};
     return ss;
 }
 
-inline helper debug(std::string_view msgid = "-")
+inline syslog::helper debug(std::string_view msgid = "-")
 {
     return {syslog::severity::debug,msgid};
 }
