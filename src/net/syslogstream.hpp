@@ -98,6 +98,11 @@ public:
         m_appname = app;
     }
 
+    void msgid(std::string_view id)
+    {
+        m_msgid = id;
+    }
+
     [[deprecated("Use appname() instead.")]]
     void tag(std::string_view app)
     {
@@ -112,6 +117,7 @@ public:
 
     void header()
     {
+        // PRI VERSION SP TIMESTAMP SP HOSTNAME SP APP-NAME SP PROCID SP MSGID
         using namespace std;
         static const auto hostname = syslog::gethostname();
         static const auto procid = syslog::getpid();
@@ -124,8 +130,8 @@ public:
             const auto time = std::chrono::hh_mm_ss{current_time - midnight};
             const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time.subseconds());
             const auto formatting = flags();
-            // <PRI>1 YYYY-MM-DDThh:mm:ss.fffZ localhost syslog[2112]:
-            static_cast<oendpointstream&>(*this)
+            // <PRI>1 YYYY-MM-DDThh:mm:ss.fffZ
+s            static_cast<oendpointstream&>(*this)
                     << std::resetiosflags(formatting)
                     << '<' << priority(m_facility, m_severity) << '>'                      // <PRI>
                     << syslog::version << ' '                                              // 1
@@ -136,8 +142,8 @@ public:
                     << std::setw(2) << std::setfill('0') << time.minutes().count()  << ':' // mm:
                     << std::setw(2) << std::setfill('0') << time.seconds().count()  << '.' // ss.
                     << std::setw(3) << std::setfill('0') << milliseconds.count()    << 'Z' // fffZ
-                    // HOSTNAME APP-NAME PROCID STRUCTURED-DATA
-                    << ' ' << hostname << ' ' << m_appname << ' ' << procid << ' ' << m_msgid << ' ' << m_structured_data << ' '
+                    // SP HOSTNAME SP APP-NAME SP PROCID SP MSGID SP BOM
+                    << ' ' << hostname << ' ' << m_appname << ' ' << procid << ' ' << m_msgid << ' ' << m_structured_data << "BOM"
                     << std::setiosflags(formatting);
         }
     }
@@ -189,39 +195,73 @@ private:
     std::mutex m_mutex;
 };
 
-inline auto& error(syslogstream& ss)
+struct helper
 {
-    ss.severity(syslog::severity::error);
+    syslog::severity severity;
+    std::string_view msgid;
+};
+
+inline syslogstream& operator<<(syslogstream& ss, helper&& h)
+{
+    ss.severity(h.severity);
+    ss.msgid(h.msgid);
     ss.header();
     return ss;
 }
 
-inline auto& warning(syslogstream& ss)
+inline syslogstream& error(syslogstream& ss)
 {
-    ss.severity(syslog::severity::warning);
-    ss.header();
+    ss << helper{syslog::severity::error,"-"};
     return ss;
 }
 
-inline auto& notice(syslogstream& ss)
+inline helper error(std::string_view msgid = "-")
 {
-    ss.severity(syslog::severity::notice);
-    ss.header();
+    return {syslog::severity::error,msgid};
+}
+
+inline syslogstream& warning(syslogstream& ss)
+{
+    ss << helper{syslog::severity::warning,"-"};
     return ss;
 }
 
-inline auto& info(syslogstream& ss)
+inline helper warning(std::string_view msgid = "-")
 {
-    ss.severity(syslog::severity::info);
-    ss.header();
+    return {syslog::severity::warning,msgid};
+}
+
+inline syslogstream& notice(syslogstream& ss)
+{
+    ss << helper{syslog::severity::notice,"-"};
     return ss;
 }
 
-inline auto& debug(syslogstream& ss)
+inline helper notice(std::string_view msgid = "-")
 {
-    ss.severity(syslog::severity::debug);
-    ss.header();
+    return {syslog::severity::notice,msgid};
+}
+
+inline syslogstream& info(syslogstream& ss)
+{
+    ss << helper{syslog::severity::info,"-"};
     return ss;
+}
+
+inline helper info(std::string_view msgid = "-")
+{
+    return {syslog::severity::info,msgid};
+}
+
+inline syslogstream& debug(syslogstream& ss)
+{
+    ss << helper{syslog::severity::debug,"-"};
+    return ss;
+}
+
+inline helper debug(std::string_view msgid = "-")
+{
+    return {syslog::severity::debug,msgid};
 }
 
 inline auto& flush(syslogstream& ss)
