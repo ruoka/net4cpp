@@ -81,7 +81,7 @@ public:
         m_facility = f;
     }
 
-    template<typename T>
+    template<std::unsigned_integral T>
     void facility(T f)
     {
         m_facility = static_cast<syslog::facility>(f);
@@ -92,7 +92,7 @@ public:
         m_level = s;
     }
 
-    template<typename T>
+    template<std::unsigned_integral T>
     void level(T s)
     {
         m_level = static_cast<syslog::severity>(s);
@@ -103,22 +103,51 @@ public:
         m_appname = app;
     }
 
-    void msgid(std::string_view id)
-    {
-        m_msgid = id;
-    }
-
     [[deprecated("Use appname() instead.")]]
     void tag(std::string_view app)
     {
         m_appname = app;
     }
 
-    void severity(syslog::severity s)
+    auto& operator << (syslog::helper&& h)
     {
         m_mutex.lock();
-        m_severity = s;
+        m_severity = h.severity;
+        m_msgid = h.msgid;
+        header();
+        return *this;
     }
+
+    auto& operator << (syslogstream& (*pf)(syslogstream&))
+    {
+        (*pf)(*this);
+        return *this;
+    }
+
+    template <typename T> requires (not std::is_pointer_v<T> and not std::same_as<std::remove_cvref_t<T>,syslog::helper>)
+    auto& operator << (T&& type)
+    {
+        if(m_level >= m_severity)
+            static_cast<oendpointstream&>(*this) << type;
+        return *this;
+    }
+
+    auto& operator<< (const char* str)
+    {
+        if(m_level >= m_severity)
+            static_cast<oendpointstream&>(*this) << str;
+        return *this;
+    }
+
+    auto& flush()
+    {
+        if(m_level >= m_severity)
+            put('\n').flush();
+        m_mutex.unlock();
+        return *this;
+    }
+
+private:
 
     void header()
     {
@@ -152,38 +181,6 @@ public:
                     << std::setiosflags(formatting);
         }
     }
-
-    template <typename T> requires (not std::is_pointer_v<T> and not std::same_as<std::remove_cvref_t<T>,syslog::helper>)
-    auto& operator << (T&& type)
-    {
-        if(m_level >= m_severity)
-            static_cast<oendpointstream&>(*this) << type;
-        return *this;
-    }
-
-    auto& operator << (syslog::helper&& h)
-    {
-        severity(h.severity);
-        msgid(h.msgid);
-        header();
-        return *this;
-    }
-
-    auto& operator << (syslogstream& (*pf)(syslogstream&))
-    {
-        (*pf)(*this);
-        return *this;
-    }
-
-    auto& flush()
-    {
-        if(m_level >= m_severity)
-            put('\n').flush();
-        m_mutex.unlock();
-        return *this;
-    }
-
-private:
 
     int priority(syslog::facility f, syslog::severity s)
     {

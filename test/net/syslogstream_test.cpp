@@ -26,7 +26,7 @@ TEST_F(NetSyslogstreamTest,Debug)
 TEST_F(NetSyslogstreamTest,Info)
 {
     slog << info << "Kaius testing "s << 456 << flush;
-    slog << info("http") << "Kaius testing "s << 123 << flush;
+    slog << info("http") << "Kaius testing "s << 456 << flush;
 }
 
 TEST_F(NetSyslogstreamTest,Notice)
