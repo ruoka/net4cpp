@@ -15,7 +15,7 @@ public:
 
     using value = std::string;
 
-    auto contains(const name& n) {return m_values.contains(n);};
+    auto contains(const name& n) const {return m_values.contains(n);};
 
     const value& operator[](const name& n) const {return m_values.at(n);}
 
