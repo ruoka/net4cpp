@@ -1,7 +1,14 @@
 PATH=$PATH:/Applications/CMake.app/Contents/bin
 
-git submodule update --init --recursive --depth 1
+git submodule update --init --recursive
 
 git pull --recurse-submodules
 
 make test
+
+
+/Library/Developer/CommandLineTools/usr/bin/clang++ -std=c++2a -MMD -Wall -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk src/spike.cpp -Isrc -lnet4cpp -Llib -o bin/spike
+
+
+
+https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers
