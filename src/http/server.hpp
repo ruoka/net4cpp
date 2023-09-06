@@ -267,6 +267,8 @@ private:
                     slog << debug << "Sec-WebSocket-Accept: " << server_key_sha1_base64 << flush;
 
                     stream << "HTTP/1.1 101 Switching Protocols"                  << crlf
+                           << "Date: " << date()                                  << crlf
+                           << "Server: " << host()                                << crlf
                            << "Upgrade: websocket"                                << crlf
                            << "Connection: Upgrade"                               << crlf
                            << "Sec-WebSocket-Accept: " << server_key_sha1_base64  << crlf
@@ -309,7 +311,7 @@ private:
                                 slog << debug << "Sent close ws-frame: " << std::bitset<16>{close.bits} << flush;
                                 break;
                             }
-                            else if(frame.header.opcode != ws::pong)
+                            else if(frame.header.opcode not ws::pong)
                             {
                                 auto content = ""s,  type = ""s;
                                 for(auto& [path,controller] : m_router)
