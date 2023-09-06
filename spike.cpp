@@ -1,8 +1,7 @@
 #include <iostream>
 #include <sstream>
 #include <fstream>
-#include "ws/frame.hpp"
-#include "ws/server.hpp"
+#include "http/server.hpp"
 
 using namespace std::string_literals;
 
@@ -62,7 +61,9 @@ int main()
     net::slog.level(net::syslog::severity::debug);
     net::slog.redirect(std::clog);
 
-    auto server = ws::server{};
+    auto server = http::server{};
+    server.get("/"s).text("hello!"s);
+    server.ws("/ws"s).text("WS!"s);
     server.listen("8080"s);
 
     return 0;

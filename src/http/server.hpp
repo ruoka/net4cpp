@@ -8,6 +8,8 @@
 #include "net/acceptor.hpp"
 #include "net/syslogstream.hpp"
 #include "http/headers.hpp"
+#include "http/ws/frame.hpp"
+#include "cryptic/sha1.hpp"
 
 namespace http {
 
@@ -113,10 +115,16 @@ public:
         return m_router[path]["DELETE"s];
     }
 
+    controller& ws(const std::string& path)
+    {
+        m_methods.insert("GET"s);
+        return m_router[path]["WS"s];
+    }
+
     void listen(std::string_view service_or_port = "http")
     {
         slog << notice("http") << "starting up at "s << service_or_port << flush;
-        auto endpoint = net::acceptor{"0.0.0.0", service_or_port};
+        auto endpoint = acceptor{"0.0.0.0", service_or_port};
         endpoint.timeout(0s); // no timeout
         slog << notice("http") << "started up at " << endpoint.host() << ":" << endpoint.service_or_port() << flush;
         while(true)
@@ -197,6 +205,10 @@ private:
                 if(headers.contains("content-length"))
                     content_length = std::stoll(headers["content-length"]);
 
+                auto upgrade = ""s;
+                if(headers.contains("upgrade"))
+                    upgrade = headers["upgrade"];
+
                 auto body = std::string(content_length,' ');
                 for(auto& c : body)
                     c = stream.get();
@@ -241,10 +253,87 @@ private:
                            << "WWW-Authenticate: Basic realm=\"User Visible Realm\"" << crlf
                            << crlf << flush;
                 }
-                else
+                else if (upgrade == "websocket")
+                {
+                    slog << debug << "Upgrading to WebSocket" << flush;
+
+                    constexpr auto guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+                    const auto client_key = headers["sec-websocket-key"];
+                    const auto server_key = client_key+guid;
+                    const auto server_key_sha1_base64 = cryptic::sha1::base64(server_key);
+
+                    slog << debug << "Sec-WebSocket-Key: " << client_key << flush;
+                    slog << debug << "Concatenated: " << server_key << flush;
+                    slog << debug << "Sec-WebSocket-Accept: " << server_key_sha1_base64 << flush;
+
+                    stream << "HTTP/1.1 101 Switching Protocols"                  << crlf
+                           << "Upgrade: websocket"                                << crlf
+                           << "Connection: Upgrade"                               << crlf
+                           << "Sec-WebSocket-Accept: " << server_key_sha1_base64  << crlf
+                           << crlf << flush;
+
+                    while(stream)
+                    {
+                        if(!stream.wait_for(10s))
+                        {
+                            const auto ping = ws::frame{ws::ping,0b0,0b0,0b0,0b1,0b0,0b0000000,0b0};
+                            stream << ping << flush;
+                            slog << debug << "Sent ping ws-frame:" << std::bitset<16>{ping.bits} << flush;
+                        }
+                        else
+                        {
+                            auto frame = ws::frame{};
+                            stream >> frame;
+
+                            slog << debug << "Received ws-frame:" << std::bitset<16>{frame.bits} << flush;
+                            slog << debug << "fin:" << std::bitset<1>{frame.header.fin} << flush;
+                            slog << debug << "opcode: " << std::bitset<4>{frame.header.opcode} << flush;
+                            slog << debug << "masked: " << std::bitset<1>{frame.header.masked} << flush;
+                            slog << debug << "payload-length: " << std::dec << (int) frame.header.payload_length << flush;
+
+                            if(frame.header.masked)
+                                slog << debug << "masking-key " << std::hex << frame.masking_key << flush;
+
+                            for (const auto c : frame.payload_data)
+                                std::clog << c;
+                            std::clog << std::endl;
+
+                            if(frame.header.opcode == ws::close)
+                            {
+                                auto close = ws::frame{ws::close,0b0,0b0,0b0,0b1,0b0,0b0000000,0b0};
+                                close.header.payload_length = frame.header.payload_length;
+                                stream << close;
+                                for (const auto c : frame.payload_data)
+                                    stream << c;
+                                stream << flush;
+                                slog << debug << "Sent close ws-frame: " << std::bitset<16>{close.bits} << flush;
+                                break;
+                            }
+                            else if(frame.header.opcode != ws::pong)
+                            {
+                                auto content = ""s,  type = ""s;
+                                for(auto& [path,controller] : m_router)
+                                    if(std::regex_match(uri,std::regex(path)))
+                                        std::tie(content,type) = controller["WS"].render(uri,body,headers);
+
+                                auto reply = ws::frame{ws::text,0b0,0b0,0b0,0b1,0b0,0b0000000,0b0};
+                                reply.header.payload_length = content.length();
+                                stream << reply;
+                                for (const auto c : content)
+                                    stream << c;
+                                stream << flush;
+                                slog << debug << "Sent text ws-frame: " << std::bitset<16>{reply.bits} << flush;
+                                for (const auto c : content)
+                                    std::clog << c;
+                                std::clog << std::endl;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                else // Normal HTTP process
                 {
                     auto content = ""s,  type = ""s;
-
                     for(auto& [path,controller] : m_router)
                         if(std::regex_match(uri,std::regex(path)))
                             std::tie(content,type) = controller[method].render(uri,body,headers);
@@ -287,7 +376,7 @@ private:
                    << "Content-Length: 0"                  << crlf
                    << crlf << flush;
 
-            slog << error("http") << "error: " << std::quoted(e.what()) << net::flush;
+            slog << error("http") << "error: " << std::quoted(e.what()) << flush;
         }
     }
 

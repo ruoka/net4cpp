@@ -38,7 +38,7 @@ struct frame
     std::vector<char> payload_data; // NOTE, optional
 };
 
-std::size_t length(const frame& f) noexcept
+constexpr std::size_t length(const frame& f) noexcept
 {
     return std::max<std::size_t>({f.header.payload_length,f.extended_payload_length_16,f.extended_payload_length_64});
 }

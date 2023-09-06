@@ -69,6 +69,7 @@ TEST(HttpServerTest1,TestMethodds)
     server.patch("/vk").html(view::patch);
     server.destroy("/vk").html(view::destroy);
     server.get("/json").json(view::json);
+    server.ws("/").json(view::json);
 
     server.listen("8080");
 }

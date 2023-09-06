@@ -7,7 +7,7 @@ git pull --recurse-submodules
 make test
 
 
-/Library/Developer/CommandLineTools/usr/bin/clang++ -std=c++2a -MMD -Wall -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk src/spike.cpp -Isrc -lnet4cpp -Llib -o bin/spike
+/Library/Developer/CommandLineTools/usr/bin/clang++ -std=c++2a -MMD -Wall -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk spike.cpp -Isrc -lnet4cpp -Llib -o bin/spike
 
 
 
