@@ -45,6 +45,5 @@ export namespace http
 export namespace ext
 {
     using ext::lockable;
-    using ext::make_lock;
     using ext::to_upper;
 }
