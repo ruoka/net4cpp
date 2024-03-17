@@ -5,3 +5,5 @@ git submodule update --init --recursive --depth 1
 git pull --recurse-submodules
 
 make test
+
+/Library/Developer/CommandLineTools/usr/bin/clang++ -std=c++2a -MMD -Wall -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk httpd.cpp -Iinclude -lnet4cpp -Llib -o bin/httpd
