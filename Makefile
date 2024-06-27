@@ -9,8 +9,8 @@ ifeq ($(MAKELEVEL),0)
 OS := $(shell uname -s)
 
 ifeq ($(OS),Linux)
-CC := /usr/lib/llvm-15/bin/clang
-CXX := /usr/lib/llvm-15/bin/clang++
+CC := /usr/lib/llvm-18/bin/clang
+CXX := /usr/lib/llvm-18/bin/clang++
 CXXFLAGS = -pthread -I/usr/local/include
 LDFLAGS = -L/usr/local/lib
 endif
@@ -47,9 +47,9 @@ rwildcard = $(wildcard $1$2) $(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2
 
 ############
 
-ifeq ($(basename $(basename $(shell $(CXX) -dumpversion))),17) # This section only works with Clang 15 and above
+ifeq ($(basename $(basename $(shell $(CXX) -dumpversion))),18) # FIXME as we need greater than equal to 17 etc. 
 
-MODULES = $(call rwildcard,$(SRCDIR)/,*.c++m)
+MODULES = $(SRCDIR)/net.c++m
 
 PCMS = $(MODULES:$(SRCDIR)/%.c++m=$(PCMDIR)/%.pcm)
 
