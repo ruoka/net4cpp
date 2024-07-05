@@ -5,6 +5,7 @@ module;
 #include "net/uri.hpp"
 #include "http/server.hpp"
 #include "http/uri.hpp"
+#include "http/base64.hpp"
 #include "std/lockable.hpp"
 export module net;
 
@@ -41,6 +42,10 @@ export namespace http
     using http::server;
     using http::uri;
     using http::headers;
+    namespace base64
+    {
+        using http::base64::encode;
+    }
 }
 export namespace ext
 {
