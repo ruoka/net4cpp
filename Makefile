@@ -21,7 +21,7 @@ CXX := /Library/Developer/CommandLineTools/usr/bin/clang++
 CXXFLAGS = -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
 endif
 
-CXXFLAGS += -std=c++20 -stdlib=libc++ -Wall -Wextra
+CXXFLAGS += -std=c++23 -stdlib=libc++ -Wall -Wextra
 
 endif #($(MAKELEVEL),0)
 

@@ -1,3 +1,4 @@
+#include <exception>
 #include "net/network.hpp"
 #include "net/sender.hpp"
 #include "net/connector.hpp"
