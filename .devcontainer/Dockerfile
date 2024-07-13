@@ -1,15 +1,15 @@
-# [Choice] Ubuntu version
-ARG VARIANT="kinetic"
-FROM buildpack-deps:${VARIANT}-curl
+FROM debian:bookworm-slim AS os
 
-# [Optional] Uncomment this section to install additional OS packages.
-RUN export DEBIAN_FRONTEND=noninteractive \
-    && apt-get update \
-    && apt-get -y install --no-install-recommends wget software-properties-common \
-    && wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - \
-    && apt-add-repository "deb http://apt.llvm.org/kinetic/ llvm-toolchain-kinetic-15 main" \
-    && apt-get update \
-    && apt-get -y install --no-install-recommends clang-15 lldb-15 lld-15 libc++-15-dev libc++abi-15-dev git make cmake cppcheck valgrind
+RUN set -ex && \
+    apt-get update && \
+    apt-get install -y wget git
+
+RUN set -ex &&\
+    echo "deb http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-18 main" > /etc/apt/sources.list.d/apt.llvm.org.list && \
+    wget --no-check-certificate -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc && \
+	touch /etc/apt/apt.conf.d/99verify-peer.conf && echo >>/etc/apt/apt.conf.d/99verify-peer.conf "Acquire { https::Verify-Peer false }" && \
+    apt-get update && \
+    apt-get install --no-install-recommends --yes git cmake make clang-18 lldb-18 lld-18 libc++-18-dev libc++abi-18-dev
 
 # https://code.visualstudio.com/remote/advancedcontainers/add-nonroot-user
 ARG USERNAME=vscode
