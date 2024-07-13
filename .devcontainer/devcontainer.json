@@ -1,7 +1,7 @@
 // For format details, see https://aka.ms/devcontainer.json. For config options, see the
 // README at: https://github.com/devcontainers/templates/tree/main/src/cpp
 {
-	"name": "clang++-15",
+	"name": "clang++-18",
 
 	"build": {
 		"dockerfile": "Dockerfile"
@@ -14,7 +14,7 @@
 	"forwardPorts": [514,2112,50001,54321],
 
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "/usr/lib/llvm-15/bin/clang++ -v",
+	"postCreateCommand": "/usr/lib/llvm-18/bin/clang++ -v",
 
 	// Configure tool-specific properties.
 	// "customizations": {},
