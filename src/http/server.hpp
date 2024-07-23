@@ -118,7 +118,7 @@ public:
     {
         slog << notice("http") << "starting up at "s << service_or_port << flush;
         auto endpoint = net::acceptor{"0.0.0.0", service_or_port};
-        endpoint.timeout(0s); // no timeout
+        endpoint.timeout(m_timeout); // 0s -> no timeout
         slog << notice("http") << "started up at " << endpoint.host() << ":" << endpoint.service_or_port() << flush;
         while(true)
         {
@@ -136,6 +136,16 @@ public:
     void credentials(std::initializer_list<std::string> tokens)
     {
         m_credentials.insert(tokens);
+    }
+
+    const auto& timeout() const
+    {
+        return m_timeout;
+    }
+
+    void timeout(const std::chrono::seconds& timeout)
+    {
+        m_timeout = timeout;
     }
 
 private:
@@ -303,6 +313,8 @@ private:
     std::string m_public_paths = ".*";
 
     std::set<std::string> m_credentials = {};
+
+    std::chrono::seconds m_timeout = 0s; // 0s -> no timeout
 };
 
 } // namespace http
