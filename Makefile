@@ -13,15 +13,17 @@ CC := /usr/lib/llvm-18/bin/clang
 CXX := /usr/lib/llvm-18/bin/clang++
 CXXFLAGS = -pthread -I/usr/local/include
 LDFLAGS = -L/usr/local/lib
+CXXFLAGS += -std=c++23
 endif
 
 ifeq ($(OS),Darwin)
 CC := /Library/Developer/CommandLineTools/usr/bin/clang
 CXX := /Library/Developer/CommandLineTools/usr/bin/clang++
 CXXFLAGS = -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+CXXFLAGS += -std=c++2b
 endif
 
-CXXFLAGS += -std=c++23 -stdlib=libc++ -Wall -Wextra
+CXXFLAGS += -stdlib=libc++ -Wall -Wextra
 
 endif #($(MAKELEVEL),0)
 
