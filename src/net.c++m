@@ -42,6 +42,11 @@ export namespace http
     using http::server;
     using http::uri;
     using http::headers;
+    using http::status;
+    using http::request_view;
+    using http::body_view;
+    using http::response;
+    using http::make_response;
     namespace base64
     {
         using http::base64::encode;

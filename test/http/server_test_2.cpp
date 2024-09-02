@@ -7,10 +7,10 @@ TEST(HttpServerTest2,TestRegexRoutes)
 {
     auto server = http::server{};
 
-    auto handler = []([[maybe_unused]]std::string_view request,
-                      [[maybe_unused]]std::string_view body,
-                      [[maybe_unused]]http::headers headers)
-        {return "<p>"s + std::string{request} + "</p>"s;};
+    auto handler = [](http::request_view request,
+                      http::body_view,
+                      const http::headers&) -> http::response
+        {return {"200 OK"s, "<p>"s + std::string{request} + "</p>"s};};
 
     server.get("/[a-z]*").response("text/html",handler);
 
