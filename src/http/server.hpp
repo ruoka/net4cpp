@@ -13,47 +13,53 @@
 namespace http {
 
 using namespace std::literals;
+using status = std::string;
+using content = std::string;
+using content_type = std::string;
+using response = std::tuple<http::status,http::content>;
+using request_view = std::string_view;
+using body_view = std::string_view;
 
 class controller
 {
 public:
 
-    using callback = std::function<std::string(std::string_view,std::string_view,const http::headers&)>;
+    using callback = std::function<http::response(http::request_view,http::body_view,const http::headers&)>;
 
-    void text(const std::string& content)
+    void text(const http::content& content)
     {
         m_content_type = "text/plain"s;
-        m_callback = [&](std::string_view,std::string_view,const http::headers&){return content;};
+        m_callback = [&](http::request_view,http::body_view,const http::headers&) -> http::response {return {"200 OK"s,content};};
     }
 
-    void html(const std::string& content)
+    void html(const http::content& content)
     {
         m_content_type = "text/html"s;
-        m_callback = [&](std::string_view,std::string_view,const http::headers&){return content;};
+        m_callback = [&](http::request_view,http::body_view,const http::headers&) -> http::response {return {"200 OK"s,content};};
     }
 
-    void css(const std::string& content)
+    void css(const http::content& content)
     {
         m_content_type = "text/css"s;
-        m_callback = [&](std::string_view,std::string_view,const http::headers&){return content;};
+        m_callback = [&](http::request_view,http::body_view,const http::headers&) -> http::response {return {"200 OK"s,content};};
     }
 
-    void script(const std::string& content)
+    void script(const http::content& content)
     {
         m_content_type = "application/javascript"s;
-        m_callback = [&](std::string_view,std::string_view,const http::headers&){return content;};
+        m_callback = [&](http::request_view,http::body_view,const http::headers&) -> http::response {return {"200 OK"s,content};};
     }
 
-    void json(const std::string& content)
+    void json(const http::content& content)
     {
         m_content_type = "application/json"s;
-        m_callback = [&](std::string_view,std::string_view,const http::headers&){return content;};
+        m_callback = [&](http::request_view,http::body_view,const http::headers&) -> http::response {return {"200 OK"s,content};};
     }
 
-    void xml(const std::string& content)
+    void xml(const http::content& content)
     {
         m_content_type = "application/xml"s;
-        m_callback = [&](std::string_view,std::string_view,const http::headers&){return content;};
+        m_callback = [&](http::request_view,http::body_view,const http::headers&) -> http::response {return {"200 OK"s,content};};
     }
 
     void response(std::string_view content_type, callback cb)
@@ -62,16 +68,16 @@ public:
         m_callback = cb;
     }
 
-    std::tuple<std::string,std::string> render(std::string_view request, std::string_view body, const http::headers& headers) const
+    std::tuple<http::status,http::content,http::content_type> render(http::request_view request, http::body_view body, const http::headers& headers)
     {
-        return {m_callback(request,body,headers),m_content_type};
+        return std::tuple_cat(m_callback(request,body,headers),std::tie(m_content_type));
     }
 
 private:
 
-    std::string m_content_type = "*/*"s;
+    http::content_type m_content_type = "*/*"s;
 
-    callback m_callback = [](std::string_view, std::string_view, const http::headers&){return "Not Found"s;};
+    callback m_callback = [](http::request_view, http::body_view, const http::headers&) -> http::response {return {"200 OK"s,"Not Found"s};};
 };
 
 class server
@@ -254,14 +260,14 @@ private:
                 }
                 else
                 {
-                    auto content = ""s,  type = ""s;
+                    auto status = ""s, type = ""s, content = ""s;
 
                     for(auto& [path,controller] : m_router)
                         if(std::regex_match(uri,std::regex(path)))
-                            std::tie(content,type) = controller[method].render(uri,body,headers);
+                            std::tie(status,content,type) = controller[method].render(uri,body,headers);
 
                     if(not type.empty())
-                        stream << "HTTP/1.1 200 OK"                                           << crlf
+                        stream << "HTTP/1.1 " << status                                       << crlf
                                << "Date: " << date()                                          << crlf
                                << "Server: " << host()                                        << crlf
                                << "Content-Type: " << type                                    << crlf
@@ -316,5 +322,12 @@ private:
 
     std::chrono::seconds m_timeout = 0s; // 0s -> no timeout
 };
+
+
+template <typename... Args>
+auto make_response(Args&&... args) -> decltype(std::make_pair(std::forward<Args>(args)...))
+{
+    return std::make_pair(std::forward<Args>(args)...);
+}
 
 } // namespace http
