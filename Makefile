@@ -9,8 +9,8 @@ ifeq ($(MAKELEVEL),0)
 OS := $(shell uname -s)
 
 ifeq ($(OS),Linux)
-CC := /usr/lib/llvm-18/bin/clang
-CXX := /usr/lib/llvm-18/bin/clang++
+CC := /usr/lib/llvm-19/bin/clang
+CXX := /usr/lib/llvm-19/bin/clang++
 CXXFLAGS = -pthread -I/usr/local/include
 LDFLAGS = -L/usr/local/lib
 CXXFLAGS += -std=c++23
@@ -49,9 +49,24 @@ rwildcard = $(wildcard $1$2) $(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2
 
 ############
 
-ifeq ($(basename $(basename $(shell $(CXX) -dumpversion))),18) # FIXME as we need greater than equal to 17 etc. 
+CXX_VERSION := $(basename $(basename $(shell $(CXX) -dumpversion)))
 
-MODULES = $(SRCDIR)/net.c++m
+ifeq ($(CXX_VERSION),17)
+    $(info CXX version is 17)
+else ifeq ($(CXX_VERSION),18)
+    $(info CXX version is 18)
+else ifeq ($(CXX_VERSION),19)
+    $(info CXX version is 19)
+else
+    $(info CXX version is $(CXX_VERSION))
+    $(error CXX version is less than 17. Please use a CXX version >= 17)
+endif
+
+ifeq ($(filter 17 18 19,$(CXX_VERSION)),)
+    # Skip module compilation if CXX version is not in the list
+else
+
+MODULES = $(SRCDIR)/$(PROJECT).c++m
 
 PCMS = $(MODULES:$(SRCDIR)/%.c++m=$(PCMDIR)/%.pcm)
 
@@ -65,7 +80,7 @@ $(OBJDIR)/%.o: $(PCMDIR)/%.pcm
 	@mkdir -p $(@D)
 	$(CXX) $< -c -o $@
 
-endif # Clang 15 and above
+endif
 
 ############
 
