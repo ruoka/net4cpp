@@ -74,7 +74,7 @@ $(PCMDIR)/%.pcm: $(SRCDIR)/%.c++m
 
 $(OBJDIR)/%.o: $(PCMDIR)/%.pcm
 	@mkdir -p $(@D)
-	$(CXX) $< -c -o $@
+	$(CXX) -c $< -o $@
 
 endif
 
