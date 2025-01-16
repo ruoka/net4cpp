@@ -29,37 +29,37 @@ public:
     void text(const http::content& content)
     {
         m_content_type = "text/plain"s;
-        m_callback = [&](http::request_view,http::body_view,const http::headers&) -> http::response {return {"200 OK"s,content};};
+        m_callback = [content](auto&&...) -> http::response {return {"200 OK"s,content};};
     }
 
     void html(const http::content& content)
     {
         m_content_type = "text/html"s;
-        m_callback = [&](http::request_view,http::body_view,const http::headers&) -> http::response {return {"200 OK"s,content};};
+        m_callback = [content](auto&&...) -> http::response {return {"200 OK"s,content};};
     }
 
     void css(const http::content& content)
     {
         m_content_type = "text/css"s;
-        m_callback = [&](http::request_view,http::body_view,const http::headers&) -> http::response {return {"200 OK"s,content};};
+        m_callback = [content](auto&&...) -> http::response {return {"200 OK"s,content};};
     }
 
     void script(const http::content& content)
     {
         m_content_type = "application/javascript"s;
-        m_callback = [&](http::request_view,http::body_view,const http::headers&) -> http::response {return {"200 OK"s,content};};
+        m_callback = [content](auto&&...) -> http::response {return {"200 OK"s,content};};
     }
 
     void json(const http::content& content)
     {
         m_content_type = "application/json"s;
-        m_callback = [&](http::request_view,http::body_view,const http::headers&) -> http::response {return {"200 OK"s,content};};
+        m_callback = [content](auto&&...) -> http::response {return {"200 OK"s,content};};
     }
 
     void xml(const http::content& content)
     {
         m_content_type = "application/xml"s;
-        m_callback = [&](http::request_view,http::body_view,const http::headers&) -> http::response {return {"200 OK"s,content};};
+        m_callback = [content](auto&&...) -> http::response {return {"200 OK"s,content};};
     }
 
     void response(std::string_view content_type, callback cb)

@@ -1,8 +1,9 @@
 .SUFFIXES:
-.SUFFIXES: .cpp .hpp .o .a .c++m
+.SUFFIXES: .cpp .hpp .o .a .c++m .pcm
 .DEFAULT_GOAL := all
 
-PROJECT := $(lastword $(notdir $(CURDIR)))
+#PROJECT := $(lastword $(notdir $(CURDIR)))
+PROJECT := net
 
 ifeq ($(MAKELEVEL),0)
 
@@ -13,21 +14,27 @@ CC := /usr/lib/llvm-19/bin/clang
 CXX := /usr/lib/llvm-19/bin/clang++
 CXXFLAGS = -pthread -I/usr/local/include
 LDFLAGS = -L/usr/local/lib
-CXXFLAGS += -std=c++23
 endif
 
 ifeq ($(OS),Darwin)
-CC := /Library/Developer/CommandLineTools/usr/bin/clang
-CXX := /Library/Developer/CommandLineTools/usr/bin/clang++
-CXXFLAGS = -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
-CXXFLAGS += -std=c++2b
+CC = /opt/homebrew/opt/llvm/bin/clang
+CXX = /opt/homebrew/opt/llvm/bin/clang++
+CXXFLAGS =-I/opt/homebrew/opt/llvm/include/c++/v1
+LDFLAGS = -L/opt/homebrew/opt/llvm/lib/c++
+endif
+
+ifeq ($(OS),Github)
+CC = /usr/local/opt/llvm/bin/clang
+CXX = /usr/local/opt/llvm/bin/clang++
+CXXFLAGS = -I/usr/local/opt/llvm/include/ -I/usr/local/opt/llvm/include/c++/v1
+LDFLAGS = -L/usr/local/opt/llvm/lib/c++ -Wl,-rpath,/usr/local/opt/llvm/lib/c++
 endif
 
 CXXFLAGS += -stdlib=libc++ -Wall -Wextra
 
 endif #($(MAKELEVEL),0)
 
-CXXFLAGS += -MMD -I$(SRCDIR)
+CXXFLAGS += -std=c++23 -MMD -I$(SRCDIR)
 LDFLAGS +=
 
 ############
@@ -50,20 +57,9 @@ rwildcard = $(wildcard $1$2) $(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2
 ############
 
 CXX_VERSION := $(basename $(basename $(shell $(CXX) -dumpversion)))
-
-ifeq ($(CXX_VERSION),17)
-    $(info CXX version is 17)
-else ifeq ($(CXX_VERSION),18)
-    $(info CXX version is 18)
-else ifeq ($(CXX_VERSION),19)
-    $(info CXX version is 19)
-else
-    $(info CXX version is $(CXX_VERSION))
+$(info CXX version is $(CXX_VERSION))
+ifeq ($(filter 17 18 19 20 ,$(CXX_VERSION)),)
     $(error CXX version is less than 17. Please use a CXX version >= 17)
-endif
-
-ifeq ($(filter 17 18 19,$(CXX_VERSION)),)
-    # Skip module compilation if CXX version is not in the list
 else
 
 MODULES = $(SRCDIR)/$(PROJECT).c++m
@@ -74,7 +70,7 @@ OBJECTS += $(MODULES:$(SRCDIR)/%.c++m=$(OBJDIR)/%.o)
 
 $(PCMDIR)/%.pcm: $(SRCDIR)/%.c++m
 	@mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) $< --precompile -c -o $@
+	$(CXX) $(CXXFLAGS) $< --precompile -o $@
 
 $(OBJDIR)/%.o: $(PCMDIR)/%.pcm
 	@mkdir -p $(@D)
