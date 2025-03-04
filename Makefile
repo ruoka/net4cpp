@@ -58,7 +58,7 @@ rwildcard = $(wildcard $1$2) $(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2
 
 CXX_VERSION := $(basename $(basename $(shell $(CXX) -dumpversion)))
 $(info CXX version is $(CXX_VERSION))
-ifeq ($(filter 17 18 19 20 ,$(CXX_VERSION)),)
+ifeq ($(filter 17 18 19 20 21,$(CXX_VERSION)),)
     $(error CXX version is less than 17. Please use a CXX version >= 17)
 else
 
