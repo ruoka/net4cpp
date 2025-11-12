@@ -1,5 +1,6 @@
 .SUFFIXES:
 .SUFFIXES: .cpp .hpp .o .a .c++m .pcm
+.PRECIOUS: $(PCMDIR)/%.pcm
 .DEFAULT_GOAL := all
 
 #PROJECT := $(lastword $(notdir $(CURDIR)))
