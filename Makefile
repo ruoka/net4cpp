@@ -7,7 +7,12 @@
 PROJECT := net
 
 ifeq ($(MAKELEVEL),0)
+# Include shared compiler configuration (relative to project root)
+# If used standalone, fall back to inline compiler configuration
+-include ../../config/compiler.mk
 
+# If config/compiler.mk wasn't found (standalone mode), define compiler settings inline
+ifndef CC
 OS := $(shell uname -s)
 
 ifeq ($(OS),Linux)
@@ -24,15 +29,8 @@ CXXFLAGS =-I/opt/homebrew/opt/llvm/include/c++/v1
 LDFLAGS = -L/opt/homebrew/opt/llvm/lib/c++
 endif
 
-ifeq ($(OS),Github)
-CC = /usr/local/opt/llvm/bin/clang
-CXX = /usr/local/opt/llvm/bin/clang++
-CXXFLAGS = -I/usr/local/opt/llvm/include/ -I/usr/local/opt/llvm/include/c++/v1
-LDFLAGS = -L/usr/local/opt/llvm/lib/c++ -Wl,-rpath,/usr/local/opt/llvm/lib/c++
-endif
-
 CXXFLAGS += -stdlib=libc++ -Wall -Wextra
-
+endif # ifndef CC
 endif #($(MAKELEVEL),0)
 
 CXXFLAGS += -std=c++23 -MMD -I$(SRCDIR)
@@ -42,8 +40,8 @@ LDFLAGS +=
 
 PREFIX ?= .
 SRCDIR = src
-OBJDIR = obj
 TESTDIR = test
+OBJDIR = $(PREFIX)/obj
 BINDIR =$(PREFIX)/bin
 LIBDIR = $(PREFIX)/lib
 INCDIR = $(PREFIX)/include
