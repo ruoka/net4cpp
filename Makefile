@@ -40,7 +40,7 @@ LDFLAGS +=
 
 ############
 
-PREFIX = .
+PREFIX ?= .
 SRCDIR = src
 OBJDIR = obj
 TESTDIR = test
