@@ -34,7 +34,6 @@ endif # ifndef CC
 endif #($(MAKELEVEL),0)
 
 CXXFLAGS += -std=c++23 -MMD -I$(SRCDIR)
-LDFLAGS +=
 
 ############
 
