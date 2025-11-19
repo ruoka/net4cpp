@@ -45,7 +45,7 @@ CXXFLAGS += -stdlib=libc++ -Wall -Wextra
 endif # ifndef CC
 endif #($(MAKELEVEL),0)
 
-CXXFLAGS += -std=c++23 -MMD -I$(SRCDIR)
+CXXFLAGS += -std=c++23 -MMD
 
 ############
 
@@ -59,6 +59,8 @@ INCDIR = $(PREFIX)/include
 PCMDIR = $(PREFIX)/pcm
 GTESTDIR = $(PREFIX)/googletest
 
+CXXFLAGS += -I$(SRCDIR) -I$(INCDIR)
+
 ############
 
 # Make does not offer a recursive wildcard function, so here's one:
@@ -69,6 +71,7 @@ rwildcard = $(wildcard $1$2) $(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2
 CXX_VERSION := $(basename $(basename $(shell $(CXX) -dumpversion)))
 CXX_VERSION_MAJOR := $(shell echo $(CXX_VERSION) | cut -d. -f1)
 $(info CXX version is $(CXX_VERSION))
+$(info CXXFLAGS=$(CXXFLAGS))
 ifeq ($(shell test $(CXX_VERSION_MAJOR) -ge 17 && echo yes),)
     $(error CXX version is less than 17. Please use a CXX version >= 17)
 else
@@ -81,7 +84,7 @@ OBJECTS += $(MODULES:$(SRCDIR)/%.c++m=$(OBJDIR)/%.o)
 
 $(PCMDIR)/%.pcm: $(SRCDIR)/%.c++m
 	@mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) $< --precompile -o $@
+	$(CXX) $(CXXFLAGS) -I$(SRCDIR) -I$(INCDIR) $< --precompile -o $@
 
 $(OBJDIR)/%.o: $(PCMDIR)/%.pcm
 	@mkdir -p $(@D)
