@@ -16,9 +16,9 @@ ifndef CC
 OS := $(shell uname -s)
 
 ifeq ($(OS),Linux)
-CC := /usr/lib/llvm-19/bin/clang
-CXX := /usr/lib/llvm-19/bin/clang++
-CXXFLAGS = -pthread -I/usr/local/include
+CC = clang-20
+CXX = clang++-20
+CXXFLAGS = -pthread -I/usr/lib/llvm-20/include/c++/v1 -I/usr/local/include
 LDFLAGS = -L/usr/local/lib
 endif
 
