@@ -11,22 +11,30 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         fetch-depth: 1
         submodules: true
     - name: Install LLVM toolchain
       run: |
         sudo apt-get update
-        sudo apt-get install -y wget software-properties-common lsb-release gnupg
-        wget https://apt.llvm.org/llvm.sh
-        chmod +x llvm.sh
-        sudo ./llvm.sh 19
-        sudo apt-get install -y libc++-19-dev libc++abi-19-dev
-        sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100
-        sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100
-        rm llvm.sh
-    - name: make
+        sudo apt-get install -y wget gnupg ca-certificates lsb-release software-properties-common
+        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/apt-llvm.gpg
+        echo "deb [signed-by=/usr/share/keyrings/apt-llvm.gpg] https://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/apt-llvm.org.list
+        sudo apt-get update
+        sudo apt-get install -y libc++-20-dev libc++abi-20-dev clang-20 lldb-20 lld-20
+        sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-20 100
+        sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-20 100
+        sudo update-alternatives --install /usr/bin/lld lld /usr/bin/lld-20 100
+    - name: Verify std.cppm location
+      run: |
+        if [ -f /usr/lib/llvm-20/share/libc++/v1/std.cppm ]; then
+          echo "std.cppm found at /usr/lib/llvm-20/share/libc++/v1/std.cppm"
+        else
+          echo "Warning: std.cppm not found at expected location"
+          find /usr/lib/llvm-20 -name "std.cppm" 2>/dev/null || echo "std.cppm not found in /usr/lib/llvm-20"
+        fi
+    - name: Build project
       run: make
-    - name: make test
+    - name: Run tests
       run: make test
