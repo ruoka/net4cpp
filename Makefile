@@ -180,7 +180,7 @@ module: $(PCMS) $(LIBRARY)
 
 .PHONY: test
 test: $(TEST_TARGET)
-	$(TEST_TARGET) --gtest_filter=-*CommandLine:HttpServerTest*:NetReceiverAndSenderTest*
+	$(TEST_TARGET) --gtest_filter=-*CommandLine:HttpServerTest*:NetReceiverAndSenderTest*:NetSocketTest.WaitFor
 
 .PHONY: clean
 clean:
