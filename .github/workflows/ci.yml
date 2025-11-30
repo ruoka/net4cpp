@@ -1,0 +1,71 @@
+name: C/C++ CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Cache LLVM 20 + libc++
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/lib/llvm-20
+            /usr/bin/clang-20
+            /usr/bin/clang++-20
+            /usr/bin/lld-20
+            /usr/bin/lldb-20
+          key: llvm-20-ubuntu-${{ runner.arch }}-2025-v4
+          restore-keys: |
+            llvm-20-ubuntu-${{ runner.arch }}-
+            llvm-20-ubuntu-
+            llvm-20-
+
+      - name: Install LLVM toolchain
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y wget gnupg ca-certificates lsb-release software-properties-common
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/apt-llvm.gpg
+          echo "deb [signed-by=/usr/share/keyrings/apt-llvm.gpg] https://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/apt-llvm.org.list > /dev/null
+          sudo apt-get update -y
+          sudo apt-get install -y libc++-20-dev libc++abi-20-dev clang-20 lldb-20 lld-20 libssl-dev
+          sudo update-alternatives --install /usr/bin/clang   clang   /usr/bin/clang-20   100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-20 100
+          sudo update-alternatives --install /usr/bin/lld     lld     /usr/bin/lld-20     100
+
+      - name: Verify std.cppm location
+        run: |
+          if [ -f /usr/lib/llvm-20/share/libc++/v1/std.cppm ]; then
+            echo "std.cppm found at /usr/lib/llvm-20/share/libc++/v1/std.cppm"
+          else
+            echo "Warning: std.cppm not found at expected location"
+            find /usr/lib/llvm-20 -name "std.cppm" 2>/dev/null || echo "std.cppm not found anywhere"
+          fi
+
+      - name: Build project
+        env:
+          CC: /usr/bin/clang-20
+          CXX: /usr/bin/clang++-20
+        run: make
+
+      - name: Run tests
+        env:
+          CC: /usr/bin/clang-20
+          CXX: /usr/bin/clang++-20
+        run: make test
