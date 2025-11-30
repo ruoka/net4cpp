@@ -16,8 +16,10 @@ ifndef CC
 OS := $(shell uname -s)
 
 ifeq ($(OS),Linux)
-CC = clang-20
-CXX = clang++-20
+# Use clang++ from update-alternatives (set up by CI workflow)
+# The workflow sets up /usr/bin/clang++ to point to clang++-20 via update-alternatives
+CC = clang
+CXX = clang++
 CXXFLAGS = -pthread -I/usr/lib/llvm-20/include/c++/v1 -I/usr/local/include
 LDFLAGS = -L/usr/local/lib
 endif
