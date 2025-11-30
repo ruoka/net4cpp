@@ -16,15 +16,10 @@ ifndef CC
 OS := $(shell uname -s)
 
 ifeq ($(OS),Linux)
-# Prefer /usr/bin/clang++-20 directly (installed by CI workflow)
-# Fall back to clang++ (which should point to clang++-20 via update-alternatives)
-ifeq ($(shell test -x /usr/bin/clang++-20 && echo yes),yes)
-CC = clang-20
-CXX = clang++-20
-else
-CC = clang
-CXX = clang++
-endif
+# Use /usr/bin/clang++-20 directly (installed by CI workflow)
+# This ensures we use the correct compiler version, not g++ or system clang
+CC = /usr/bin/clang-20
+CXX = /usr/bin/clang++-20
 CXXFLAGS = -pthread -I/usr/lib/llvm-20/include/c++/v1 -I/usr/local/include
 LDFLAGS = -L/usr/local/lib
 endif
@@ -78,6 +73,12 @@ ARFLAGS ?= rcs
 rwildcard = $(wildcard $1$2) $(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2))
 
 ############
+
+# Verify compiler exists and is clang (not g++)
+CXX_TYPE := $(shell $(CXX) --version 2>/dev/null | head -1 | cut -d' ' -f1)
+ifeq ($(CXX_TYPE),g++)
+    $(error Detected g++ instead of clang++. Please ensure clang++-20 is installed and use /usr/bin/clang++-20. Current CXX: $(CXX))
+endif
 
 # Detect compiler version
 CXX_VERSION_RAW := $(shell $(CXX) -dumpversion 2>/dev/null)
