@@ -35,6 +35,12 @@ jobs:
           find /usr/lib/llvm-20 -name "std.cppm" 2>/dev/null || echo "std.cppm not found in /usr/lib/llvm-20"
         fi
     - name: Build project
+      env:
+        CC: /usr/bin/clang-20
+        CXX: /usr/bin/clang++-20
       run: make
     - name: Run tests
+      env:
+        CC: /usr/bin/clang-20
+        CXX: /usr/bin/clang++-20
       run: make test
