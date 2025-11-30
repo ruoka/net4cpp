@@ -12,26 +12,28 @@ ifeq ($(MAKELEVEL),0)
 -include ../../config/compiler.mk
 
 # If config/compiler.mk wasn't found (standalone mode), define compiler settings inline
-ifndef CC
 OS := $(shell uname -s)
 
 ifeq ($(OS),Linux)
 # Use /usr/bin/clang++-20 directly (installed by CI workflow)
 # This ensures we use the correct compiler version, not g++ or system clang
-CC = /usr/bin/clang-20
-CXX = /usr/bin/clang++-20
+# Use override to force these values even if CC/CXX are set in environment
+override CC = /usr/bin/clang-20
+override CXX = /usr/bin/clang++-20
 CXXFLAGS = -pthread -I/usr/lib/llvm-20/include/c++/v1 -I/usr/local/include
 LDFLAGS = -L/usr/local/lib
+CXXFLAGS += -stdlib=libc++ -Wall -Wextra
 endif
 
 ifeq ($(OS),Darwin)
-# Prefer /usr/local/llvm if available, otherwise use Homebrew LLVM
-LLVM_PREFIX := $(shell if [ -d /usr/local/llvm ]; then echo "/usr/local/llvm"; elif [ -d /opt/homebrew/opt/llvm ]; then echo "/opt/homebrew/opt/llvm"; else echo ""; fi)
-ifeq ($(LLVM_PREFIX),)
-$(error LLVM not found. Please install LLVM at /usr/local/llvm or: brew install llvm)
+# Use /usr/local/llvm directly (preferred location)
+# Use override to force these values even if CC/CXX are set in environment
+LLVM_PREFIX := /usr/local/llvm
+ifeq ($(wildcard $(LLVM_PREFIX)/bin/clang++),)
+$(error LLVM not found at $(LLVM_PREFIX). Please install LLVM at /usr/local/llvm)
 endif
-CC = $(LLVM_PREFIX)/bin/clang
-CXX = $(LLVM_PREFIX)/bin/clang++
+override CC = $(LLVM_PREFIX)/bin/clang
+override CXX = $(LLVM_PREFIX)/bin/clang++
 # Check if LLVM has its own libc++ (Homebrew) or uses system libc++ (/usr/local/llvm)
 LLVM_HAS_LIBCXX := $(shell test -d $(LLVM_PREFIX)/include/c++/v1 && echo yes || echo no)
 ifeq ($(LLVM_HAS_LIBCXX),yes)
@@ -41,10 +43,9 @@ else
 CXXFLAGS =
 LDFLAGS =
 endif
+CXXFLAGS += -stdlib=libc++ -Wall -Wextra
 endif
 
-CXXFLAGS += -stdlib=libc++ -Wall -Wextra
-endif # ifndef CC
 endif #($(MAKELEVEL),0)
 
 CXXFLAGS += -std=c++23 -MMD
@@ -74,10 +75,16 @@ rwildcard = $(wildcard $1$2) $(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2
 
 ############
 
-# Verify compiler exists and is clang (not g++)
+# Verify compiler exists and is clang (not g++ or system c++)
 CXX_TYPE := $(shell $(CXX) --version 2>/dev/null | head -1 | cut -d' ' -f1)
 ifeq ($(CXX_TYPE),g++)
     $(error Detected g++ instead of clang++. Please ensure clang++-20 is installed and use /usr/bin/clang++-20. Current CXX: $(CXX))
+endif
+# On Darwin, ensure we're using /usr/local/llvm compiler, not system c++
+ifeq ($(OS),Darwin)
+ifneq ($(findstring /usr/local/llvm,$(CXX)),/usr/local/llvm)
+    $(error Wrong compiler detected on Darwin. Expected /usr/local/llvm/bin/clang++, got: $(CXX). Please unset CC and CXX environment variables: unset CC CXX)
+endif
 endif
 
 # Detect compiler version
