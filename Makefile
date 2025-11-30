@@ -16,10 +16,15 @@ ifndef CC
 OS := $(shell uname -s)
 
 ifeq ($(OS),Linux)
-# Use clang++ from update-alternatives (set up by CI workflow)
-# The workflow sets up /usr/bin/clang++ to point to clang++-20 via update-alternatives
+# Prefer /usr/bin/clang++-20 directly (installed by CI workflow)
+# Fall back to clang++ (which should point to clang++-20 via update-alternatives)
+ifeq ($(shell test -x /usr/bin/clang++-20 && echo yes),yes)
+CC = clang-20
+CXX = clang++-20
+else
 CC = clang
 CXX = clang++
+endif
 CXXFLAGS = -pthread -I/usr/lib/llvm-20/include/c++/v1 -I/usr/local/include
 LDFLAGS = -L/usr/local/lib
 endif
@@ -74,12 +79,14 @@ rwildcard = $(wildcard $1$2) $(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2
 
 ############
 
-CXX_VERSION := $(basename $(basename $(shell $(CXX) -dumpversion)))
-CXX_VERSION_MAJOR := $(shell echo $(CXX_VERSION) | cut -d. -f1)
-$(info CXX version is $(CXX_VERSION))
+# Detect compiler version
+CXX_VERSION_RAW := $(shell $(CXX) -dumpversion 2>/dev/null)
+CXX_VERSION_MAJOR := $(shell echo $(CXX_VERSION_RAW) | cut -d. -f1)
+$(info Using compiler: $(CXX))
+$(info CXX version is $(CXX_VERSION_MAJOR))
 $(info CXXFLAGS=$(CXXFLAGS))
-ifeq ($(shell test $(CXX_VERSION_MAJOR) -ge 19 && echo yes),)
-    $(error CXX version is less than 19. Please use a CXX version >= 19 for C++23 modules support)
+ifeq ($(shell test -n "$(CXX_VERSION_MAJOR)" && test $(CXX_VERSION_MAJOR) -ge 19 2>/dev/null && echo yes),)
+    $(error CXX version is less than 19 (detected: $(CXX_VERSION_MAJOR)). Please use a C++ compiler version >= 19 for C++23 modules support. Compiler: $(CXX))
 else
 
 MODULES = $(SRCDIR)/$(PROJECT).c++m
