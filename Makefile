@@ -33,7 +33,7 @@ CXX = $(LLVM_PREFIX)/bin/clang++
 # Check if LLVM has its own libc++ (Homebrew) or uses system libc++ (/usr/local/llvm)
 LLVM_HAS_LIBCXX := $(shell test -d $(LLVM_PREFIX)/include/c++/v1 && echo yes || echo no)
 ifeq ($(LLVM_HAS_LIBCXX),yes)
-CXXFLAGS =-I$(LLVM_PREFIX)/include/c++/v1
+CXXFLAGS = -I$(LLVM_PREFIX)/include/c++/v1
 LDFLAGS = -L$(LLVM_PREFIX)/lib/c++ -L$(LLVM_PREFIX)/lib -Wl,-rpath,$(LLVM_PREFIX)/lib/c++ -Wl,-rpath,$(LLVM_PREFIX)/lib -lc++
 else
 CXXFLAGS =
@@ -53,13 +53,17 @@ PREFIX ?= .
 SRCDIR = src
 TESTDIR = test
 OBJDIR = $(PREFIX)/obj
-BINDIR =$(PREFIX)/bin
+BINDIR = $(PREFIX)/bin
 LIBDIR = $(PREFIX)/lib
 INCDIR = $(PREFIX)/include
 PCMDIR = $(PREFIX)/pcm
 GTESTDIR = $(PREFIX)/googletest
 
 CXXFLAGS += -I$(SRCDIR) -I$(INCDIR)
+
+# Set AR and ARFLAGS if not already defined
+AR ?= ar
+ARFLAGS ?= rcs
 
 ############
 
@@ -72,8 +76,8 @@ CXX_VERSION := $(basename $(basename $(shell $(CXX) -dumpversion)))
 CXX_VERSION_MAJOR := $(shell echo $(CXX_VERSION) | cut -d. -f1)
 $(info CXX version is $(CXX_VERSION))
 $(info CXXFLAGS=$(CXXFLAGS))
-ifeq ($(shell test $(CXX_VERSION_MAJOR) -ge 17 && echo yes),)
-    $(error CXX version is less than 17. Please use a CXX version >= 17)
+ifeq ($(shell test $(CXX_VERSION_MAJOR) -ge 19 && echo yes),)
+    $(error CXX version is less than 19. Please use a CXX version >= 19 for C++23 modules support)
 else
 
 MODULES = $(SRCDIR)/$(PROJECT).c++m
