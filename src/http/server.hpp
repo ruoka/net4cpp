@@ -319,7 +319,15 @@ private:
 
                     for(auto& [path,controller] : m_router)
                         if(std::regex_match(uri,std::regex(path)))
-                            std::tie(status,content,type,custom_headers) = controller[method].render(uri,body,headers);
+                        {
+                            // Check if the method exists in the controller before using it
+                            if(controller.find(method) != controller.end())
+                            {
+                                std::tie(status,content,type,custom_headers) = controller[method].render(uri,body,headers);
+                                if(not type.empty())
+                                    break; // Found a matching route with the correct method
+                            }
+                        }
 
                     if(not type.empty())
                     {
