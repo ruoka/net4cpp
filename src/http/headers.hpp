@@ -18,6 +18,15 @@ public:
     auto contains(const name& n) const {return m_values.contains(n);};
 
     const value& operator[](const name& n) const {return m_values.at(n);}
+    
+    value& operator[](const name& n) {return m_values[n];}
+    
+    void set(const name& n, const value& v)
+    {
+        auto lower_name = n;
+        ext::to_lower(lower_name);
+        m_values[lower_name] = v;
+    }
 
     friend std::istream& operator >> (std::istream&, headers&);
 

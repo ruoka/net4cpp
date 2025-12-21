@@ -6,6 +6,8 @@
 #include <string>
 #include <thread>
 #include <functional>
+#include <optional>
+#include <atomic>
 #include "net/acceptor.hpp"
 #include "net/syslogstream.hpp"
 #include "http/headers.hpp"
@@ -17,6 +19,7 @@ using status = std::string;
 using content = std::string;
 using content_type = std::string;
 using response = std::tuple<http::status,http::content>;
+using response_with_headers = std::tuple<http::status,http::content,std::optional<http::headers>>;
 using request_view = std::string_view;
 using body_view = std::string_view;
 
@@ -68,9 +71,27 @@ public:
         m_callback = cb;
     }
 
-    std::tuple<http::status,http::content,http::content_type> render(http::request_view request, http::body_view body, const http::headers& headers)
+    using callback_with_headers = std::function<std::tuple<http::status,http::content,std::optional<http::headers>>(http::request_view,http::body_view,const http::headers&)>;
+
+    void response_with_headers(std::string_view content_type, callback_with_headers cb)
     {
-        return std::tuple_cat(m_callback(request,body,headers),std::tie(m_content_type));
+        m_content_type = content_type;
+        m_callback_with_headers = cb;
+        m_has_custom_headers = true;
+    }
+
+    std::tuple<http::status,http::content,http::content_type,std::optional<http::headers>> render(http::request_view request, http::body_view body, const http::headers& headers)
+    {
+        if(m_has_custom_headers && m_callback_with_headers)
+        {
+            auto [status, content, custom_headers] = m_callback_with_headers(request,body,headers);
+            return std::make_tuple(status, content, m_content_type, custom_headers);
+        }
+        else
+        {
+            auto [status, content] = m_callback(request,body,headers);
+            return std::make_tuple(status, content, m_content_type, std::nullopt);
+        }
     }
 
 private:
@@ -78,6 +99,10 @@ private:
     http::content_type m_content_type = "*/*"s;
 
     callback m_callback = [](http::request_view, http::body_view, const http::headers&) -> http::response {return {"200 OK"s,"Not Found"s};};
+    
+    callback_with_headers m_callback_with_headers = nullptr;
+    
+    bool m_has_custom_headers = false;
 };
 
 class server
@@ -122,16 +147,35 @@ public:
 
     void listen(std::string_view service_or_port = "http")
     {
+        m_stop.store(false);
         slog << notice("http") << "starting up at "s << service_or_port << flush;
         auto endpoint = net::acceptor{"0.0.0.0", service_or_port};
-        endpoint.timeout(m_timeout); // 0s -> no timeout
+        // Use 1 second timeout to periodically check stop flag, unless user specified a timeout
+        auto check_timeout = m_timeout.count() ? m_timeout : std::chrono::seconds{1};
+        endpoint.timeout(std::chrono::milliseconds{check_timeout.count() * 1000});
         slog << notice("http") << "started up at " << endpoint.host() << ":" << endpoint.service_or_port() << flush;
-        while(true)
+        while(!m_stop.load())
         {
-            slog << info("http") << "accepting connections" << flush;
-            auto client = endpoint.accept();
-            std::thread{[client = std::move(client), this]() mutable {handle(client);}}.detach();
+            try
+            {
+                slog << info("http") << "accepting connections" << flush;
+                auto client = endpoint.accept();
+                std::thread{[client = std::move(client), this]() mutable {handle(client);}}.detach();
+            }
+            catch(const std::system_error& e)
+            {
+                // Check if this is a timeout (which is expected when checking stop flag)
+                // The timeout error message is "accept timeouted"
+                if(std::string{e.what()}.find("timeout") != std::string::npos)
+                {
+                    // Timeout occurred, check stop flag (loop condition will handle it)
+                    continue;
+                }
+                // Other errors - rethrow
+                throw;
+            }
         }
+        slog << notice("http") << "server stopped" << flush;
     }
 
     void public_paths(std::string_view regex)
@@ -152,6 +196,16 @@ public:
     void timeout(const std::chrono::seconds& timeout)
     {
         m_timeout = timeout;
+    }
+
+    void stop()
+    {
+        m_stop.store(true);
+    }
+
+    bool stopped() const
+    {
+        return m_stop.load();
     }
 
 private:
@@ -261,24 +315,32 @@ private:
                 else
                 {
                     auto status = ""s, type = ""s, content = ""s;
+                    auto custom_headers = std::optional<http::headers>{};
 
                     for(auto& [path,controller] : m_router)
                         if(std::regex_match(uri,std::regex(path)))
-                            std::tie(status,content,type) = controller[method].render(uri,body,headers);
+                            std::tie(status,content,type,custom_headers) = controller[method].render(uri,body,headers);
 
                     if(not type.empty())
+                    {
                         stream << "HTTP/1.1 " << status                                       << crlf
                                << "Date: " << date()                                          << crlf
                                << "Server: " << host()                                        << crlf
                                << "Content-Type: " << type                                    << crlf
-                               << "Content-Length: " << content.length()                      << crlf
-                               << "Access-Control-Allow-Methods: " << methods()               << crlf
+                               << "Content-Length: " << content.length()                      << crlf;
+                        
+                        // Write custom headers if present
+                        if(custom_headers.has_value())
+                            stream << custom_headers.value();
+                        
+                        stream << "Access-Control-Allow-Methods: " << methods()               << crlf
                                << "Cache-Control: private"                                    << crlf
                                << "Access-Control-Allow-Origin: " << origin                   << crlf
                                << "Access-Control-Allow-Headers: Content-Type, Authorization" << crlf
                                << "Access-Control-Allow-Credentials: true"                    << crlf
                                << crlf
                                << (method != "HEAD"s ? content : ""s) << flush;
+                    }
                     else
                         stream << "HTTP/1.0 404 Not Found"                                    << crlf
                                << "Date: " << date()                                          << crlf
@@ -321,6 +383,8 @@ private:
     std::set<std::string> m_credentials = {};
 
     std::chrono::seconds m_timeout = 0s; // 0s -> no timeout
+
+    std::atomic<bool> m_stop{false};
 };
 
 
