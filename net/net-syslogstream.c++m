@@ -5,7 +5,6 @@ module;
 export module net:syslogstream;
 import :endpointstream;
 import :sender;
-import :extension;
 import std;
 
 export namespace net::syslog {
