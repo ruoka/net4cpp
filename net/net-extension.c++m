@@ -52,24 +52,46 @@ inline const std::string& weekday_to_string(const std::chrono::weekday& wd) noex
     return number2weekday[n];
 }
 
+inline constexpr std::string_view month_abbrev_view(const std::chrono::month& m) noexcept
+{
+    // clang (esp. with modules + debug info) can be sensitive to complex local constexpr objects.
+    // Keep the lookup table at namespace scope.
+    static constexpr std::string_view number2month[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    const auto n = static_cast<unsigned>(m);
+    return number2month[n];
+}
+
+inline constexpr std::string_view weekday_abbrev_view(const std::chrono::weekday& wd) noexcept
+{
+    static constexpr std::string_view number2weekday[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    const auto n = wd.c_encoding();
+    return number2weekday[n];
+}
+
 template<typename T>
-[[deprecated("prefer chrono formatting (e.g. std::format(\"{:%a, %d %b %Y %H:%M:%S GMT}\", floor<seconds>(tp))) over ext::to_rfc1123")]]
-auto to_rfc1123(const std::chrono::time_point<T>& current_time) noexcept
+auto rfc1123_legacy(const std::chrono::time_point<T>& current_time) noexcept
 {
     const auto midnight = std::chrono::floor<std::chrono::days>(current_time);
     const auto weekday = std::chrono::weekday{midnight};
     const auto date = std::chrono::year_month_day{midnight};
     const auto time = std::chrono::hh_mm_ss{current_time - midnight};
     auto os = std::ostringstream{};
-    os << weekday_to_string(weekday)                                     << ", "
+    os << weekday_abbrev_view(weekday)                                   << ", "
        << std::setw(2) << std::setfill('0') << (unsigned)date.day()   << ' '
-       << month_to_string(date.month())                               << ' '
+       << month_abbrev_view(date.month())                              << ' '
        << std::setw(4) << std::setfill('0') << (int)date.year()       << ' '
        << std::setw(2) << std::setfill('0') << time.hours().count()   << ':'
        << std::setw(2) << std::setfill('0') << time.minutes().count() << ':'
        << std::setw(2) << std::setfill('0') << time.seconds().count() << ' '
        << "GMT";
     return os.str();
+}
+
+template<typename T>
+[[deprecated("prefer chrono formatting (e.g. std::format(\"{:%a, %d %b %Y %H:%M:%S GMT}\", floor<seconds>(tp))) over ext::to_rfc1123")]]
+auto to_rfc1123(const std::chrono::time_point<T>& current_time) noexcept
+{
+    return rfc1123_legacy(current_time);
 }
 
 inline auto to_time_point(const std::string_view sv)

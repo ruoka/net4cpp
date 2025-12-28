@@ -210,7 +210,16 @@ private:
 
     auto date() const
     {
-        return ext::to_rfc1123(std::chrono::system_clock::now());
+        // Prefer C++23 chrono formatting where it is stable.
+        // clang-22 (macOS) is known to crash compiling chrono formatting via std::format/std::vformat in our modules setup.
+        // Keep local dev stable while still enabling CI coverage on Linux.
+#if defined(__APPLE__) && defined(__clang__) && (__clang_major__ >= 22)
+        return extension::rfc1123_legacy(std::chrono::system_clock::now());
+#else
+        using namespace std::chrono;
+        const auto tp = floor<seconds>(std::chrono::system_clock::now());
+        return std::vformat("{:%a, %d %b %Y %H:%M:%S GMT}", std::make_format_args(tp));
+#endif
     }
 
     const auto& host() const
