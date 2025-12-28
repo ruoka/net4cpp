@@ -65,6 +65,21 @@ public:
     const auto& timeout() const { return m_timeout; }
     void timeout(const std::chrono::milliseconds& t) { m_timeout = t; }
 
+    std::uint16_t bound_port() const
+    {
+        if (m_sockets.empty()) return 0;
+        auto sas = posix::sockaddr_storage{};
+        auto saslen = posix::socklen_t{sizeof sas};
+        if (::getsockname(m_sockets.front(), reinterpret_cast<posix::sockaddr*>(&sas), &saslen) == -1)
+            return 0;
+        
+        if (sas.ss_family == AF_INET)
+            return ntohs(reinterpret_cast<posix::sockaddr_in*>(&sas)->sin_port);
+        if (sas.ss_family == AF_INET6)
+            return ntohs(reinterpret_cast<posix::sockaddr_in6*>(&sas)->sin6_port);
+        return 0;
+    }
+
 private:
     int wait()
     {

@@ -73,4 +73,38 @@ auto endpointstream_test_reg = test_case("Endpoint Stream") = [] {
             });
         };
     };
+
+    tester::bdd::scenario("Bulk Data Transfer") = [] {
+        tester::bdd::given("A local TCP connection") = [] {
+            acceptor acc{"127.0.0.1", "0"};
+            const auto port = acc.bound_port();
+            
+            std::string received_data;
+            const std::size_t data_size = tcp_buffer_size * 2 + 123;
+            std::string sent_data(data_size, 'X');
+            for(std::size_t i = 0; i < data_size; ++i) sent_data[i] = static_cast<char>('A' + (i % 26));
+
+            std::atomic<bool> server_done{false};
+            std::thread server_thread([&] {
+                try {
+                    auto [stream, client, client_port] = acc.accept();
+                    
+                    std::vector<char> buf(data_size);
+                    stream.read(buf.data(), static_cast<std::streamsize>(data_size));
+                    received_data.assign(buf.begin(), buf.begin() + stream.gcount());
+                } catch(...) {}
+                server_done = true;
+            });
+
+            {
+                auto client = connect("127.0.0.1", std::to_string(port));
+                client.write(sent_data.data(), static_cast<std::streamsize>(data_size));
+                client.flush();
+            }
+
+            server_thread.join();
+            check_eq(sent_data.size(), received_data.size());
+            check_eq(sent_data, received_data);
+        };
+    };
 };

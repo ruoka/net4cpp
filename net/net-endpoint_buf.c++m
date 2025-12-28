@@ -36,9 +36,77 @@ public:
     }
 
 protected:
+    // Bulk read optimization
+    std::streamsize xsgetn(char_type* s, std::streamsize n) override
+    {
+        std::streamsize total_read = 0;
+
+        // 1. Take what we already have in the get area
+        const auto available = this->egptr() - this->gptr();
+        if (available > 0) {
+            const auto chunk = std::min(n, available);
+            std::copy_n(this->gptr(), chunk, s);
+            this->gbump(static_cast<int>(chunk));
+            s += chunk;
+            n -= chunk;
+            total_read += chunk;
+        }
+
+        // 2. If we still need more, and it's a large request, bypass the internal buffer
+        if (n >= static_cast<std::streamsize>(N)) {
+            const auto res = ::recv(this->m_socket, s, static_cast<std::size_t>(n), 0);
+            if (res > 0) {
+                total_read += res;
+                return total_read;
+            }
+            if (res == 0) return total_read; // EOF
+            // If error, total_read might be returned or we fall through to loop if it's EWOULDBLOCK
+        }
+
+        // 3. Otherwise, use underflow to fill the internal buffer and continue
+        while (n > 0) {
+            const auto c = underflow();
+            if (c == std::char_traits<char>::eof()) break;
+            
+            const auto chunk = std::min(n, static_cast<std::streamsize>(this->egptr() - this->gptr()));
+            std::copy_n(this->gptr(), chunk, s);
+            this->gbump(static_cast<int>(chunk));
+            s += chunk;
+            n -= chunk;
+            total_read += chunk;
+        }
+        return total_read;
+    }
+
+    // Bulk write optimization
+    std::streamsize xsputn(const char_type* s, std::streamsize n) override
+    {
+        // 1. If it fits in the remaining space of the current put area, just copy it
+        const auto space = this->epptr() - this->pptr();
+        if (n <= space) {
+            std::copy_n(s, n, this->pptr());
+            this->pbump(static_cast<int>(n));
+            return n;
+        }
+
+        // 2. If it's larger than our buffer size, sync what we have and send the rest directly
+        if (sync() < 0) return 0;
+        if (n >= static_cast<std::streamsize>(N)) {
+            return send_all(s, static_cast<std::size_t>(n)) ? n : 0;
+        }
+
+        // 3. Otherwise, copy the remainder into the now-empty internal buffer
+        std::copy_n(s, n, this->pptr());
+        this->pbump(static_cast<int>(n));
+        return n;
+    }
+
     typename std::streambuf::int_type underflow() override
     {
-        const auto bytes_read = ::read(this->m_socket, &m_input_sequence[0], N);
+        if (this->gptr() < this->egptr())
+            return std::char_traits<char>::to_int_type(*this->gptr());
+
+        const auto bytes_read = ::recv(this->m_socket, &m_input_sequence[0], N, 0);
         if(bytes_read < 1) return std::char_traits<char>::eof();
         this->setg(&m_input_sequence[0], &m_input_sequence[0], &m_input_sequence[bytes_read]);
         return std::char_traits<char>::to_int_type(m_input_sequence[0]);
@@ -55,21 +123,31 @@ protected:
 
     int sync() override
     {
-        const char* buf = &m_output_sequence[0];
+        const auto len = this->pptr() - this->pbase();
+        if (len > 0) {
+            if (!send_all(this->pbase(), static_cast<std::size_t>(len))) return -1;
+            this->setp(&m_output_sequence[0], &m_output_sequence[N]);
+        }
+        return 0;
+    }
+
+    // Helper to handle partial writes and retries
+    bool send_all(const char* buf, std::size_t len)
+    {
+        std::size_t total_sent = 0;
         auto retry = 0;
-        while(buf < this->pptr())
+        while(total_sent < len)
         {
-            const auto bytes_written = ::sendto(this->m_socket, buf, this->pptr() - buf, 0, nullptr, 0);
-            if(bytes_written < 1)
+            const auto sent = ::send(this->m_socket, buf + total_sent, len - total_sent, 0);
+            if(sent < 1)
             {
                 if((errno == EWOULDBLOCK or errno == EAGAIN) and this->m_socket.wait()) continue;
                 if(++retry < 3) continue;
-                else return -1;
+                return false;
             }
-            buf += bytes_written;
+            total_sent += sent;
         }
-        this->setp(&m_output_sequence[0], &m_output_sequence[N]);
-        return 0;
+        return true;
     }
 
     std::streampos seekoff(std::streamoff off, std::ios_base::seekdir way, std::ios_base::openmode which) override
