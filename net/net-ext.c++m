@@ -107,7 +107,9 @@ inline void ascii_to_lower(std::string& str) noexcept
 }
 
 // Backwards-compatible aliases (locale-free ASCII).
+[[deprecated("use ext::ascii_to_upper")]]
 inline void to_upper(std::string& str) noexcept { ascii_to_upper(str); }
+[[deprecated("use ext::ascii_to_lower")]]
 inline void to_lower(std::string& str) noexcept { ascii_to_lower(str); }
 
 inline std::string& trim_right(std::string& str, const char* ws = " \f\n\r\t\v")
