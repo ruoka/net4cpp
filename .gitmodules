@@ -1,4 +1,3 @@
-[submodule "googletest"]
-	path = googletest
-	url = https://github.com/google/googletest.git
-	ignore = all
+[submodule "deps/tester"]
+	path = deps/tester
+	url = https://github.com/ruoka/tester.git
