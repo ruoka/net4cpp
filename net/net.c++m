@@ -5,6 +5,7 @@ export import :address_info;
 export import :connector;
 export import :endpointbuf;
 export import :endpointstream;
+export import :extension;
 export import :ext;
 export import :gsl;
 export import :http_base64;

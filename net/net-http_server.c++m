@@ -3,7 +3,7 @@ import :acceptor;
 import :syslogstream;
 import :http_headers;
 import :endpointstream;
-import :ext;
+import :extension;
 import std;
 
 export namespace http {

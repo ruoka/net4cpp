@@ -19,6 +19,17 @@ inline bool network_tests_enabled()
 }
 
 auto syslogstream_test_reg = test_case("Syslog Stream") = [] {
+    tester::bdd::scenario("Timestamp formatting") = [] {
+        using namespace std::chrono;
+        using namespace std::chrono_literals;
+
+        check_eq("1970-01-01T00:00:00.000Z", syslog::format_timestamp(system_clock::time_point{0us}));
+        check_eq("1970-01-01T00:00:00.001Z", syslog::format_timestamp(system_clock::time_point{1ms}));
+        check_eq("1970-01-01T00:00:01.000Z", syslog::format_timestamp(system_clock::time_point{1s}));
+        check_eq("1970-01-01T00:01:00.000Z", syslog::format_timestamp(system_clock::time_point{1min}));
+        check_eq("1970-01-01T01:00:00.000Z", syslog::format_timestamp(system_clock::time_point{1h}));
+    };
+
     if(!network_tests_enabled()) return;
     tester::bdd::scenario("Setup and Log levels") = [] {
         tester::bdd::given("A syslog stream setup") = [] {

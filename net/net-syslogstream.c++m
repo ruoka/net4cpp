@@ -5,7 +5,7 @@ module;
 export module net:syslogstream;
 import :endpointstream;
 import :sender;
-import :ext;
+import :extension;
 import std;
 
 export namespace net::syslog {
@@ -54,6 +54,25 @@ struct helper
     severity severity;
     std::string_view msgid;
 };
+
+std::string format_timestamp(std::chrono::system_clock::time_point tp)
+{
+    using namespace std::chrono;
+    const auto midnight = floor<days>(tp);
+    const auto date = year_month_day{midnight};
+    const auto time = hh_mm_ss{tp - midnight};
+    const auto ms = duration_cast<milliseconds>(time.subseconds()).count();
+
+    return std::format(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        static_cast<int>(date.year()),
+        static_cast<unsigned>(date.month()),
+        static_cast<unsigned>(date.day()),
+        static_cast<int>(time.hours().count()),
+        static_cast<int>(time.minutes().count()),
+        static_cast<int>(time.seconds().count()),
+        static_cast<int>(ms));
+}
 
 } // namespace net::syslog
 
@@ -156,23 +175,13 @@ private:
         if(m_level >= m_severity)
         {
             const auto current_time = std::chrono::system_clock::now(); // FIXME use utc_clock
-            const auto midnight = std::chrono::floor<std::chrono::days>(current_time);
-            const auto date = std::chrono::year_month_day{midnight};
-            const auto time = std::chrono::hh_mm_ss{current_time - midnight};
-            const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time.subseconds());
             const auto formatting = flags();
 
             static_cast<oendpointstream&>(*this)
                 << std::resetiosflags(formatting)
                 << '<' << priority(m_facility, m_severity) << '>'
                 << syslog::version << ' '
-                << std::setw(4) << std::setfill('0') << (int)date.year()        << '-'
-                << std::setw(2) << std::setfill('0') << (unsigned)date.month()  << '-'
-                << std::setw(2) << std::setfill('0') << (unsigned)date.day()    << 'T'
-                << std::setw(2) << std::setfill('0') << time.hours().count()    << ':'
-                << std::setw(2) << std::setfill('0') << time.minutes().count()  << ':'
-                << std::setw(2) << std::setfill('0') << time.seconds().count()  << '.'
-                << std::setw(3) << std::setfill('0') << milliseconds.count()    << 'Z'
+                << syslog::format_timestamp(current_time)
                 << ' ' << hostname << ' ' << m_appname << ' ' << procid << ' ' << m_msgid << ' ' << m_structured_data << " BOM"
                 << std::setiosflags(formatting);
         }

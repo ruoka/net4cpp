@@ -1,5 +1,5 @@
 export module net:http_headers;
-import :ext;
+import :extension;
 import :endpointstream;
 import std;
 
