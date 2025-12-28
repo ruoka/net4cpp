@@ -86,15 +86,29 @@ inline auto to_time_point(const std::string_view sv)
     return sys_days{year{YYYY}/month{MM}/day{DD}} + hours{hh} + minutes{mm} + seconds{ss} + milliseconds{fff};
 }
 
-inline void to_upper(std::string& str) noexcept
+inline void ascii_to_upper(std::string& str) noexcept
 {
-    for(auto& c : str) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    for (auto& ch : str)
+    {
+        const auto c = static_cast<unsigned char>(ch);
+        if (c >= static_cast<unsigned char>('a') && c <= static_cast<unsigned char>('z'))
+            ch = static_cast<char>(c - static_cast<unsigned char>('a' - 'A'));
+    }
 }
 
-inline void to_lower(std::string& str) noexcept
+inline void ascii_to_lower(std::string& str) noexcept
 {
-    for(auto& c : str) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    for (auto& ch : str)
+    {
+        const auto c = static_cast<unsigned char>(ch);
+        if (c >= static_cast<unsigned char>('A') && c <= static_cast<unsigned char>('Z'))
+            ch = static_cast<char>(c + static_cast<unsigned char>('a' - 'A'));
+    }
 }
+
+// Backwards-compatible aliases (locale-free ASCII).
+inline void to_upper(std::string& str) noexcept { ascii_to_upper(str); }
+inline void to_lower(std::string& str) noexcept { ascii_to_lower(str); }
 
 inline std::string& trim_right(std::string& str, const char* ws = " \f\n\r\t\v")
 {

@@ -22,7 +22,7 @@ public:
     void set(const name& n, const value& v)
     {
         auto lower_name = n;
-        ext::to_lower(lower_name);
+        ext::ascii_to_lower(lower_name);
         m_values[lower_name] = v;
     }
 
@@ -48,7 +48,7 @@ inline std::istream& operator >> (std::istream &is,  headers &hdrs)
             const auto value_sv = ext::trim_view(sv.substr(pos + 1));
 
             auto name = std::string{name_sv};
-            ext::to_lower(name);
+            ext::ascii_to_lower(name);
             hdrs.m_values[std::move(name)] = std::string{value_sv};
         }
     }
