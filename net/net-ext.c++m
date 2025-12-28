@@ -36,6 +36,7 @@ auto make_lock(Lockable& l)
     return std::unique_lock<Lockable>(l);
 }
 
+[[deprecated("prefer chrono formatting (e.g. std::format(\"{:%b}\", date)) over ext::month_to_string")]]
 inline const std::string& month_to_string(const std::chrono::month& m) noexcept
 {
     static const std::string number2month[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
@@ -43,6 +44,7 @@ inline const std::string& month_to_string(const std::chrono::month& m) noexcept
     return number2month[n];
 }
 
+[[deprecated("prefer chrono formatting (e.g. std::format(\"{:%a}\", date)) over ext::weekday_to_string")]]
 inline const std::string& weekday_to_string(const std::chrono::weekday& wd) noexcept
 {
     static const std::string number2weekday[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
@@ -51,6 +53,7 @@ inline const std::string& weekday_to_string(const std::chrono::weekday& wd) noex
 }
 
 template<typename T>
+[[deprecated("prefer chrono formatting (e.g. std::format(\"{:%a, %d %b %Y %H:%M:%S GMT}\", floor<seconds>(tp))) over ext::to_rfc1123")]]
 auto to_rfc1123(const std::chrono::time_point<T>& current_time) noexcept
 {
     const auto midnight = std::chrono::floor<std::chrono::days>(current_time);
