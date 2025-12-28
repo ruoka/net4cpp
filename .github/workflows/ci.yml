@@ -73,3 +73,60 @@ jobs:
         with:
           name: test-results-${{ matrix.config }}
           path: test_results_${{ matrix.config }}.jsonl
+
+  static-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Setup LLVM + analysis tools
+        uses: ./.github/actions/setup-llvm
+        with:
+          packages: "libc++-20-dev libc++abi-20-dev clang-20 lld-20 lldb-20 jq clang-tools-20 clang-tidy-20 cppcheck libssl-dev"
+
+      - name: Run clang-tidy (non-blocking)
+        run: |
+          set -euo pipefail
+          find net -name "*.c++m" -o -name "*.c++" | head -20 | while read -r f; do
+            echo "Analyzing $f"
+            clang-tidy-20 "$f" -- -std=c++23 -I/usr/lib/llvm-20/include/c++/v1 2>/dev/null || true
+          done
+
+      - name: Run cppcheck (non-blocking)
+        run: |
+          cppcheck --enable=all --std=c++23 --language=c++ \
+            --suppress=missingIncludeSystem \
+            --suppress=unusedFunction \
+            --inline-suppr \
+            --quiet \
+            net/ tools/ 2>/dev/null || true
+
+  submodule-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Check submodule status + clean tree
+        run: |
+          set -euo pipefail
+          echo "=== Submodule Status ==="
+          git submodule status || echo "No submodules"
+          echo ""
+          echo "=== Checking for uncommitted changes ==="
+          if git status --porcelain | grep -q .; then
+            echo "✗ Uncommitted changes found"
+            git status --porcelain
+            exit 1
+          else
+            echo "✓ Repo is clean"
+          fi
