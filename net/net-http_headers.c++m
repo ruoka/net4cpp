@@ -41,14 +41,15 @@ inline std::istream& operator >> (std::istream &is,  headers &hdrs)
         std::string line;
         if (!std::getline(is, line) || line == "\r" || line.empty()) break;
         
-        auto pos = line.find(':');
-        if (pos != std::string::npos) {
-            auto name = line.substr(0, pos);
-            auto value = line.substr(pos + 1);
-            ext::trim(name);
-            ext::trim(value);
+        auto sv = std::string_view{line};
+        auto pos = sv.find(':');
+        if (pos != std::string_view::npos) {
+            const auto name_sv = ext::trim_view(sv.substr(0, pos));
+            const auto value_sv = ext::trim_view(sv.substr(pos + 1));
+
+            auto name = std::string{name_sv};
             ext::to_lower(name);
-            hdrs.m_values[name] = value;
+            hdrs.m_values[std::move(name)] = std::string{value_sv};
         }
     }
     return is;

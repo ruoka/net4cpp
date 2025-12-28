@@ -4,6 +4,15 @@ import std;
 export namespace ext
 {
 
+inline constexpr std::string_view trim_view(std::string_view sv, std::string_view ws = " \f\n\r\t\v") noexcept
+{
+    const auto first = sv.find_first_not_of(ws);
+    if (first == std::string_view::npos)
+        return {};
+    const auto last = sv.find_last_not_of(ws);
+    return sv.substr(first, last - first + 1);
+}
+
 template<class Class>
 struct lockable : public Class, public std::mutex
 {
