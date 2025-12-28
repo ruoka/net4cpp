@@ -9,6 +9,8 @@ using tester::assertions::check_true;
 }
 
 auto extension_test_reg = test_case("Std Extension") = [] {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     tester::bdd::scenario("Months to String") = [] {
         using namespace std::chrono;
         check_eq("Jan", ext::month_to_string(month{1}));
@@ -46,6 +48,7 @@ auto extension_test_reg = test_case("Std Extension") = [] {
         check_eq("Thu, 01 Jan 1970 01:00:00 GMT", ext::to_rfc1123(system_clock::time_point{1h}));
         check_eq("Thu, 01 Jan 1970 12:00:00 GMT", ext::to_rfc1123(system_clock::time_point{12h}));
     };
+#pragma clang diagnostic pop
 
 #if defined(__APPLE__) && defined(__clang__) && (__clang_major__ >= 22)
     tester::bdd::scenario("std::vformat (chrono) RFC1123") = [] {
