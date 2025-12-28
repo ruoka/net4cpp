@@ -20,48 +20,55 @@ class controller
 {
 public:
 
-    using callback = std::function<response(request_view, body_view, const headers&)>;
+    using callback = std::function<::http::response(request_view, body_view, const headers&)>;
 
     void text(const content& c)
     {
         m_content_type = "text/plain";
-        m_callback = [c](auto&&...) -> response { return {"200 OK", c}; };
+        m_callback = [c](auto&&...) -> ::http::response { return {"200 OK", c}; };
     }
 
     void html(const content& c)
     {
         m_content_type = "text/html";
-        m_callback = [c](auto&&...) -> response { return {"200 OK", c}; };
+        m_callback = [c](auto&&...) -> ::http::response { return {"200 OK", c}; };
     }
 
     void css(const content& c)
     {
         m_content_type = "text/css";
-        m_callback = [c](auto&&...) -> response { return {"200 OK", c}; };
+        m_callback = [c](auto&&...) -> ::http::response { return {"200 OK", c}; };
     }
 
     void script(const content& c)
     {
         m_content_type = "application/javascript";
-        m_callback = [c](auto&&...) -> response { return {"200 OK", c}; };
+        m_callback = [c](auto&&...) -> ::http::response { return {"200 OK", c}; };
     }
 
     void json(const content& c)
     {
         m_content_type = "application/json";
-        m_callback = [c](auto&&...) -> response { return {"200 OK", c}; };
+        m_callback = [c](auto&&...) -> ::http::response { return {"200 OK", c}; };
     }
 
     void xml(const content& c)
     {
         m_content_type = "application/xml";
-        m_callback = [c](auto&&...) -> response { return {"200 OK", c}; };
+        m_callback = [c](auto&&...) -> ::http::response { return {"200 OK", c}; };
     }
 
     void response_handler(std::string_view ct, callback cb)
     {
         m_content_type = std::string{ct};
         m_callback = std::move(cb);
+    }
+
+    // Backwards compatible fluent API (used by YarDB)
+    controller& response(std::string_view ct, callback cb)
+    {
+        response_handler(ct, std::move(cb));
+        return *this;
     }
 
     using callback_with_headers = std::function<std::tuple<status, content, std::optional<headers>>(request_view, body_view, const headers&)>;
@@ -71,6 +78,13 @@ public:
         m_content_type = std::string{ct};
         m_callback_with_headers = std::move(cb);
         m_has_custom_headers = true;
+    }
+
+    // Backwards compatible fluent API (used by YarDB)
+    controller& response_with_headers(std::string_view ct, callback_with_headers cb)
+    {
+        response_with_headers_handler(ct, std::move(cb));
+        return *this;
     }
 
     std::tuple<status, content, content_type, std::optional<headers>> render(request_view request, body_view body, const headers& h)
@@ -90,7 +104,7 @@ public:
 private:
 
     content_type m_content_type = "*/*";
-    callback m_callback = [](request_view, body_view, const headers&) -> response { return {"200 OK", "Not Found"}; };
+    callback m_callback = [](request_view, body_view, const headers&) -> ::http::response { return {"200 OK", "Not Found"}; };
     callback_with_headers m_callback_with_headers = nullptr;
     bool m_has_custom_headers = false;
 };
