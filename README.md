@@ -11,7 +11,7 @@ Build and run tests with the project’s C++ Builder wrapper:
 
 ```bash
 cd deps/net
-tools/CB.sh debug test -- --output=console
+tools/CB.sh debug test
 ```
 
 ### Network tests
@@ -21,7 +21,7 @@ By default, **network tests run** (they may require local privileges, free ports
 To disable network/integration tests:
 
 ```bash
-NET_DISABLE_NETWORK_TESTS=1 tools/CB.sh debug test -- --output=console
+NET_DISABLE_NETWORK_TESTS=1 tools/CB.sh debug test
 ```
 
 Notes:
