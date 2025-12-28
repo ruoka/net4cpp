@@ -1,6 +1,0 @@
-export module net:ext;
-
-// Backwards-compatibility shim:
-// - net:extension is the real implementation module
-// - net:ext remains as an alias module for older import sites
-export import :extension;

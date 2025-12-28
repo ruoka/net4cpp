@@ -6,7 +6,6 @@ export import :connector;
 export import :endpointbuf;
 export import :endpointstream;
 export import :extension;
-export import :ext;
 export import :gsl;
 export import :http_base64;
 export import :http_headers;
