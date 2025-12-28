@@ -95,7 +95,6 @@ if [[ -z "$STD_CPPM" ]]; then
 fi
 
 # Find project root and build include flags
-CURRENT_DIR="$(pwd)"
 INCLUDE_FLAGS=(
     -I "$PROJECT_ROOT/net"
 )
@@ -106,4 +105,5 @@ if [[ -d "$TESTER_ROOT/tester" ]]; then
 fi
 
 # Run it
+cd "$PROJECT_ROOT"
 exec "$BIN" "$STD_CPPM" "${INCLUDE_FLAGS[@]}" --link-flags "-L/opt/homebrew/lib" "$@"
