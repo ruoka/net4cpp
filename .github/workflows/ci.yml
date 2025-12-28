@@ -2,17 +2,28 @@ name: C/C++ CI
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, main ]
   pull_request:
-    branches: [ master ]
+    branches: [ master, main ]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+env:
+  # CI environments frequently lack privileges / networking setup needed for integration tests.
+  # net defaults to running network tests locally; in CI we disable them for determinism.
+  NET_DISABLE_NETWORK_TESTS: "1"
+
 jobs:
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [ debug, release ]
 
     steps:
       - uses: actions/checkout@v4
@@ -20,34 +31,8 @@ jobs:
           fetch-depth: 1
           submodules: recursive
 
-      - name: Cache LLVM 20 + libc++
-        id: cache-llvm
-        uses: actions/cache@v4
-        with:
-          path: |
-            /usr/lib/llvm-20
-            /usr/bin/clang-20
-            /usr/bin/clang++-20
-            /usr/bin/lld-20
-            /usr/bin/lldb-20
-          key: llvm-20-ubuntu-${{ runner.arch }}-2025-v4
-          restore-keys: |
-            llvm-20-ubuntu-${{ runner.arch }}-
-            llvm-20-ubuntu-
-            llvm-20-
-
-      - name: Install LLVM toolchain
-        if: steps.cache-llvm.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y wget gnupg ca-certificates lsb-release software-properties-common
-          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/apt-llvm.gpg
-          echo "deb [signed-by=/usr/share/keyrings/apt-llvm.gpg] https://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/apt-llvm.org.list > /dev/null
-          sudo apt-get update -y
-          sudo apt-get install -y libc++-20-dev libc++abi-20-dev clang-20 lldb-20 lld-20 libssl-dev
-          sudo update-alternatives --install /usr/bin/clang   clang   /usr/bin/clang-20   100
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-20 100
-          sudo update-alternatives --install /usr/bin/lld     lld     /usr/bin/lld-20     100
+      - name: Setup LLVM (shared)
+        uses: ./.github/actions/setup-llvm
 
       - name: Verify std.cppm location
         run: |
@@ -58,14 +43,33 @@ jobs:
             find /usr/lib/llvm-20 -name "std.cppm" 2>/dev/null || echo "std.cppm not found anywhere"
           fi
 
-      - name: Build project
-        env:
-          CC: /usr/bin/clang-20
-          CXX: /usr/bin/clang++-20
-        run: make
+      - name: Show compiler version
+        run: clang++ --version
 
-      - name: Run tests
-        env:
-          CC: /usr/bin/clang-20
-          CXX: /usr/bin/clang++-20
-        run: make test
+      - name: Build project (${{ matrix.config }})
+        run: ./tools/CB.sh ${{ matrix.config }} build
+
+      - name: Run tests with JSONL output (${{ matrix.config }})
+        run: |
+          set -euo pipefail
+          ./tools/CB.sh ${{ matrix.config }} test -- --output=jsonl > test_results_${{ matrix.config }}.jsonl
+
+      - name: Validate JSONL output
+        run: |
+          set -euo pipefail
+          if [ ! -f "test_results_${{ matrix.config }}.jsonl" ]; then
+            echo "ERROR: JSONL output file not found!"
+            exit 1
+          fi
+          echo "JSONL lines: $(wc -l < "test_results_${{ matrix.config }}.jsonl")"
+          if command -v jq >/dev/null 2>&1; then
+            last_line="$(tail -1 "test_results_${{ matrix.config }}.jsonl")"
+            echo "$last_line" | jq -e '.type == "eof"' >/dev/null
+          fi
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-${{ matrix.config }}
+          path: test_results_${{ matrix.config }}.jsonl
