@@ -28,9 +28,30 @@ class address_info
 public:
     address_info(std::string_view node, std::string_view service_or_port, int socktype, int flags = AI_ALL, int family = AF_UNSPEC) : m_addrinfo{nullptr}
     {
-        const auto hints = posix::addrinfo{flags,family,socktype,0,0,nullptr,nullptr,nullptr};
-        const auto error = ::getaddrinfo(node.empty() ? nullptr : node.data(), service_or_port.data(), &hints, &m_addrinfo);
-        if(error) throw std::system_error{error, std::system_category(), "address resolution failed"};
+        using namespace std::literals;
+        auto hints = posix::addrinfo{};
+        hints.ai_flags = flags;
+        hints.ai_family = family;
+        hints.ai_socktype = socktype;
+
+        // "0.0.0.0" or empty string means "bind to all interfaces" (INADDR_ANY)
+        const auto is_any = node.empty() or node == "0.0.0.0" or node == "::";
+        
+        const auto node_str = std::string{node};
+        const auto service_str = std::string{service_or_port};
+
+        // On macOS, numeric ports require AI_NUMERICSERV to avoid EAI_NONAME
+        if (not service_str.empty() and std::isdigit(static_cast<unsigned char>(service_str[0])))
+            hints.ai_flags |= AI_NUMERICSERV;
+
+        // If we have a numeric host and not "any", use AI_NUMERICHOST
+        if (not is_any and not node_str.empty() and std::isdigit(static_cast<unsigned char>(node_str[0])))
+            hints.ai_flags |= AI_NUMERICHOST;
+        
+        const auto error = ::getaddrinfo(is_any ? nullptr : node_str.c_str(), 
+                                         service_str.empty() ? nullptr : service_str.c_str(), 
+                                         &hints, &m_addrinfo);
+        if(error) throw std::runtime_error{"address resolution failed for "s + (node.empty() ? "ANY"s : std::string{node}) + ":" + std::string{service_or_port} + " -> " + ::gai_strerror(error)};
     }
 
     address_info(address_info&& ai) noexcept : m_addrinfo{ai.m_addrinfo} { ai.m_addrinfo = nullptr; }
