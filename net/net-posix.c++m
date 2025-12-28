@@ -1,0 +1,98 @@
+module;
+#include <netdb.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/socket.h>
+#include <sys/select.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/time.h>
+#include <cerrno>
+
+export module net:posix;
+import std;
+
+#ifndef IPV6_ADD_MEMBERSHIP
+#define IPV6_ADD_MEMBERSHIP IPV6_JOIN_GROUP
+#endif
+
+#ifndef IPV6_DROP_MEMBERSHIP
+#define IPV6_DROP_MEMBERSHIP IPV6_LEAVE_GROUP
+#endif
+
+#ifndef MSG_NOSIGNAL
+# define MSG_NOSIGNAL 0
+#endif
+
+export namespace net::posix {
+
+using ::getsockopt;
+using ::setsockopt;
+using ::bind;
+using ::listen;
+using ::select;
+using ::accept;
+using ::connect;
+using ::getnameinfo;
+using ::read;
+using ::write;
+using ::close;
+using ::fcntl;
+
+using timeval = ::timeval;
+using fd_set = ::fd_set;
+using addrinfo = ::addrinfo;
+using sockaddr_storage = ::sockaddr_storage;
+using sockaddr = ::sockaddr;
+using sockaddr_in = ::sockaddr_in;
+using sockaddr_in6 = ::sockaddr_in6;
+using ip_mreq = ::ip_mreq;
+using ipv6_mreq = ::ipv6_mreq;
+using socklen_t = ::socklen_t;
+
+int connect_with_timeout(int fd, const sockaddr* address, socklen_t address_len, const std::chrono::milliseconds& timeout)
+{
+    const auto saved_flags = ::fcntl(fd, F_GETFL, 0);
+    if(saved_flags < 0) return -1;
+    if(::fcntl(fd, F_SETFL, saved_flags|O_NONBLOCK) < 0) return -1;
+
+    const auto connect_error = ::connect(fd, address, address_len);
+    const auto connect_errno = errno;
+
+    if(::fcntl(fd, F_SETFL, saved_flags) < 0) return -1;
+
+    if(connect_error == 0) return 0;
+    if(connect_errno != EINPROGRESS) return -1;
+
+    fd_set readfds{};
+    FD_ZERO(&readfds);
+    FD_SET(fd, &readfds);
+    fd_set writefds{};
+    FD_ZERO(&writefds);
+    FD_SET(fd, &writefds);
+
+    if(timeout.count())
+    {
+        timeval tv {
+            static_cast<decltype(tv.tv_sec)>(timeout.count() / 1000),
+            static_cast<decltype(tv.tv_usec)>(timeout.count() % 1000 * 1000)
+        };
+        auto error = ::select(FD_SETSIZE, &readfds, &writefds, nullptr, &tv);
+        if(error == 0) { errno = ETIMEDOUT; return -1; }
+        if(error < 0) return -1;
+    }
+    else
+    {
+        if(::select(FD_SETSIZE, &readfds, &writefds, nullptr, nullptr) < 0) return -1;
+    }
+
+    int result = 0;
+    socklen_t result_len = static_cast<socklen_t>(sizeof result);
+    if(::getsockopt(fd, SOL_SOCKET, SO_ERROR, &result, &result_len) < 0) return -1;
+
+    if(result > 0) { errno = result; return -1; }
+    return 0;
+}
+
+} // namespace net::posix
+

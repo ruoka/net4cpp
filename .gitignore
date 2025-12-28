@@ -3,3 +3,7 @@ obj
 lib
 include
 pcm
+build-*/
+build*/
+tools/cb
+tools/cb.dSYM/

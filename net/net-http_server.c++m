@@ -1,0 +1,376 @@
+export module net:http_server;
+import :acceptor;
+import :syslogstream;
+import :http_headers;
+import :endpointstream;
+import :ext;
+import std;
+
+export namespace http {
+
+using status = std::string;
+using content = std::string;
+using content_type = std::string;
+using response = std::tuple<status, content>;
+using response_with_headers = std::tuple<status, content, std::optional<headers>>;
+using request_view = std::string_view;
+using body_view = std::string_view;
+
+class controller
+{
+public:
+
+    using callback = std::function<response(request_view, body_view, const headers&)>;
+
+    void text(const content& c)
+    {
+        m_content_type = "text/plain";
+        m_callback = [c](auto&&...) -> response { return {"200 OK", c}; };
+    }
+
+    void html(const content& c)
+    {
+        m_content_type = "text/html";
+        m_callback = [c](auto&&...) -> response { return {"200 OK", c}; };
+    }
+
+    void css(const content& c)
+    {
+        m_content_type = "text/css";
+        m_callback = [c](auto&&...) -> response { return {"200 OK", c}; };
+    }
+
+    void script(const content& c)
+    {
+        m_content_type = "application/javascript";
+        m_callback = [c](auto&&...) -> response { return {"200 OK", c}; };
+    }
+
+    void json(const content& c)
+    {
+        m_content_type = "application/json";
+        m_callback = [c](auto&&...) -> response { return {"200 OK", c}; };
+    }
+
+    void xml(const content& c)
+    {
+        m_content_type = "application/xml";
+        m_callback = [c](auto&&...) -> response { return {"200 OK", c}; };
+    }
+
+    void response_handler(std::string_view ct, callback cb)
+    {
+        m_content_type = std::string{ct};
+        m_callback = std::move(cb);
+    }
+
+    using callback_with_headers = std::function<std::tuple<status, content, std::optional<headers>>(request_view, body_view, const headers&)>;
+
+    void response_with_headers_handler(std::string_view ct, callback_with_headers cb)
+    {
+        m_content_type = std::string{ct};
+        m_callback_with_headers = std::move(cb);
+        m_has_custom_headers = true;
+    }
+
+    std::tuple<status, content, content_type, std::optional<headers>> render(request_view request, body_view body, const headers& h)
+    {
+        if(m_has_custom_headers && m_callback_with_headers)
+        {
+            auto [s, c, custom_h] = m_callback_with_headers(request, body, h);
+            return std::make_tuple(std::move(s), std::move(c), m_content_type, std::move(custom_h));
+        }
+        else
+        {
+            auto [s, c] = m_callback(request, body, h);
+            return std::make_tuple(std::move(s), std::move(c), m_content_type, std::nullopt);
+        }
+    }
+
+private:
+
+    content_type m_content_type = "*/*";
+    callback m_callback = [](request_view, body_view, const headers&) -> response { return {"200 OK", "Not Found"}; };
+    callback_with_headers m_callback_with_headers = nullptr;
+    bool m_has_custom_headers = false;
+};
+
+class server
+{
+public:
+
+    controller& get(const std::string& path)
+    {
+        m_methods.insert("GET");
+        return m_router[path]["GET"];
+    }
+
+    controller& head(const std::string& path)
+    {
+        m_methods.insert("HEAD");
+        return m_router[path]["HEAD"];
+    }
+
+    controller& post(const std::string& path)
+    {
+        m_methods.insert("POST");
+        return m_router[path]["POST"];
+    }
+
+    controller& put(const std::string& path)
+    {
+        m_methods.insert("PUT");
+        return m_router[path]["PUT"];
+    }
+
+    controller& patch(const std::string& path)
+    {
+        m_methods.insert("PATCH");
+        return m_router[path]["PATCH"];
+    }
+
+    controller& destroy(const std::string& path)
+    {
+        m_methods.insert("DELETE");
+        return m_router[path]["DELETE"];
+    }
+
+    void listen(std::string_view service_or_port = "http")
+    {
+        m_stop.store(false);
+        net::slog << net::notice << "starting up at " << service_or_port << net::flush;
+        auto endpoint = net::acceptor{"0.0.0.0", service_or_port};
+        auto check_timeout = m_timeout.count() ? m_timeout : std::chrono::seconds{1};
+        endpoint.timeout(std::chrono::milliseconds{check_timeout.count() * 1000});
+        net::slog << net::notice << "started up at " << endpoint.host() << ":" << endpoint.service_or_port() << net::flush;
+        
+        while(!m_stop.load())
+        {
+            try
+            {
+                net::slog << net::info << "accepting connections" << net::flush;
+                auto client = endpoint.accept();
+                std::thread{[client_data = std::move(client), this]() mutable { handle(client_data); }}.detach();
+            }
+            catch(const std::system_error& e)
+            {
+                if(std::string{e.what()}.find("timeout") != std::string::npos)
+                    continue;
+                throw;
+            }
+        }
+        net::slog << net::notice << "server stopped" << net::flush;
+    }
+
+    void public_paths(std::string_view regex)
+    {
+        m_public_paths = std::string{regex};
+    }
+
+    void credentials(std::initializer_list<std::string> tokens)
+    {
+        for (const auto& token : tokens) m_credentials.insert(token);
+    }
+
+    const auto& timeout() const
+    {
+        return m_timeout;
+    }
+
+    void timeout(const std::chrono::seconds& t)
+    {
+        m_timeout = t;
+    }
+
+    void stop()
+    {
+        m_stop.store(true);
+    }
+
+    bool stopped() const
+    {
+        return m_stop.load();
+    }
+
+private:
+
+    auto date() const
+    {
+        return ext::to_rfc1123(std::chrono::system_clock::now());
+    }
+
+    const auto& host() const
+    {
+        static auto s_host = net::syslog::gethostname();
+        return s_host;
+    }
+
+    auto methods() const
+    {
+        std::string tmp = "";
+        for(const auto&  m : m_methods)
+        {
+            if(!tmp.empty()) tmp += ", ";
+            tmp += m;
+        }
+        return tmp;
+    }
+
+    void handle(auto& client)
+    {
+        auto& [stream, endpoint, port] = client;
+        net::slog << net::notice << "accepted connection from " << endpoint << ":" << port << net::flush;
+
+        try
+        {
+            while(stream)
+            {
+                std::string method, uri, version;
+                stream >> method >> uri >> version >> net::crlf;
+
+                if(!stream.good()) break;
+
+                net::slog << net::notice << "request \"" << method << ' ' << uri << ' ' << version << "\"" << net::flush;
+
+                headers hs{};
+                stream >> hs >> net::crlf;
+
+                std::string origin = "*";
+                if(hs.contains("origin"))
+                    origin = hs["origin"];
+
+                std::string authorization = "";
+                if(hs.contains("authorization"))
+                    authorization = hs["authorization"];
+
+                long long content_length = 0;
+                if(hs.contains("content-length"))
+                    content_length = std::stoll(hs["content-length"]);
+
+                std::string body(static_cast<std::size_t>(content_length), ' ');
+                for(auto& c : body)
+                    c = static_cast<char>(stream.get());
+
+                net::slog << net::debug << "request body \"" << body << "\"" << net::flush;
+
+                if(version != "HTTP/1.1")
+                {
+                    stream << "HTTP/1.1 505 HTTP Version Not Supported" << net::crlf
+                           << "Date: "         << date()                << net::crlf
+                           << "Server: "       << host()                << net::crlf
+                           << "Content-Type: " << m_content_type        << net::crlf
+                           << "Content-Length: 0"                       << net::crlf
+                           << net::crlf << net::flush;
+                }
+                else if(!m_methods.contains(method))
+                {
+                    stream << "HTTP/1.1 400 Bad Request"                    << net::crlf
+                           << "Date: "         << date()                    << net::crlf
+                           << "Server: "       << host()                    << net::crlf
+                           << "Content-Type: " << m_content_type            << net::crlf
+                           << "Content-Length: 0"                           << net::crlf
+                           << "Access-Control-Allow-Methods: " << methods() << net::crlf
+                           << net::crlf << net::flush;
+                }
+                else if(uri == "/favicon.ico")
+                {
+                    stream << "HTTP/1.1 404 Not Found"           << net::crlf
+                           << "Date: "         << date()         << net::crlf
+                           << "Server: "       << host()         << net::crlf
+                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Content-Length: 0"                << net::crlf
+                           << net::crlf << net::flush;
+                }
+                else if(!std::regex_match(std::string{uri}, std::regex(m_public_paths)) && !m_credentials.contains(authorization))
+                {
+                    stream << "HTTP/1.1 401 Unauthorized status"                     << net::crlf
+                           << "Date: "         << date()                             << net::crlf
+                           << "Server: "       << host()                             << net::crlf
+                           << "Content-Type: " << m_content_type                     << net::crlf
+                           << "Content-Length: 0"                                    << net::crlf
+                           << "WWW-Authenticate: Basic realm=\"User Visible Realm\"" << net::crlf
+                           << net::crlf << net::flush;
+                }
+                else
+                {
+                    std::string res_status, res_type, res_content;
+                    std::optional<headers> custom_headers;
+
+                    for(auto& [path, methods_map] : m_router)
+                        if(std::regex_match(std::string{uri}, std::regex(path)))
+                        {
+                            auto it = methods_map.find(method);
+                            if(it != methods_map.end())
+                            {
+                                std::tie(res_status, res_content, res_type, custom_headers) = it->second.render(uri, body, hs);
+                                if(!res_type.empty())
+                                    break;
+                            }
+                        }
+
+                    if(!res_type.empty())
+                    {
+                        stream << "HTTP/1.1 " << res_status                                   << net::crlf
+                               << "Date: " << date()                                          << net::crlf
+                               << "Server: " << host()                                        << net::crlf
+                               << "Content-Type: " << res_type                                << net::crlf
+                               << "Content-Length: " << res_content.length()                  << net::crlf;
+                        
+                        if(custom_headers.has_value())
+                            stream << custom_headers.value();
+                        
+                        stream << "Access-Control-Allow-Methods: " << methods()               << net::crlf
+                               << "Cache-Control: private"                                    << net::crlf
+                               << "Access-Control-Allow-Origin: " << origin                   << net::crlf
+                               << "Access-Control-Allow-Headers: Content-Type, Authorization" << net::crlf
+                               << "Access-Control-Allow-Credentials: true"                    << net::crlf
+                               << net::crlf
+                               << (method != "HEAD" ? res_content : "") << net::flush;
+                    }
+                    else
+                        stream << "HTTP/1.0 404 Not Found"                                    << net::crlf
+                               << "Date: " << date()                                          << net::crlf
+                               << "Server: " << host()                                        << net::crlf
+                               << "Content-Type: " << m_content_type                          << net::crlf
+                               << "Content-Length: 0"                                         << net::crlf
+                               << "Access-Control-Allow-Methods: " << methods()               << net::crlf
+                               << "Cache-Control: private"                                    << net::crlf
+                               << "Access-Control-Allow-Origin: " << origin                   << net::crlf
+                               << "Access-Control-Allow-Headers: Content-Type, Authorization" << net::crlf
+                               << "Access-Control-Allow-Credentials: true"                    << net::crlf
+                               << net::crlf << net::flush;
+                }
+            }
+            net::slog << net::syslog::severity::info << "connection closed" << net::flush;
+        }
+        catch(const std::exception& e)
+        {
+            stream << "HTTP/1.0 500 Internal Server Error" << net::crlf
+                   << "Date: " << date()                   << net::crlf
+                   << "Server: " << host()                 << net::crlf
+                   << "Content-Type: " << m_content_type   << net::crlf
+                   << "Content-Length: 0"                  << net::crlf
+                   << net::crlf << net::flush;
+
+            net::slog << net::syslog::severity::error << "error: " << std::quoted(e.what()) << net::flush;
+        }
+    }
+
+    using router_type = std::map<std::string, std::map<std::string, controller>, std::less<>>;
+    router_type m_router = {};
+    std::string m_content_type = "*/*";
+    std::set<std::string> m_methods = {"HEAD", "OPTIONS"};
+    std::string m_public_paths = ".*";
+    std::set<std::string> m_credentials = {};
+    std::chrono::seconds m_timeout = std::chrono::seconds{0};
+    std::atomic<bool> m_stop{false};
+};
+
+template <typename... Args>
+auto make_response(Args&&... args) -> decltype(std::make_pair(std::forward<Args>(args)...))
+{
+    return std::make_pair(std::forward<Args>(args)...);
+}
+
+} // namespace http
+

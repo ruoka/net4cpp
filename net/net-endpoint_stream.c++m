@@ -1,0 +1,55 @@
+export module net:endpointstream;
+import :endpointbuf;
+import std;
+
+namespace gsl { template<typename T> using owner = T; }
+
+export namespace net {
+
+class iendpointstream : public std::istream
+{
+public:
+    iendpointstream(endpointbuf_base* buf) : std::istream{buf}, m_buf{buf} { init(m_buf); }
+    iendpointstream(iendpointstream&& s) noexcept : std::istream{s.m_buf}, m_buf{s.m_buf} { init(m_buf); s.m_buf = nullptr; }
+    ~iendpointstream() override { if(m_buf) delete m_buf; }
+    iendpointstream& operator=(iendpointstream&& s) noexcept { if(m_buf) delete m_buf; m_buf = s.m_buf; s.m_buf = nullptr; init(m_buf); return *this; }
+    bool wait_for(const std::chrono::milliseconds& timeout) { return m_buf->wait_for(timeout) && peek() != std::char_traits<char>::eof(); }
+private:
+    iendpointstream(const iendpointstream&) = delete;
+    gsl::owner<endpointbuf_base*> m_buf;
+};
+
+class oendpointstream : public std::ostream
+{
+public:
+    oendpointstream(endpointbuf_base* sb) : std::ostream{sb}, m_buf{sb} { init(m_buf); }
+    oendpointstream(oendpointstream&& s) noexcept : std::ostream{s.m_buf}, m_buf{s.m_buf} { s.m_buf = nullptr; init(m_buf); }
+    ~oendpointstream() override { if(m_buf) delete m_buf; }
+    oendpointstream& operator=(oendpointstream&& s) noexcept { if(m_buf) delete m_buf; m_buf = s.m_buf; s.m_buf = nullptr; init(m_buf); return *this; }
+private:
+    oendpointstream(const oendpointstream&) = delete;
+    gsl::owner<endpointbuf_base*> m_buf;
+};
+
+class endpointstream : public std::iostream
+{
+public:
+    endpointstream(endpointbuf_base* buf) : std::iostream{buf}, m_buf{buf} { init(m_buf); }
+    endpointstream(endpointstream&& s) noexcept : std::iostream{s.m_buf}, m_buf{s.m_buf} { s.m_buf = nullptr; init(m_buf); }
+    ~endpointstream() override { if(m_buf) delete m_buf; }
+    endpointstream& operator=(endpointstream&& s) noexcept { if(m_buf) delete m_buf; m_buf = s.m_buf; s.m_buf = nullptr; init(m_buf); return *this; }
+    bool wait_for(const std::chrono::milliseconds& timeout) { return m_buf->wait_for(timeout) && peek() != std::char_traits<char>::eof(); }
+private:
+    endpointstream(const endpointstream&) = delete;
+    gsl::owner<endpointbuf_base*> m_buf;
+};
+
+inline std::ostream& sp(std::ostream& os) { return os.put(' '); }
+inline std::ostream& crlf(std::ostream& os) { return os.put('\r').put('\n'); }
+inline std::istream& crlf(std::istream& is) { if(is.peek() == '\r') is.get(); if(is.peek() == '\n') is.get(); return is; }
+inline std::ostream& newl(std::ostream& os) { return os.put('\n'); }
+inline std::istream& newl(std::istream& is) { if(is.peek() == '\n') is.get(); return is; }
+inline std::ostream& flush(std::ostream& os) { return os.flush(); }
+
+} // namespace net
+

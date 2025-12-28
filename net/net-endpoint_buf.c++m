@@ -1,0 +1,87 @@
+module;
+#include <sys/socket.h>
+#include <unistd.h>
+#include <cerrno>
+
+export module net:endpointbuf;
+import :posix;
+import :socket;
+import std;
+
+export namespace net {
+
+class endpointbuf_base : public std::streambuf
+{
+public:
+    explicit endpointbuf_base(socket&& s) : m_socket{std::move(s)} {}
+    virtual ~endpointbuf_base() = default;
+    bool wait_for(const std::chrono::milliseconds& timeout) const { return m_socket.wait_for(timeout); }
+protected:
+    endpointbuf_base(const endpointbuf_base&) = delete;
+    endpointbuf_base& operator=(const endpointbuf_base&) = delete;
+    socket m_socket;
+};
+
+constexpr std::size_t tcp_buffer_size{4096};
+constexpr std::size_t udp_buffer_size{512};
+
+template<std::size_t N>
+class endpointbuf : public endpointbuf_base
+{
+public:
+    explicit endpointbuf(socket&& s) : endpointbuf_base{std::move(s)}, m_input_sequence{}, m_output_sequence{}
+    {
+        this->setg(&m_input_sequence[0], &m_input_sequence[N], &m_input_sequence[N]);
+        this->setp(&m_output_sequence[0], &m_output_sequence[N]);
+    }
+
+protected:
+    typename std::streambuf::int_type underflow() override
+    {
+        const auto bytes_read = ::read(this->m_socket, &m_input_sequence[0], N);
+        if(bytes_read < 1) return std::char_traits<char>::eof();
+        this->setg(&m_input_sequence[0], &m_input_sequence[0], &m_input_sequence[bytes_read]);
+        return std::char_traits<char>::to_int_type(m_input_sequence[0]);
+    }
+
+    typename std::streambuf::int_type overflow(typename std::streambuf::int_type c = std::char_traits<char>::eof()) override
+    {
+        if(sync() < 0) return std::char_traits<char>::eof();
+        if(std::char_traits<char>::eq_int_type(c, std::char_traits<char>::eof())) return std::char_traits<char>::not_eof(c);
+        *this->pptr() = std::char_traits<char>::to_char_type(c);
+        this->pbump(1);
+        return std::char_traits<char>::not_eof(c);
+    }
+
+    int sync() override
+    {
+        const char* buf = &m_output_sequence[0];
+        auto retry = 0;
+        while(buf < this->pptr())
+        {
+            const auto bytes_written = ::sendto(this->m_socket, buf, this->pptr() - buf, 0, nullptr, 0);
+            if(bytes_written < 1)
+            {
+                if((errno == EWOULDBLOCK or errno == EAGAIN) and this->m_socket.wait()) continue;
+                if(++retry < 3) continue;
+                else return -1;
+            }
+            buf += bytes_written;
+        }
+        this->setp(&m_output_sequence[0], &m_output_sequence[N]);
+        return 0;
+    }
+
+    std::streampos seekoff(std::streamoff off, std::ios_base::seekdir way, std::ios_base::openmode which) override
+    {
+        if(off == 0 && way == std::ios_base::cur && which == std::ios_base::out) return {this->pptr() - this->pbase()};
+        else return {-1};
+    }
+
+private:
+    char m_input_sequence[N];
+    char m_output_sequence[N];
+};
+
+} // namespace net
+

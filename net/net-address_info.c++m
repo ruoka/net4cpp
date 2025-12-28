@@ -1,0 +1,54 @@
+module;
+#include <netdb.h>
+#include <sys/socket.h>
+
+export module net:address_info;
+import :posix;
+import std;
+
+namespace gsl {
+template<typename T> using owner = T;
+}
+
+export namespace net {
+
+class addrinfo_iterator
+{
+public:
+    addrinfo_iterator(posix::addrinfo* a) : m_current{a} {}
+    posix::addrinfo& operator*() { return *m_current; }
+    addrinfo_iterator& operator++() { m_current = m_current->ai_next; return *this; }
+    bool operator!=(const addrinfo_iterator& i) const { return m_current != i.m_current; }
+private:
+    posix::addrinfo* m_current;
+};
+
+class address_info
+{
+public:
+    address_info(std::string_view node, std::string_view service_or_port, int socktype, int flags = AI_ALL, int family = AF_UNSPEC) : m_addrinfo{nullptr}
+    {
+        const auto hints = posix::addrinfo{flags,family,socktype,0,0,nullptr,nullptr,nullptr};
+        const auto error = ::getaddrinfo(node.empty() ? nullptr : node.data(), service_or_port.data(), &hints, &m_addrinfo);
+        if(error) throw std::system_error{error, std::system_category(), "address resolution failed"};
+    }
+
+    address_info(address_info&& ai) noexcept : m_addrinfo{ai.m_addrinfo} { ai.m_addrinfo = nullptr; }
+
+    ~address_info() { if(m_addrinfo) ::freeaddrinfo(m_addrinfo); }
+
+    explicit operator bool() const { return m_addrinfo != nullptr; }
+    const posix::addrinfo* operator->() const { return m_addrinfo; }
+
+    friend addrinfo_iterator begin(const address_info& a) { return addrinfo_iterator{a.m_addrinfo}; }
+    friend addrinfo_iterator end(const address_info&) { return addrinfo_iterator{nullptr}; }
+
+private:
+    address_info(const address_info&) = delete;
+    address_info& operator=(const address_info&) = delete;
+    address_info& operator=(address_info&&) = delete;
+    gsl::owner<posix::addrinfo*> m_addrinfo;
+};
+
+} // namespace net
+

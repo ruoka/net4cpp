@@ -1,0 +1,66 @@
+module;
+#include <sys/socket.h>
+#include <sys/select.h>
+
+export module net:socket;
+import :posix;
+import std;
+
+export namespace net {
+
+using native_handle_type = int;
+constexpr native_handle_type native_handle_npos = -1;
+
+class socket
+{
+public:
+    socket(int domain, int type, int protocol = 0) : m_fd{native_handle_npos}
+    {
+        m_fd = ::socket(domain, type, protocol);
+    }
+
+    socket(native_handle_type fd) : m_fd{fd} {}
+
+    socket(socket&& s) noexcept : m_fd{s.m_fd}
+    {
+        s.m_fd = native_handle_npos;
+    }
+
+    ~socket()
+    {
+        if(m_fd != native_handle_npos) posix::close(m_fd);
+    }
+
+    bool wait_for(const std::chrono::milliseconds& timeout) const
+    {
+        posix::fd_set fds{};
+        FD_ZERO(&fds);
+        FD_SET(m_fd, &fds);
+        posix::timeval tv{
+            static_cast<decltype(tv.tv_sec)>(timeout.count() / 1000),
+            static_cast<decltype(tv.tv_usec)>(timeout.count() % 1000 * 1000)
+        };
+        return posix::select(m_fd+1, &fds, nullptr, nullptr, &tv) > 0;
+    }
+
+    bool wait() const
+    {
+        posix::fd_set fds{};
+        FD_ZERO(&fds);
+        FD_SET(m_fd, &fds);
+        return posix::select(m_fd+1, nullptr, &fds, nullptr, nullptr) > 0;
+    }
+
+    operator native_handle_type() const { return m_fd; }
+    operator bool() const { return m_fd != native_handle_npos; }
+
+private:
+    socket(const socket&) = delete;
+    socket& operator=(const socket&) = delete;
+    socket& operator=(socket&&) = delete;
+
+    native_handle_type m_fd;
+};
+
+} // namespace net
+

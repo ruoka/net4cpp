@@ -1,0 +1,88 @@
+module;
+#include <sys/socket.h>
+#include <cerrno>
+
+export module net:connector;
+import :address_info;
+import :endpointbuf;
+import :endpointstream;
+import :posix;
+import :socket;
+import :uri;
+import std;
+
+export namespace net {
+
+const std::chrono::seconds default_connect_timeout{3};
+
+endpointstream connect(std::string_view host,
+                       std::string_view service_or_port,
+                       const std::chrono::milliseconds& timeout = default_connect_timeout);
+
+endpointstream connect(const uri& url,
+                       const std::chrono::milliseconds& timeout = default_connect_timeout);
+
+class connector
+{
+public:
+    connector(std::string_view host, std::string_view service_or_port) :
+        m_host{host},
+        m_service_or_port{service_or_port},
+        m_timeout{default_connect_timeout}
+    {}
+
+    connector(const uri& url) :
+        m_host{url.host},
+        m_service_or_port{url.port == "" ? url.scheme : url.port},
+        m_timeout{default_connect_timeout}
+    {}
+
+    endpointstream connect() const
+    {
+        return net::connect(m_host, m_service_or_port, m_timeout);
+    }
+
+    const auto& host() const { return m_host; }
+    const auto& service_or_port() const { return m_service_or_port; }
+    const std::chrono::milliseconds& timeout() const { return m_timeout; }
+    void timeout(const std::chrono::milliseconds& timeout) { m_timeout = timeout; }
+
+private:
+    std::string m_host;
+    std::string m_service_or_port;
+    std::chrono::milliseconds m_timeout;
+};
+
+endpointstream connect(std::string_view host,
+                       std::string_view service_or_port,
+                       const std::chrono::milliseconds& timeout)
+{
+    auto remote_address = net::address_info{host, service_or_port, SOCK_STREAM};
+    for(const auto& address : remote_address)
+    {
+        socket s{address.ai_family, address.ai_socktype, address.ai_protocol};
+        if(!s) continue;
+
+#ifdef SO_NOSIGPIPE
+        // macOS: prevent SIGPIPE on broken pipe writes.
+        auto yes = 1;
+        if(posix::setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof yes) < 0) continue;
+#endif
+
+        if(posix::connect_with_timeout(s, address.ai_addr, address.ai_addrlen, timeout) < 0) continue;
+
+        return new endpointbuf<tcp_buffer_size>{std::move(s)};
+    }
+
+    throw std::system_error{errno, std::system_category(), "connect failed"};
+}
+
+endpointstream connect(const uri& url,
+                       const std::chrono::milliseconds& timeout)
+{
+    return net::connect(url.host, url.port == "" ? url.scheme : url.port, timeout);
+}
+
+} // namespace net
+
+

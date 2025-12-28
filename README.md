@@ -1,11 +1,44 @@
 # net4cpp
-Network library based on C++20 standard
+Network library based on **C++23 modules**.
+
+This subproject is designed to work both:
+- **Standalone** (as its own repo, with `deps/tester` available), and
+- **As a dependency inside YarDB** (reusing YarDB’s `deps/tester`).
+
+## Build
+
+Build and run tests with the project’s C++ Builder wrapper:
+
+```bash
+cd deps/net
+tools/CB.sh debug test -- --output=console
+```
+
+### Network tests
+
+By default, **network tests run** (they may require local privileges, free ports, multicast enabled, etc.).
+
+To disable network/integration tests:
+
+```bash
+NET_DISABLE_NETWORK_TESTS=1 tools/CB.sh debug test -- --output=console
+```
+
+Notes:
+- In Cursor sandbox environments, `tools/CB.sh` auto-sets `NET_DISABLE_NETWORK_TESTS=1` unless you override it.
+- Multicast tests depend on the host/network allowing multicast.
 
 # Echo Server Example
 
 ```cpp
+import net;
+import std;
+
 try
 {
+    using namespace std::string_literals;
+    using namespace net;
+
     auto ator = acceptor{"::1", "2112"}; // IPv6 localhost
     auto [stream,client,port] = ator.accept();
 
@@ -26,9 +59,14 @@ catch(const exception& e)
 # Http Request Example
 
 ```cpp
+import net;
+import std;
+
 try
 {
-    auto s = connect("http://www.google.com");
+    using namespace net;
+
+    auto s = connect("www.google.com", "http");
 
     s << "GET / HTTP/1.1"                << crlf
       << "Host: www.google.com"          << crlf
@@ -55,13 +93,17 @@ catch(const exception& e)
 # Syslog Stream Example
 
 ```cpp
-#include "net/syslogstream.hpp"
+import net;
+import std;
 
 [...]
 
+using namespace net;
+using namespace std::string_literals;
+
 slog.level(syslog::severity::info);
 slog.facility(syslog::facility::local0);
-slog.tag("example");
+slog.appname("example");
 
 auto clothes = "shirts"s; auto spouse = "wife"; auto wrong = false;
 

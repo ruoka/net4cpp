@@ -1,0 +1,99 @@
+module;
+#include <netdb.h>
+#include <sys/socket.h>
+#include <sys/select.h>
+#include <cerrno>
+
+export module net:acceptor;
+import :posix;
+import :socket;
+import :uri;
+import :address_info;
+import :endpointbuf;
+import :endpointstream;
+import std;
+
+export namespace net {
+
+const std::chrono::minutes default_accept_timeout{1};
+
+class acceptor
+{
+public:
+    using stream = endpointstream;
+    using client = std::string;
+    using port = std::string;
+
+    acceptor(std::string_view host, std::string_view service_or_port) :
+        m_host{host}, m_service_or_port{service_or_port}, m_timeout{default_accept_timeout}, m_sockets{}
+    {
+        const auto local_address = address_info{m_host, m_service_or_port, SOCK_STREAM, AI_PASSIVE};
+        for(const auto& address : local_address)
+        {
+            socket s{address.ai_family, address.ai_socktype, address.ai_protocol};
+            if(!s) continue;
+            auto yes = 1;
+            if(posix::setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes) < 0) continue;
+            if(posix::bind(s, address.ai_addr, address.ai_addrlen) < 0) continue;
+            if(posix::listen(s, 5) < 0) continue;
+            m_sockets.push_back(std::move(s));
+        }
+        if(m_sockets.empty()) throw std::system_error{errno, std::system_category(), "socket could not be bound"};
+    }
+
+    explicit acceptor(std::string_view service) : acceptor("localhost", service) {}
+    explicit acceptor(uri url) : acceptor(url.host, url.port == "" ? url.scheme : url.port) {}
+
+    std::tuple<stream,client,port> accept()
+    {
+        const auto fd = wait();
+        auto sas = posix::sockaddr_storage{};
+        auto saslen = posix::socklen_t{sizeof sas};
+        socket s = posix::accept(fd, reinterpret_cast<posix::sockaddr*>(&sas), &saslen);
+        if(!s) throw std::system_error{errno, std::system_category(),"accept failed"};
+
+        char hbuf[NI_MAXHOST];
+        char sbuf[NI_MAXSERV];
+        if(posix::getnameinfo(reinterpret_cast<posix::sockaddr*>(&sas), saslen, hbuf, sizeof hbuf, sbuf, sizeof sbuf, NI_NUMERICHOST))
+            throw std::system_error{errno, std::system_category(),"getnameinfo failed"};
+
+        return {new endpointbuf<tcp_buffer_size>{std::move(s)}, hbuf, sbuf};
+    }
+
+    const auto& host() const { return m_host; }
+    const auto& service_or_port() const { return m_service_or_port; }
+    const auto& timeout() const { return m_timeout; }
+    void timeout(const std::chrono::milliseconds& t) { m_timeout = t; }
+
+private:
+    int wait()
+    {
+        posix::fd_set fds{};
+        FD_ZERO(&fds);
+        int max_fd = -1;
+        for(int fd : m_sockets) { FD_SET(fd,&fds); if(fd > max_fd) max_fd = fd; }
+
+        if(m_timeout.count())
+        {
+            posix::timeval tv {
+                static_cast<decltype(tv.tv_sec)>(m_timeout.count() / 1000),
+                static_cast<decltype(tv.tv_usec)>(m_timeout.count() % 1000 * 1000)
+            };
+            if(!posix::select(max_fd+1, &fds, nullptr, nullptr, &tv))
+                throw std::system_error{errno, std::system_category(), "accept timeouted"};
+        }
+        else
+            posix::select(max_fd+1, &fds, nullptr, nullptr, nullptr);
+
+        for(int fd : m_sockets) if(FD_ISSET(fd,&fds)) return fd;
+        throw std::system_error{errno, std::system_category(), "accept failed"};
+    }
+
+    std::string m_host;
+    std::string m_service_or_port;
+    std::chrono::milliseconds m_timeout;
+    std::list<socket> m_sockets;
+};
+
+} // namespace net
+

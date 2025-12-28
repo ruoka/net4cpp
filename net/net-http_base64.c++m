@@ -1,0 +1,82 @@
+export module net:http_base64;
+import std;
+
+export namespace http::base64 {
+
+    constexpr char to_character_set(std::size_t i)
+    {
+        constexpr char set[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+        return set[i];
+    }
+
+    constexpr char to_index(char c)
+    {
+        if(c == '=') return 64;
+        if(c >= 'a' && c <= 'z') return ('Z'-'A') + 1 + (c - 'a');
+        if(c >= 'A' && c <= 'Z') return (c - 'A');
+        if(c >= '0' && c <= '9') return ('Z'-'A') + ('z'-'a') + 2 + (c - '0');
+        if(c == '+') return 62;
+        if(c == '/') return 63;
+        return 64;
+    }
+
+    std::string encode(std::string_view source)
+    {
+        auto encoded = std::string{};
+
+        while(source.size() > 0)
+        {
+            auto index1 = (static_cast<unsigned char>(source[0]) & 0b11111100) >> 2,
+                 index2 = (static_cast<unsigned char>(source[0]) & 0b00000011) << 4,
+                 index3 = 64,
+                 index4 = 64;
+
+            if(source.size() > 1)
+            {
+                index2 |= (static_cast<unsigned char>(source[1]) & 0b11110000) >> 4;
+                index3  = (static_cast<unsigned char>(source[1]) & 0b00001111) << 2;
+            }
+
+            if(source.size() > 2)
+            {
+                index3 |= (static_cast<unsigned char>(source[2]) & 0b11000000) >> 6;
+                index4  = (static_cast<unsigned char>(source[2]) & 0b00111111);
+            }
+
+            encoded.push_back(to_character_set(index1));
+            encoded.push_back(to_character_set(index2));
+            encoded.push_back(to_character_set(index3));
+            encoded.push_back(to_character_set(index4));
+
+            source.remove_prefix(std::min(std::size_t{3},source.size()));
+        }
+
+        return encoded;
+    }
+
+    std::string decode(std::string_view source)
+    {
+        auto decoded = std::string{};
+
+        while(source.size() > 3)
+        {
+            auto index1 = to_index(source[0]),
+                 index2 = to_index(source[1]),
+                 index3 = to_index(source[2]),
+                 index4 = to_index(source[3]);
+
+            decoded.push_back(static_cast<char>((index1 << 2) | (index2 >> 4)));
+
+            if(index3 < 64)
+                decoded.push_back(static_cast<char>((index2 << 4) | (index3 >> 2)));
+
+            if(index4 < 64)
+                decoded.push_back(static_cast<char>((index3 << 6) | index4));
+
+            source.remove_prefix(std::min(std::size_t{4},source.size()));
+        }
+        return decoded;
+    }
+
+} // namespace http::base64
+
