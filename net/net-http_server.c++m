@@ -323,6 +323,10 @@ private:
                         if(std::regex_match(std::string{uri}, std::regex(path)))
                         {
                             auto it = methods_map.find(method);
+                            // If HEAD method not found, try GET as fallback for HEAD requests
+                            if(it == methods_map.end() && method == "HEAD")
+                                it = methods_map.find("GET");
+
                             if(it != methods_map.end())
                             {
                                 std::tie(res_status, res_content, res_type, custom_headers) = it->second.render(uri, body, hs);
