@@ -1,10 +1,7 @@
-module;
-#include <netdb.h>
-#include <unistd.h>
-
 export module net:syslogstream;
 import :endpointstream;
 import :sender;
+import :posix;
 import std;
 
 export namespace net::syslog {
@@ -36,15 +33,10 @@ enum class severity : int
      debug     = 7
 };
 
-inline int getpid()
-{
-    return ::getpid();
-}
-
 inline std::string gethostname()
 {
-    char buffer[NI_MAXHOST];
-    ::gethostname(buffer, NI_MAXHOST);
+    char buffer[posix::ni_maxhost];
+    posix::gethostname(buffer, posix::ni_maxhost);
     return buffer;
 }
 
@@ -169,7 +161,7 @@ private:
     {
         using namespace std;
         static const auto hostname = syslog::gethostname();
-        static const auto procid = syslog::getpid();
+        static const auto procid = posix::getpid();
 
         if(m_level >= m_severity)
         {

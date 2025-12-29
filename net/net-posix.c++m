@@ -47,6 +47,8 @@ using ::inet_ntop;
 using ::getaddrinfo;
 using ::freeaddrinfo;
 using ::gai_strerror;
+using ::gethostname;
+using ::getpid;
 
 // Clean up any potential macro pollution from system headers
 #undef ntohs

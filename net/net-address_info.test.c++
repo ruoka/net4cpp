@@ -1,8 +1,6 @@
-module;
-#include <sys/socket.h>
-
 module net;
 import tester;
+import :posix;
 import std;
 
 
@@ -18,34 +16,34 @@ auto register_address_info_tests()
 {
     tester::bdd::scenario("Stream construction, [net]") = [] {
         tester::bdd::given("A localhost stream address") = [] {
-            auto ai = address_info{"localhost", "54321", SOCK_STREAM};
+            auto ai = address_info{"localhost", "54321", posix::sock_stream};
             auto b = begin(ai);
             auto e = end(ai);
             check_true(b != e);
             for(const auto& a : ai)
-                check_eq(a.ai_socktype, SOCK_STREAM);
+                check_eq(a.ai_socktype, posix::sock_stream);
         };
     };
 
     tester::bdd::scenario("Datagram construction, [net]") = [] {
         tester::bdd::given("A localhost datagram address") = [] {
-            auto ai = address_info{"localhost", "54321", SOCK_DGRAM};
+            auto ai = address_info{"localhost", "54321", posix::sock_dgram};
             auto b = begin(ai);
             auto e = end(ai);
             check_true(b != e);
             for(const auto& a : ai)
-                check_eq(a.ai_socktype, SOCK_DGRAM);
+                check_eq(a.ai_socktype, posix::sock_dgram);
         };
     };
 
     tester::bdd::scenario("No host construction, [net]") = [] {
         tester::bdd::given("An empty host stream address") = [] {
-            auto ai = address_info{"", "54321", SOCK_STREAM};
+            auto ai = address_info{"", "54321", posix::sock_stream};
             auto b = begin(ai);
             auto e = end(ai);
             check_true(b != e);
             for(const auto& a : ai)
-                check_eq(a.ai_socktype, SOCK_STREAM);
+                check_eq(a.ai_socktype, posix::sock_stream);
         };
     };
 

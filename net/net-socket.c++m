@@ -1,5 +1,3 @@
-module;
-
 export module net:socket;
 
 import :posix;
@@ -18,7 +16,7 @@ public:
     {}
 
     // Take ownership of existing fd (e.g. from accept)
-    explicit socket(native_handle_type fd) noexcept
+    socket(native_handle_type fd) noexcept
         : m_fd{fd}
     {}
 
