@@ -1,7 +1,4 @@
 module;
-#include <sys/socket.h>
-#include <unistd.h>
-#include <cerrno>
 
 export module net:endpointbuf;
 import :posix;
@@ -54,7 +51,7 @@ protected:
 
         // 2. If we still need more, and it's a large request, bypass the internal buffer
         if (n >= static_cast<std::streamsize>(N)) {
-            const auto res = ::recv(this->m_socket, s, static_cast<std::size_t>(n), 0);
+            const auto res = posix::recv(this->m_socket, s, static_cast<std::size_t>(n), 0);
             if (res > 0) {
                 total_read += res;
                 return total_read;
@@ -106,7 +103,7 @@ protected:
         if (this->gptr() < this->egptr())
             return std::char_traits<char>::to_int_type(*this->gptr());
 
-        const auto bytes_read = ::recv(this->m_socket, &m_input_sequence[0], N, 0);
+        const auto bytes_read = posix::recv(this->m_socket, &m_input_sequence[0], N, 0);
         if(bytes_read < 1) return std::char_traits<char>::eof();
         this->setg(&m_input_sequence[0], &m_input_sequence[0], &m_input_sequence[bytes_read]);
         return std::char_traits<char>::to_int_type(m_input_sequence[0]);
@@ -137,11 +134,11 @@ protected:
         std::size_t total_sent = 0;
         while(total_sent < len)
         {
-            const auto sent = ::send(this->m_socket, buf + total_sent, len - total_sent, 0);
+            const auto sent = posix::send(this->m_socket, buf + total_sent, len - total_sent, 0);
             if(sent < 1)
             {
-                if(sent == -1 && errno == EINTR) continue;
-                if((errno == EWOULDBLOCK or errno == EAGAIN) and this->m_socket.wait()) continue;
+                if(sent == -1 && posix::get_errno() == posix::eintr) continue;
+                if((posix::get_errno() == posix::ewouldblock or posix::get_errno() == posix::eagain) and this->m_socket.wait()) continue;
                 return false;
             }
             total_sent += sent;

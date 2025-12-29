@@ -1,4 +1,5 @@
 module;
+
 #include <netdb.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -10,16 +11,15 @@ module;
 #include <cerrno>
 
 export module net:posix;
-import std;
+
+import std;  // Provides <chrono>, <concepts>, <cstdint>, etc. (and <bit> via libc++ std.cppm on your setup)
 
 #ifndef IPV6_ADD_MEMBERSHIP
 #define IPV6_ADD_MEMBERSHIP IPV6_JOIN_GROUP
 #endif
-
 #ifndef IPV6_DROP_MEMBERSHIP
 #define IPV6_DROP_MEMBERSHIP IPV6_LEAVE_GROUP
 #endif
-
 #ifndef MSG_NOSIGNAL
 # define MSG_NOSIGNAL 0
 #endif
@@ -37,15 +37,28 @@ using ::connect;
 using ::getnameinfo;
 using ::read;
 using ::write;
+using ::recv;
+using ::send;
 using ::close;
 using ::fcntl;
 using ::socket;
+using ::inet_pton;
+using ::inet_ntop;
+using ::getaddrinfo;
+using ::freeaddrinfo;
+using ::gai_strerror;
 
-// Network byte order conversion functions - portable implementation
-// These convert between host byte order and network byte order (big-endian)
+// Clean up any potential macro pollution from system headers
+#undef ntohs
+#undef ntohl
+#undef ntohll
+#undef htons
+#undef htonl
+#undef htonll
 
+// Generic host ↔ network byte order conversion (C++23, constexpr, zero-overhead)
 template<std::unsigned_integral T>
-constexpr T hton(T host) noexcept {
+inline constexpr T hton(T host) noexcept {
     if constexpr (std::endian::native == std::endian::little) {
         return std::byteswap(host);
     } else {
@@ -54,152 +67,176 @@ constexpr T hton(T host) noexcept {
 }
 
 template<std::unsigned_integral T>
-constexpr T ntoh(T net) noexcept {
+inline constexpr T ntoh(T net) noexcept {
     return hton(net);
 }
 
-#undef ntohs
-#undef ntohl
-#undef ntohll
-#undef htons
-#undef htonl
-#undef htonll
+// Traditional named aliases for compatibility and readability
+inline constexpr uint16_t htons(uint16_t host) noexcept { return hton(host); }
+inline constexpr uint32_t htonl(uint32_t host) noexcept { return hton(host); }
+inline constexpr uint64_t htonll(uint64_t host) noexcept { return hton(host); }
 
-// Traditional named functions – thin wrappers around the generic one
-constexpr uint16_t ntohs(uint16_t net) noexcept { return ntoh(net); }
-constexpr uint32_t ntohl(uint32_t net) noexcept { return ntoh(net); }
-constexpr uint64_t ntohll(uint64_t net) noexcept { return ntoh(net); }
+inline constexpr uint16_t ntohs(uint16_t net) noexcept { return ntoh(net); }
+inline constexpr uint32_t ntohl(uint32_t net) noexcept { return ntoh(net); }
+inline constexpr uint64_t ntohll(uint64_t net) noexcept { return ntoh(net); }
 
-constexpr uint16_t htons(uint16_t host) noexcept { return hton(host); }
-constexpr uint32_t htonl(uint32_t host) noexcept { return hton(host); }
-constexpr uint64_t htonll(uint64_t host) noexcept { return hton(host); }
-
-using ::inet_pton;
-using ::inet_ntop;
-
-using timeval = ::timeval;
-using fd_set = ::fd_set;
-using addrinfo = ::addrinfo;
+// Type aliases (clean, consistent naming)
+using timeval         = ::timeval;
+using fd_set          = ::fd_set;
+using addrinfo        = ::addrinfo;
+using sockaddr        = ::sockaddr;
 using sockaddr_storage = ::sockaddr_storage;
-using sockaddr = ::sockaddr;
-using sockaddr_in = ::sockaddr_in;
-using sockaddr_in6 = ::sockaddr_in6;
-using ip_mreq = ::ip_mreq;
-using ipv6_mreq = ::ipv6_mreq;
-using socklen_t = ::socklen_t;
+using sockaddr_in     = ::sockaddr_in;
+using sockaddr_in6    = ::sockaddr_in6;
+using ip_mreq         = ::ip_mreq;
+using ipv6_mreq       = ::ipv6_mreq;
+using socklen_t       = ::socklen_t;
 
-inline void fd_zero(fd_set* set) { FD_ZERO(set); }
-inline void fd_set_bit(int fd, fd_set* set) { FD_SET(fd, set); }
-inline bool fd_isset(int fd, fd_set* set) { return FD_ISSET(fd, set); }
+// fd_set wrappers (safe, noexcept)
+inline void fd_zero(fd_set* set) noexcept { FD_ZERO(set); }
+inline void fd_set_bit(int fd, fd_set* set) noexcept { FD_SET(fd, set); }
+inline bool fd_isset(int fd, const fd_set* set) noexcept { return FD_ISSET(fd, set); }
 
-constexpr auto af_inet = AF_INET;
-constexpr auto af_inet6 = AF_INET6;
-constexpr auto af_unspec = AF_UNSPEC;
-constexpr auto sock_stream = SOCK_STREAM;
-constexpr auto sock_dgram = SOCK_DGRAM;
-constexpr auto inaddr_any = INADDR_ANY;
-constexpr auto inaddr_loopback = INADDR_LOOPBACK;
-constexpr auto sol_socket = SOL_SOCKET;
-constexpr auto so_error = SO_ERROR;
-constexpr auto so_reuseaddr = SO_REUSEADDR;
+// Common constants
+constexpr auto af_inet          = AF_INET;
+constexpr auto af_inet6         = AF_INET6;
+constexpr auto af_unspec        = AF_UNSPEC;
+
+constexpr auto sock_stream      = SOCK_STREAM;
+constexpr auto sock_dgram       = SOCK_DGRAM;
+
+constexpr auto inaddr_any       = INADDR_ANY;
+constexpr auto inaddr_loopback  = INADDR_LOOPBACK;
+
+constexpr auto sol_socket       = SOL_SOCKET;
+constexpr auto so_error         = SO_ERROR;
+constexpr auto so_reuseaddr     = SO_REUSEADDR;
+
 #ifdef SO_REUSEPORT
-constexpr auto so_reuseport = SO_REUSEPORT;
+    constexpr auto so_reuseport = SO_REUSEPORT;
 #else
-constexpr auto so_reuseport = 0;
-#endif
-#ifdef SO_NOSIGPIPE
-constexpr auto so_nosigpipe = SO_NOSIGPIPE;
-#else
-constexpr auto so_nosigpipe = 0;
+    constexpr auto so_reuseport = 0;
 #endif
 
-[[maybe_unused]] constexpr auto ipproto_ip = IPPROTO_IP;
+#ifdef SO_NOSIGPIPE
+    constexpr auto so_nosigpipe = SO_NOSIGPIPE;
+#else
+    constexpr auto so_nosigpipe = 0;
+#endif
+
+constexpr auto somaxconn        = SOMAXCONN;
+
+constexpr auto shutdown_rd      = SHUT_RD;
+constexpr auto shutdown_wr      = SHUT_WR;
+constexpr auto shutdown_rdwr    = SHUT_RDWR;
+
+[[maybe_unused]] constexpr auto ipproto_ip   = IPPROTO_IP;
 [[maybe_unused]] constexpr auto ipproto_ipv6 = IPPROTO_IPV6;
 
-constexpr auto ip_multicast_loop = IP_MULTICAST_LOOP;
-constexpr auto ip_multicast_ttl = IP_MULTICAST_TTL;
-constexpr auto ip_add_membership = IP_ADD_MEMBERSHIP;
-constexpr auto ip_drop_membership = IP_DROP_MEMBERSHIP;
+constexpr auto ip_multicast_loop     = IP_MULTICAST_LOOP;
+constexpr auto ip_multicast_ttl       = IP_MULTICAST_TTL;
+constexpr auto ip_add_membership     = IP_ADD_MEMBERSHIP;
+constexpr auto ip_drop_membership    = IP_DROP_MEMBERSHIP;
+constexpr auto ipv6_add_membership   = IPV6_ADD_MEMBERSHIP;
+constexpr auto ipv6_drop_membership  = IPV6_DROP_MEMBERSHIP;
 
-constexpr auto ipv6_add_membership = IPV6_ADD_MEMBERSHIP;
-constexpr auto ipv6_drop_membership = IPV6_DROP_MEMBERSHIP;
+constexpr auto ai_passive       = AI_PASSIVE;
+constexpr auto ai_numericnode   = AI_NUMERICHOST;
+constexpr auto ai_numericserv   = AI_NUMERICSERV;
 
-constexpr auto ai_passive = AI_PASSIVE;
-constexpr auto ai_numericnode = AI_NUMERICHOST;
-constexpr auto ai_numericserv = AI_NUMERICSERV;
 #ifdef AI_ALL
-constexpr auto ai_all = AI_ALL;
+    constexpr auto ai_all = AI_ALL;
 #else
-constexpr auto ai_all = 0;
+    constexpr auto ai_all = 0;
 #endif
+
 #ifdef AI_ADDRCONFIG
-constexpr auto ai_addrconfig = AI_ADDRCONFIG;
+    constexpr auto ai_addrconfig = AI_ADDRCONFIG;
 #else
-constexpr auto ai_addrconfig = 0;
+    constexpr auto ai_addrconfig = 0;
 #endif
+
 #ifdef AI_V4MAPPED
-constexpr auto ai_v4mapped = AI_V4MAPPED;
+    constexpr auto ai_v4mapped = AI_V4MAPPED;
 #else
-constexpr auto ai_v4mapped = 0;
+    constexpr auto ai_v4mapped = 0;
 #endif
 
-constexpr auto ni_numerichost = NI_NUMERICHOST;
-constexpr auto ni_numericserv = NI_NUMERICSERV;
+constexpr auto ni_numerichost   = NI_NUMERICHOST;
+constexpr auto ni_numericserv   = NI_NUMERICSERV;
+constexpr auto ni_maxhost       = NI_MAXHOST;
+constexpr auto ni_maxserv       = NI_MAXSERV;
 
-constexpr auto ni_maxhost = NI_MAXHOST;
-constexpr auto ni_maxserv = NI_MAXSERV;
+constexpr auto msg_nosignal     = MSG_NOSIGNAL;
 
-constexpr auto econnrefused = ECONNREFUSED;
-constexpr auto etimedout = ETIMEDOUT;
+// Common errno values
+constexpr auto econnrefused     = ECONNREFUSED;
+constexpr auto etimedout        = ETIMEDOUT;
+constexpr auto einprogress      = EINPROGRESS;
+constexpr auto ewouldblock      = EWOULDBLOCK;
+#ifdef EAGAIN
+constexpr auto eagain           = EAGAIN;
+#else
+constexpr auto eagain           = EWOULDBLOCK; // EAGAIN and EWOULDBLOCK are often the same
+#endif
+constexpr auto eintr            = EINTR;
 
-inline int get_errno() { return errno; }
+inline int get_errno() noexcept { return errno; }
 
-using ::getaddrinfo;
-using ::freeaddrinfo;
-using ::gai_strerror;
-
-int connect_with_timeout(int fd, const sockaddr* address, socklen_t address_len, const std::chrono::milliseconds& timeout)
+// Improved connect with timeout
+int connect_with_timeout(int fd, const sockaddr* address, socklen_t address_len,
+                         const std::chrono::milliseconds& timeout)
 {
     const auto saved_flags = ::fcntl(fd, F_GETFL, 0);
-    if(saved_flags < 0) return -1;
-    if(::fcntl(fd, F_SETFL, saved_flags|O_NONBLOCK) < 0) return -1;
+    if (saved_flags < 0) return -1;
 
-    const auto connect_error = ::connect(fd, address, address_len);
-    const auto connect_errno = errno;
+    if (::fcntl(fd, F_SETFL, saved_flags | O_NONBLOCK) < 0) return -1;
 
-    if(::fcntl(fd, F_SETFL, saved_flags) < 0) return -1;
+    const auto connect_result = ::connect(fd, address, address_len);
+    const auto connect_errno  = errno;
 
-    if(connect_error == 0) return 0;
-    if(connect_errno != EINPROGRESS) return -1;
+    // Restore flags early
+    if (::fcntl(fd, F_SETFL, saved_flags) < 0) return -1;
+
+    if (connect_result == 0) return 0;  // Immediate success
+    if (connect_errno != EINPROGRESS) return -1;
 
     fd_set readfds{};
-    FD_ZERO(&readfds);
-    FD_SET(fd, &readfds);
     fd_set writefds{};
-    FD_ZERO(&writefds);
-    FD_SET(fd, &writefds);
+    fd_zero(&readfds);
+    fd_zero(&writefds);
+    fd_set_bit(fd, &readfds);
+    fd_set_bit(fd, &writefds);
 
-    if(timeout.count())
-    {
-        timeval tv {
-            static_cast<decltype(tv.tv_sec)>(timeout.count() / 1000),
-            static_cast<decltype(tv.tv_usec)>(timeout.count() % 1000 * 1000)
-        };
-        auto error = ::select(FD_SETSIZE, &readfds, &writefds, nullptr, &tv);
-        if(error == 0) { errno = ETIMEDOUT; return -1; }
-        if(error < 0) return -1;
-    }
-    else
-    {
-        if(::select(FD_SETSIZE, &readfds, &writefds, nullptr, nullptr) < 0) return -1;
+    timeval tv{};
+    timeval* tv_ptr = nullptr;
+
+    if (timeout.count() > 0) {
+        tv.tv_sec  = static_cast<decltype(tv.tv_sec)>(timeout.count() / 1000);
+        tv.tv_usec = static_cast<decltype(tv.tv_usec)>((timeout.count() % 1000) * 1000);
+        tv_ptr = &tv;
     }
 
-    int result = 0;
-    socklen_t result_len = static_cast<socklen_t>(sizeof result);
-    if(::getsockopt(fd, SOL_SOCKET, SO_ERROR, &result, &result_len) < 0) return -1;
+    const auto sel = ::select(fd + 1, &readfds, &writefds, nullptr, tv_ptr);
+    if (sel <= 0) {
+        errno = (sel == 0) ? ETIMEDOUT : errno;
+        return -1;
+    }
 
-    if(result > 0) { errno = result; return -1; }
+    if (!fd_isset(fd, &writefds)) {
+        errno = ETIMEDOUT;
+        return -1;
+    }
+
+    int optval = 0;
+    socklen_t optlen = sizeof(optval);
+    if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &optval, &optlen) < 0) return -1;
+    if (optval != 0) {
+        errno = optval;
+        return -1;
+    }
+
     return 0;
 }
 
-} // namespace net::posix
+} // export namespace net::posix
