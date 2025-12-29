@@ -1,161 +1,150 @@
 module;
 
 export module net:endpointbuf;
+
 import :posix;
 import :socket;
 import std;
 
 export namespace net {
 
-class endpointbuf_base : public std::streambuf
-{
+class endpointbuf_base : public std::streambuf {
 public:
-    explicit endpointbuf_base(socket&& s) : m_socket{std::move(s)} {}
-    virtual ~endpointbuf_base() = default;
-    bool wait_for(const std::chrono::milliseconds& timeout) const { return m_socket.wait_for(timeout); }
+    explicit endpointbuf_base(socket&& s) noexcept : m_socket{std::move(s)} {}
+    ~endpointbuf_base() override = default;
+
+    bool wait_for(const std::chrono::milliseconds& timeout) const noexcept {
+        return m_socket.wait_for(timeout);
+    }
+
 protected:
-    endpointbuf_base(const endpointbuf_base&) = delete;
-    endpointbuf_base& operator=(const endpointbuf_base&) = delete;
     socket m_socket;
 };
 
-constexpr std::size_t tcp_buffer_size{4096};
-constexpr std::size_t udp_buffer_size{512};
+constexpr std::size_t tcp_buffer_size = 4096;
+
+constexpr std::size_t udp_buffer_size = 65507;  // Realistic max UDP payload
 
 template<std::size_t N>
-class endpointbuf : public endpointbuf_base
-{
+class endpointbuf : public endpointbuf_base {
 public:
-    explicit endpointbuf(socket&& s) : endpointbuf_base{std::move(s)}, m_input_sequence{}, m_output_sequence{}
+    explicit endpointbuf(socket&& s)
+        : endpointbuf_base{std::move(s)}
     {
-        this->setg(&m_input_sequence[0], &m_input_sequence[N], &m_input_sequence[N]);
-        this->setp(&m_output_sequence[0], &m_output_sequence[N]);
+        setg(m_input.data(), m_input.data() + N, m_input.data() + N);
+        setp(m_output.data(), m_output.data() + N - 1);  // Leave room for overflow()
     }
 
 protected:
-    // Bulk read optimization
-    std::streamsize xsgetn(char_type* s, std::streamsize n) override
-    {
-        std::streamsize total_read = 0;
+    std::streamsize xsgetn(char_type* dest, std::streamsize count) override {
+        std::streamsize total = 0;
 
-        // 1. Take what we already have in the get area
-        const auto available = this->egptr() - this->gptr();
+        // 1. Consume buffered data
+        auto available = egptr() - gptr();
         if (available > 0) {
-            const auto chunk = std::min(n, available);
-            std::copy_n(this->gptr(), chunk, s);
-            this->gbump(static_cast<int>(chunk));
-            s += chunk;
-            n -= chunk;
-            total_read += chunk;
+            auto chunk = std::min(count, available);
+            std::copy_n(gptr(), chunk, dest);
+            gbump(static_cast<int>(chunk));
+            dest += chunk;
+            count -= chunk;
+            total += chunk;
         }
 
-        // 2. If we still need more, and it's a large request, bypass the internal buffer
-        if (n >= static_cast<std::streamsize>(N)) {
-            const auto res = posix::recv(this->m_socket, s, static_cast<std::size_t>(n), 0);
-            if (res > 0) {
-                total_read += res;
-                return total_read;
-            }
-            if (res == 0) return total_read; // EOF
-            // If error, total_read might be returned or we fall through to loop if it's EWOULDBLOCK
+        // 2. Large read: bypass buffer
+        if (count >= static_cast<std::streamsize>(N)) {
+            auto received = posix::recv(static_cast<int>(m_socket), dest, static_cast<std::size_t>(count), 0);
+            if (received > 0) return total + received;
+            if (received == 0) return total;  // EOF
+            // Fall through on error/EWOULDBLOCK
         }
 
-        // 3. Otherwise, use underflow to fill the internal buffer and continue
-        while (n > 0) {
-            const auto c = underflow();
-            if (c == std::char_traits<char>::eof()) break;
-            
-            const auto chunk = std::min(n, static_cast<std::streamsize>(this->egptr() - this->gptr()));
-            std::copy_n(this->gptr(), chunk, s);
-            this->gbump(static_cast<int>(chunk));
-            s += chunk;
-            n -= chunk;
-            total_read += chunk;
+        // 3. Fill buffer via underflow
+        while (count > 0) {
+            if (underflow() == traits_type::eof()) break;
+            available = egptr() - gptr();
+            auto chunk = std::min(count, available);
+            std::copy_n(gptr(), chunk, dest);
+            gbump(static_cast<int>(chunk));
+            dest += chunk;
+            count -= chunk;
+            total += chunk;
         }
-        return total_read;
+        return total;
     }
 
-    // Bulk write optimization
-    std::streamsize xsputn(const char_type* s, std::streamsize n) override
-    {
-        // 1. If it fits in the remaining space of the current put area, just copy it
-        const auto space = this->epptr() - this->pptr();
-        if (n <= space) {
-            std::copy_n(s, n, this->pptr());
-            this->pbump(static_cast<int>(n));
-            return n;
+    std::streamsize xsputn(const char_type* src, std::streamsize count) override {
+        auto space = epptr() - pptr();
+        if (count <= space) {
+            std::copy_n(src, count, pptr());
+            pbump(static_cast<int>(count));
+            return count;
         }
 
-        // 2. If it's larger than our buffer size, sync what we have and send the rest directly
-        if (sync() < 0) return 0;
-        if (n >= static_cast<std::streamsize>(N)) {
-            return send_all(s, static_cast<std::size_t>(n)) ? n : 0;
+        if (sync() == -1) return 0;
+
+        if (count >= static_cast<std::streamsize>(N)) {
+            return send_all(src, static_cast<std::size_t>(count)) ? count : 0;
         }
 
-        // 3. Otherwise, copy the remainder into the now-empty internal buffer
-        std::copy_n(s, n, this->pptr());
-        this->pbump(static_cast<int>(n));
-        return n;
+        std::copy_n(src, count, pptr());
+        pbump(static_cast<int>(count));
+        return count;
     }
 
-    typename std::streambuf::int_type underflow() override
-    {
-        if (this->gptr() < this->egptr())
-            return std::char_traits<char>::to_int_type(*this->gptr());
+    int_type underflow() override {
+        if (gptr() < egptr()) return traits_type::to_int_type(*gptr());
 
-        const auto bytes_read = posix::recv(this->m_socket, &m_input_sequence[0], N, 0);
-        if(bytes_read < 1) return std::char_traits<char>::eof();
-        this->setg(&m_input_sequence[0], &m_input_sequence[0], &m_input_sequence[bytes_read]);
-        return std::char_traits<char>::to_int_type(m_input_sequence[0]);
+            auto received = posix::recv(static_cast<int>(m_socket), m_input.data(), N, 0);
+        if (received <= 0) return traits_type::eof();
+
+        setg(m_input.data(), m_input.data(), m_input.data() + received);
+        return traits_type::to_int_type(m_input[0]);
     }
 
-    typename std::streambuf::int_type overflow(typename std::streambuf::int_type c = std::char_traits<char>::eof()) override
-    {
-        if(sync() < 0) return std::char_traits<char>::eof();
-        if(std::char_traits<char>::eq_int_type(c, std::char_traits<char>::eof())) return std::char_traits<char>::not_eof(c);
-        *this->pptr() = std::char_traits<char>::to_char_type(c);
-        this->pbump(1);
-        return std::char_traits<char>::not_eof(c);
+    int_type overflow(int_type ch = traits_type::eof()) override {
+        if (sync() == -1) return traits_type::eof();
+        if (!traits_type::eq_int_type(ch, traits_type::eof())) {
+            *pptr() = traits_type::to_char_type(ch);
+            pbump(1);
+            return ch;
+        }
+        return traits_type::not_eof(ch);
     }
 
-    int sync() override
-    {
-        const auto len = this->pptr() - this->pbase();
-        if (len > 0) {
-            if (!send_all(this->pbase(), static_cast<std::size_t>(len))) return -1;
-            this->setp(&m_output_sequence[0], &m_output_sequence[N]);
+    int sync() override {
+        auto pending = pptr() - pbase();
+        if (pending > 0) {
+            if (!send_all(pbase(), static_cast<std::size_t>(pending))) return -1;
+            setp(m_output.data(), m_output.data() + N - 1);
         }
         return 0;
     }
 
-    // Helper to handle partial writes and retries
-    bool send_all(const char* buf, std::size_t len)
-    {
-        std::size_t total_sent = 0;
-        while(total_sent < len)
-        {
-            const auto sent = posix::send(this->m_socket, buf + total_sent, len - total_sent, 0);
-            if(sent < 1)
-            {
-                if(sent == -1 && posix::get_errno() == posix::eintr) continue;
-                if((posix::get_errno() == posix::ewouldblock or posix::get_errno() == posix::eagain) and this->m_socket.wait()) continue;
+private:
+    bool send_all(const char* data, std::size_t len) const {
+        std::size_t sent = 0;
+        while (sent < len) {
+            auto res = posix::send(static_cast<int>(m_socket), data + sent, len - sent, posix::msg_nosignal);
+            if (res <= 0) {
+                auto err = posix::get_errno();
+                if (err == posix::eintr) continue;
+                if (err == posix::ewouldblock || err == posix::eagain) {
+                    if (!const_cast<socket&>(m_socket).wait()) return false;
+                    continue;
+                }
                 return false;
             }
-            total_sent += sent;
+            sent += static_cast<std::size_t>(res);
         }
         return true;
     }
 
-    std::streampos seekoff(std::streamoff off, std::ios_base::seekdir way, std::ios_base::openmode which) override
-    {
-        if(off == 0 && way == std::ios_base::cur && which == std::ios_base::out) return {this->pptr() - this->pbase()};
-        else return {-1};
-    }
-
-private:
-    char m_input_sequence[N];
-    char m_output_sequence[N];
+    std::array<char, N>         m_input{};
+    std::array<char, N>         m_output{};  // No +1 needed if overflow() uses sync() first
 };
 
-} // namespace net
+using tcp_endpointbuf = endpointbuf<tcp_buffer_size>;
 
+using udp_endpointbuf = endpointbuf<udp_buffer_size>;
+
+} // namespace net

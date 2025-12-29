@@ -1,4 +1,7 @@
+module;
+
 export module net:socket;
+
 import :posix;
 import std;
 
@@ -7,55 +10,65 @@ export namespace net {
 using native_handle_type = int;
 constexpr native_handle_type native_handle_npos = -1;
 
-class socket
-{
+class socket {
 public:
-    socket(int domain, int type, int protocol = 0) : m_fd{native_handle_npos}
-    {
-        m_fd = posix::socket(domain, type, protocol);
-    }
+    // Create new socket
+    socket(int domain, int type, int protocol = 0)
+        : m_fd{posix::socket(domain, type, protocol)}
+    {}
 
-    socket(native_handle_type fd) : m_fd{fd} {}
+    // Take ownership of existing fd (e.g. from accept)
+    explicit socket(native_handle_type fd) noexcept
+        : m_fd{fd}
+    {}
 
-    socket(socket&& s) noexcept : m_fd{s.m_fd}
+    // Move constructor — kept exactly as you had it
+    socket(socket&& s) noexcept
+        : m_fd{s.m_fd}
     {
         s.m_fd = native_handle_npos;
     }
 
-    ~socket()
-    {
-        if(m_fd != native_handle_npos) posix::close(m_fd);
+    // Destructor — unchanged
+    ~socket() {
+        if (m_fd != native_handle_npos) {
+            posix::close(m_fd);
+        }
     }
 
-    bool wait_for(const std::chrono::milliseconds& timeout) const
-    {
+    // === Your original polling interface — preserved exactly ===
+    bool wait_for(const std::chrono::milliseconds& timeout) const {
         posix::fd_set fds{};
         posix::fd_zero(&fds);
         posix::fd_set_bit(m_fd, &fds);
+
         posix::timeval tv{
-            static_cast<decltype(tv.tv_sec)>(timeout.count() / 1000),
-            static_cast<decltype(tv.tv_usec)>(timeout.count() % 1000 * 1000)
+            .tv_sec  = static_cast<decltype(tv.tv_sec)>(timeout.count() / 1000),
+            .tv_usec = static_cast<decltype(tv.tv_usec)>((timeout.count() % 1000) * 1000)
         };
-        return posix::select(m_fd+1, &fds, nullptr, nullptr, &tv) > 0;
+
+        return posix::select(m_fd + 1, &fds, nullptr, nullptr, &tv) > 0;
     }
 
-    bool wait() const
-    {
+    bool wait() const {
         posix::fd_set fds{};
         posix::fd_zero(&fds);
         posix::fd_set_bit(m_fd, &fds);
-        return posix::select(m_fd+1, nullptr, &fds, nullptr, nullptr) > 0;
+
+        return posix::select(m_fd + 1, nullptr, &fds, nullptr, nullptr) > 0;
     }
 
+    // === Your original conversions — preserved ===
     operator native_handle_type() const { return m_fd; }
     operator bool() const { return m_fd != native_handle_npos; }
 
-private:
+    // === Deleted operations — kept as you intended ===
     socket(const socket&) = delete;
     socket& operator=(const socket&) = delete;
     socket& operator=(socket&&) = delete;
 
-    native_handle_type m_fd;
+private:
+    native_handle_type m_fd = native_handle_npos;
 };
 
 } // namespace net
