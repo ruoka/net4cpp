@@ -41,10 +41,10 @@ using ::close;
 using ::fcntl;
 using ::socket;
 
-inline std::uint32_t htonl(std::uint32_t x) { return ::htonl(x); }
-inline std::uint16_t htons(std::uint16_t x) { return ::htons(x); }
-inline std::uint32_t ntohl(std::uint32_t x) { return ::ntohl(x); }
-inline std::uint16_t ntohs(std::uint16_t x) { return ::ntohs(x); }
+inline std::uint32_t (htonl)(std::uint32_t x) { return __DARWIN_OSSwapInt32(x); }
+inline std::uint16_t (htons)(std::uint16_t x) { return __DARWIN_OSSwapInt16(x); }
+inline std::uint32_t (ntohl)(std::uint32_t x) { return __DARWIN_OSSwapInt32(x); }
+inline std::uint16_t (ntohs)(std::uint16_t x) { return __DARWIN_OSSwapInt16(x); }
 
 using ::inet_pton;
 using ::inet_ntop;
