@@ -44,37 +44,35 @@ using ::socket;
 // Network byte order conversion functions - portable implementation
 // These convert between host byte order and network byte order (big-endian)
 
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    // Little-endian system: need to swap bytes
-    inline std::uint16_t (htons)(std::uint16_t x) { return __builtin_bswap16(x); }
-    inline std::uint32_t (htonl)(std::uint32_t x) { return __builtin_bswap32(x); }
-    inline std::uint16_t (ntohs)(std::uint16_t x) { return __builtin_bswap16(x); }
-    inline std::uint32_t (ntohl)(std::uint32_t x) { return __builtin_bswap32(x); }
-#elif defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-    // Big-endian system: no swapping needed
-    inline std::uint16_t (htons)(std::uint16_t x) { return x; }
-    inline std::uint32_t (htonl)(std::uint32_t x) { return x; }
-    inline std::uint16_t (ntohs)(std::uint16_t x) { return x; }
-    inline std::uint32_t (ntohl)(std::uint32_t x) { return x; }
-#else
-    // Fallback: use compiler-specific byte swap functions
-    inline std::uint16_t (htons)(std::uint16_t x) {
-        #if defined(_MSC_VER)
-            return _byteswap_ushort(x);
-        #else
-            return __builtin_bswap16(x);
-        #endif
+template<std::unsigned_integral T>
+constexpr T hton(T host) noexcept {
+    if constexpr (std::endian::native == std::endian::little) {
+        return std::byteswap(host);
+    } else {
+        return host;
     }
-    inline std::uint32_t (htonl)(std::uint32_t x) {
-        #if defined(_MSC_VER)
-            return _byteswap_ulong(x);
-        #else
-            return __builtin_bswap32(x);
-        #endif
-    }
-    inline std::uint16_t (ntohs)(std::uint16_t x) { return (htons)(x); }
-    inline std::uint32_t (ntohl)(std::uint32_t x) { return (htonl)(x); }
-#endif
+}
+
+template<std::unsigned_integral T>
+constexpr T ntoh(T net) noexcept {
+    return hton(net);
+}
+
+#undef ntohs
+#undef ntohl
+#undef ntohll
+#undef htons
+#undef htonl
+#undef htonll
+
+// Traditional named functions – thin wrappers around the generic one
+constexpr uint16_t ntohs(uint16_t net) noexcept { return ntoh(net); }
+constexpr uint32_t ntohl(uint32_t net) noexcept { return ntoh(net); }
+constexpr uint64_t ntohll(uint64_t net) noexcept { return ntoh(net); }
+
+constexpr uint16_t htons(uint16_t host) noexcept { return hton(host); }
+constexpr uint32_t htonl(uint32_t host) noexcept { return hton(host); }
+constexpr uint64_t htonll(uint64_t host) noexcept { return hton(host); }
 
 using ::inet_pton;
 using ::inet_ntop;
