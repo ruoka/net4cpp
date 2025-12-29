@@ -40,9 +40,9 @@ oendpointstream distribute(std::string_view group, std::string_view service_or_p
         if(!s) continue;
 
         auto t2l = ttl;
-        if(posix::setsockopt(static_cast<int>(s), posix::ipproto_ip, posix::ip_multicast_ttl, &t2l, sizeof t2l) < 0) continue;
+        if(posix::setsockopt(s, posix::ipproto_ip, posix::ip_multicast_ttl, &t2l, sizeof t2l) < 0) continue;
 
-        if(posix::connect(static_cast<int>(s), address.ai_addr, address.ai_addrlen) < 0) continue;
+        if(posix::connect(s, address.ai_addr, address.ai_addrlen) < 0) continue;
 
         return new endpointbuf<udp_buffer_size>{std::move(s)};
     }

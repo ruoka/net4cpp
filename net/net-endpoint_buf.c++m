@@ -52,7 +52,7 @@ protected:
 
         // 2. Large read: bypass buffer
         if (count >= static_cast<std::streamsize>(N)) {
-            auto received = posix::recv(static_cast<int>(m_socket), dest, static_cast<std::size_t>(count), 0);
+            auto received = posix::recv(m_socket, dest, static_cast<std::size_t>(count), 0);
             if (received > 0) return total + received;
             if (received == 0) return total;  // EOF
             // Fall through on error/EWOULDBLOCK
@@ -94,7 +94,7 @@ protected:
     int_type underflow() override {
         if (gptr() < egptr()) return traits_type::to_int_type(*gptr());
 
-            auto received = posix::recv(static_cast<int>(m_socket), m_input.data(), N, 0);
+        auto received = posix::recv(m_socket, m_input.data(), N, 0);
         if (received <= 0) return traits_type::eof();
 
         setg(m_input.data(), m_input.data(), m_input.data() + received);
@@ -124,7 +124,7 @@ private:
     bool send_all(const char* data, std::size_t len) const {
         std::size_t sent = 0;
         while (sent < len) {
-            auto res = posix::send(static_cast<int>(m_socket), data + sent, len - sent, posix::msg_nosignal);
+            auto res = posix::send(m_socket, data + sent, len - sent, posix::msg_nosignal);
             if (res <= 0) {
                 auto err = posix::get_errno();
                 if (err == posix::eintr) continue;
