@@ -41,10 +41,40 @@ using ::close;
 using ::fcntl;
 using ::socket;
 
-inline std::uint32_t (htonl)(std::uint32_t x) { return __DARWIN_OSSwapInt32(x); }
-inline std::uint16_t (htons)(std::uint16_t x) { return __DARWIN_OSSwapInt16(x); }
-inline std::uint32_t (ntohl)(std::uint32_t x) { return __DARWIN_OSSwapInt32(x); }
-inline std::uint16_t (ntohs)(std::uint16_t x) { return __DARWIN_OSSwapInt16(x); }
+// Network byte order conversion functions - portable implementation
+// These convert between host byte order and network byte order (big-endian)
+
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    // Little-endian system: need to swap bytes
+    inline std::uint16_t (htons)(std::uint16_t x) { return __builtin_bswap16(x); }
+    inline std::uint32_t (htonl)(std::uint32_t x) { return __builtin_bswap32(x); }
+    inline std::uint16_t (ntohs)(std::uint16_t x) { return __builtin_bswap16(x); }
+    inline std::uint32_t (ntohl)(std::uint32_t x) { return __builtin_bswap32(x); }
+#elif defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    // Big-endian system: no swapping needed
+    inline std::uint16_t (htons)(std::uint16_t x) { return x; }
+    inline std::uint32_t (htonl)(std::uint32_t x) { return x; }
+    inline std::uint16_t (ntohs)(std::uint16_t x) { return x; }
+    inline std::uint32_t (ntohl)(std::uint32_t x) { return x; }
+#else
+    // Fallback: use compiler-specific byte swap functions
+    inline std::uint16_t (htons)(std::uint16_t x) {
+        #if defined(_MSC_VER)
+            return _byteswap_ushort(x);
+        #else
+            return __builtin_bswap16(x);
+        #endif
+    }
+    inline std::uint32_t (htonl)(std::uint32_t x) {
+        #if defined(_MSC_VER)
+            return _byteswap_ulong(x);
+        #else
+            return __builtin_bswap32(x);
+        #endif
+    }
+    inline std::uint16_t (ntohs)(std::uint16_t x) { return (htons)(x); }
+    inline std::uint32_t (ntohl)(std::uint32_t x) { return (htonl)(x); }
+#endif
 
 using ::inet_pton;
 using ::inet_ntop;
