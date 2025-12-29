@@ -28,6 +28,7 @@ export namespace net::posix {
 
 using ::getsockopt;
 using ::setsockopt;
+using ::getsockname;
 using ::bind;
 using ::listen;
 using ::select;
@@ -38,6 +39,15 @@ using ::read;
 using ::write;
 using ::close;
 using ::fcntl;
+using ::socket;
+
+inline std::uint32_t (htonl)(std::uint32_t x) { return htonl(x); }
+inline std::uint16_t (htons)(std::uint16_t x) { return htons(x); }
+inline std::uint32_t (ntohl)(std::uint32_t x) { return ntohl(x); }
+inline std::uint16_t (ntohs)(std::uint16_t x) { return ntohs(x); }
+
+using ::inet_pton;
+using ::inet_ntop;
 
 using timeval = ::timeval;
 using fd_set = ::fd_set;
@@ -49,6 +59,76 @@ using sockaddr_in6 = ::sockaddr_in6;
 using ip_mreq = ::ip_mreq;
 using ipv6_mreq = ::ipv6_mreq;
 using socklen_t = ::socklen_t;
+
+inline void fd_zero(fd_set* set) { FD_ZERO(set); }
+inline void fd_set_bit(int fd, fd_set* set) { FD_SET(fd, set); }
+inline bool fd_isset(int fd, fd_set* set) { return FD_ISSET(fd, set); }
+
+constexpr auto af_inet = AF_INET;
+constexpr auto af_inet6 = AF_INET6;
+constexpr auto af_unspec = AF_UNSPEC;
+constexpr auto sock_stream = SOCK_STREAM;
+constexpr auto sock_dgram = SOCK_DGRAM;
+constexpr auto inaddr_any = INADDR_ANY;
+constexpr auto inaddr_loopback = INADDR_LOOPBACK;
+constexpr auto sol_socket = SOL_SOCKET;
+constexpr auto so_error = SO_ERROR;
+constexpr auto so_reuseaddr = SO_REUSEADDR;
+#ifdef SO_REUSEPORT
+constexpr auto so_reuseport = SO_REUSEPORT;
+#else
+constexpr auto so_reuseport = 0;
+#endif
+#ifdef SO_NOSIGPIPE
+constexpr auto so_nosigpipe = SO_NOSIGPIPE;
+#else
+constexpr auto so_nosigpipe = 0;
+#endif
+
+constexpr auto ipproto_ip = IPPROTO_IP;
+constexpr auto ipproto_ipv6 = IPPROTO_IPV6;
+
+constexpr auto ip_multicast_loop = IP_MULTICAST_LOOP;
+constexpr auto ip_multicast_ttl = IP_MULTICAST_TTL;
+constexpr auto ip_add_membership = IP_ADD_MEMBERSHIP;
+constexpr auto ip_drop_membership = IP_DROP_MEMBERSHIP;
+
+constexpr auto ipv6_add_membership = IPV6_ADD_MEMBERSHIP;
+constexpr auto ipv6_drop_membership = IPV6_DROP_MEMBERSHIP;
+
+constexpr auto ai_passive = AI_PASSIVE;
+constexpr auto ai_numericnode = AI_NUMERICHOST;
+constexpr auto ai_numericserv = AI_NUMERICSERV;
+#ifdef AI_ALL
+constexpr auto ai_all = AI_ALL;
+#else
+constexpr auto ai_all = 0;
+#endif
+#ifdef AI_ADDRCONFIG
+constexpr auto ai_addrconfig = AI_ADDRCONFIG;
+#else
+constexpr auto ai_addrconfig = 0;
+#endif
+#ifdef AI_V4MAPPED
+constexpr auto ai_v4mapped = AI_V4MAPPED;
+#else
+constexpr auto ai_v4mapped = 0;
+#endif
+
+constexpr auto ni_numerichost = NI_NUMERICHOST;
+constexpr auto ni_numericserv = NI_NUMERICSERV;
+
+constexpr auto ni_maxhost = NI_MAXHOST;
+constexpr auto ni_maxserv = NI_MAXSERV;
+
+constexpr auto econnrefused = ECONNREFUSED;
+constexpr auto etimedout = ETIMEDOUT;
+
+inline int get_errno() { return errno; }
+
+using ::getaddrinfo;
+using ::freeaddrinfo;
+using ::gai_strerror;
 
 int connect_with_timeout(int fd, const sockaddr* address, socklen_t address_len, const std::chrono::milliseconds& timeout)
 {
@@ -95,4 +175,3 @@ int connect_with_timeout(int fd, const sockaddr* address, socklen_t address_len,
 }
 
 } // namespace net::posix
-

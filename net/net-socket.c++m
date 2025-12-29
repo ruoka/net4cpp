@@ -1,7 +1,3 @@
-module;
-#include <sys/socket.h>
-#include <sys/select.h>
-
 export module net:socket;
 import :posix;
 import std;
@@ -16,7 +12,7 @@ class socket
 public:
     socket(int domain, int type, int protocol = 0) : m_fd{native_handle_npos}
     {
-        m_fd = ::socket(domain, type, protocol);
+        m_fd = posix::socket(domain, type, protocol);
     }
 
     socket(native_handle_type fd) : m_fd{fd} {}
@@ -34,8 +30,8 @@ public:
     bool wait_for(const std::chrono::milliseconds& timeout) const
     {
         posix::fd_set fds{};
-        FD_ZERO(&fds);
-        FD_SET(m_fd, &fds);
+        posix::fd_zero(&fds);
+        posix::fd_set_bit(m_fd, &fds);
         posix::timeval tv{
             static_cast<decltype(tv.tv_sec)>(timeout.count() / 1000),
             static_cast<decltype(tv.tv_usec)>(timeout.count() % 1000 * 1000)
@@ -46,8 +42,8 @@ public:
     bool wait() const
     {
         posix::fd_set fds{};
-        FD_ZERO(&fds);
-        FD_SET(m_fd, &fds);
+        posix::fd_zero(&fds);
+        posix::fd_set_bit(m_fd, &fds);
         return posix::select(m_fd+1, nullptr, &fds, nullptr, nullptr) > 0;
     }
 
@@ -63,4 +59,3 @@ private:
 };
 
 } // namespace net
-

@@ -1,16 +1,3 @@
-module;
-#include <sys/socket.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <cstring>
-#include <cassert>
-#include <cerrno>
-
-#ifndef IPV6_ADD_MEMBERSHIP
-#define IPV6_ADD_MEMBERSHIP IPV6_JOIN_GROUP
-#endif
-
 export module net:receiver;
 import :address_info;
 import :endpointbuf;
@@ -38,7 +25,7 @@ public:
 
     void leave()
     {
-        assert(false); // FIXME
+        // FIXME
     }
 
     const auto& group() const { return m_group; }
@@ -51,49 +38,47 @@ private:
 
 iendpointstream join(std::string_view group, std::string_view service, bool loop)
 {
-    const auto distribution_address = net::address_info{group, "", SOCK_DGRAM};
-    const auto local_address = net::address_info{"", service, SOCK_DGRAM, AI_PASSIVE, distribution_address->ai_family};
+    const auto distribution_address = net::address_info{group, "", posix::sock_dgram};
+    const auto local_address = net::address_info{"", service, posix::sock_dgram, posix::ai_passive, distribution_address->ai_family};
     for(const auto& address : local_address)
     {
         net::socket s{address.ai_family, address.ai_socktype, address.ai_protocol};
         if(!s) continue;
 
         auto reuse = 1;
-        if(posix::setsockopt(s, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof reuse) < 0) continue;
+        if(posix::setsockopt(s, posix::sol_socket, posix::so_reuseport, &reuse, sizeof reuse) < 0) continue;
 
         auto looop = loop ? '1' : '0';
-        if(posix::setsockopt(s, IPPROTO_IP, IP_MULTICAST_LOOP, &looop, sizeof looop) < 0) continue;
+        if(posix::setsockopt(s, posix::ipproto_ip, posix::ip_multicast_loop, &looop, sizeof looop) < 0) continue;
 
         if(posix::bind(s, address.ai_addr, address.ai_addrlen) < 0) continue;
 
-        if(address.ai_family == AF_INET)
+        if(address.ai_family == posix::af_inet)
         {
             auto mreq = posix::ip_mreq{};
             std::memcpy(&mreq.imr_multiaddr,
                         &reinterpret_cast<const posix::sockaddr_in*>(distribution_address->ai_addr)->sin_addr,
                         sizeof mreq.imr_multiaddr);
-            mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-            if(posix::setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof mreq) < 0) continue;
+            mreq.imr_interface.s_addr = posix::htonl(posix::inaddr_any);
+            if(posix::setsockopt(s, posix::ipproto_ip, posix::ip_add_membership, &mreq, sizeof mreq) < 0) continue;
         }
-        else if (address.ai_family == AF_INET6)
+        else if (address.ai_family == posix::af_inet6)
         {
             auto mreq = posix::ipv6_mreq{};
             std::memcpy(&mreq.ipv6mr_multiaddr,
                         &reinterpret_cast<const posix::sockaddr_in6*>(distribution_address->ai_addr)->sin6_addr,
                         sizeof mreq.ipv6mr_multiaddr);
             mreq.ipv6mr_interface = 0;
-            if(posix::setsockopt(s, IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP, &mreq, sizeof mreq) < 0) continue;
+            if(posix::setsockopt(s, posix::ipproto_ipv6, posix::ipv6_add_membership, &mreq, sizeof mreq) < 0) continue;
         }
         else
         {
-            assert(false);
+            // not implemented
         }
 
         return new endpointbuf<udp_buffer_size>{std::move(s)};
     }
-    throw std::system_error{errno, std::system_category(), "join failed"};
+    throw std::system_error{posix::get_errno(), std::system_category(), "join failed"};
 }
 
 } // namespace net
-
-

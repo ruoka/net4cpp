@@ -1,8 +1,5 @@
-module;
-#include <sys/socket.h>
-#include <netdb.h>
-
 module net;
+import :posix;
 import tester;
 import std;
 
@@ -45,7 +42,7 @@ auto connector_test_reg = test_case("Connector") = [] {
 
     tester::bdd::scenario("Connection timeout and failures") = [] {
         tester::bdd::given("A connector to localhost on a busy port") = [] {
-            const auto address = address_info{"localhost", "1999", SOCK_STREAM, AI_PASSIVE};
+            const auto address = address_info{"localhost", "1999", posix::sock_stream, posix::ai_passive};
             net::socket s{address->ai_family, address->ai_socktype, address->ai_protocol};
             posix::bind(s, address->ai_addr, address->ai_addrlen);
             auto ctor = net::connector{"localhost", "1999"};

@@ -1,8 +1,3 @@
-module;
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <cerrno>
-
 export module net:sender;
 import :address_info;
 import :endpointbuf;
@@ -38,23 +33,21 @@ private:
 
 oendpointstream distribute(std::string_view group, std::string_view service_or_port, unsigned ttl)
 {
-    const auto distribution_address = net::address_info{group, service_or_port, SOCK_DGRAM};
+    const auto distribution_address = net::address_info{group, service_or_port, posix::sock_dgram};
     for(const auto& address : distribution_address)
     {
         net::socket s{address.ai_family, address.ai_socktype, address.ai_protocol};
         if(!s) continue;
 
         auto t2l = ttl;
-        if(posix::setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL, &t2l, sizeof t2l) < 0) continue;
+        if(posix::setsockopt(s, posix::ipproto_ip, posix::ip_multicast_ttl, &t2l, sizeof t2l) < 0) continue;
 
         if(posix::connect(s, address.ai_addr, address.ai_addrlen) < 0) continue;
 
         return new endpointbuf<udp_buffer_size>{std::move(s)};
     }
 
-    throw std::system_error{errno, std::system_category(), "distribute failed"};
+    throw std::system_error{posix::get_errno(), std::system_category(), "distribute failed"};
 }
 
 } // namespace net
-
-

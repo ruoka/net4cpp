@@ -1,7 +1,3 @@
-module;
-#include <netdb.h>
-#include <sys/socket.h>
-
 export module net:address_info;
 import :posix;
 import std;
@@ -26,7 +22,7 @@ private:
 class address_info
 {
 public:
-    address_info(std::string_view node, std::string_view service_or_port, int socktype, int flags = AI_ALL, int family = AF_UNSPEC) : m_addrinfo{nullptr}
+    address_info(std::string_view node, std::string_view service_or_port, int socktype, int flags = posix::ai_all, int family = posix::af_unspec) : m_addrinfo{nullptr}
     {
         using namespace std::literals;
         auto hints = posix::addrinfo{};
@@ -42,21 +38,21 @@ public:
 
         // On macOS, numeric ports require AI_NUMERICSERV to avoid EAI_NONAME
         if (not service_str.empty() and std::isdigit(static_cast<unsigned char>(service_str[0])))
-            hints.ai_flags |= AI_NUMERICSERV;
+            hints.ai_flags |= posix::ai_numericserv;
 
         // If we have a numeric host and not "any", use AI_NUMERICHOST
         if (not is_any and not node_str.empty() and std::isdigit(static_cast<unsigned char>(node_str[0])))
-            hints.ai_flags |= AI_NUMERICHOST;
+            hints.ai_flags |= posix::ai_numericnode;
         
-        const auto error = ::getaddrinfo(is_any ? nullptr : node_str.c_str(), 
-                                         service_str.empty() ? nullptr : service_str.c_str(), 
-                                         &hints, &m_addrinfo);
-        if(error) throw std::runtime_error{"address resolution failed for "s + (node.empty() ? "ANY"s : std::string{node}) + ":" + std::string{service_or_port} + " -> " + ::gai_strerror(error)};
+        const auto error = posix::getaddrinfo(is_any ? nullptr : node_str.c_str(), 
+                                              service_str.empty() ? nullptr : service_str.c_str(), 
+                                              &hints, &m_addrinfo);
+        if(error) throw std::runtime_error{"address resolution failed for "s + (node.empty() ? "ANY"s : std::string{node}) + ":" + std::string{service_or_port} + " -> " + posix::gai_strerror(error)};
     }
 
     address_info(address_info&& ai) noexcept : m_addrinfo{ai.m_addrinfo} { ai.m_addrinfo = nullptr; }
 
-    ~address_info() { if(m_addrinfo) ::freeaddrinfo(m_addrinfo); }
+    ~address_info() { if(m_addrinfo) posix::freeaddrinfo(m_addrinfo); }
 
     explicit operator bool() const { return m_addrinfo != nullptr; }
     const posix::addrinfo* operator->() const { return m_addrinfo; }
@@ -72,4 +68,3 @@ private:
 };
 
 } // namespace net
-

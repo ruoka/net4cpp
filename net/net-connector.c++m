@@ -1,7 +1,3 @@
-module;
-#include <sys/socket.h>
-#include <cerrno>
-
 export module net:connector;
 import :address_info;
 import :endpointbuf;
@@ -57,24 +53,24 @@ endpointstream connect(std::string_view host,
                        std::string_view service_or_port,
                        const std::chrono::milliseconds& timeout)
 {
-    auto remote_address = net::address_info{host, service_or_port, SOCK_STREAM};
+    auto remote_address = net::address_info{host, service_or_port, posix::sock_stream};
     for(const auto& address : remote_address)
     {
         socket s{address.ai_family, address.ai_socktype, address.ai_protocol};
         if(!s) continue;
 
-#ifdef SO_NOSIGPIPE
-        // macOS: prevent SIGPIPE on broken pipe writes.
-        auto yes = 1;
-        if(posix::setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof yes) < 0) continue;
-#endif
+        if (posix::so_nosigpipe > 0) {
+            // macOS: prevent SIGPIPE on broken pipe writes.
+            auto yes = 1;
+            if(posix::setsockopt(s, posix::sol_socket, posix::so_nosigpipe, &yes, sizeof yes) < 0) continue;
+        }
 
         if(posix::connect_with_timeout(s, address.ai_addr, address.ai_addrlen, timeout) < 0) continue;
 
         return new endpointbuf<tcp_buffer_size>{std::move(s)};
     }
 
-    throw std::system_error{errno, std::system_category(), "connect failed"};
+    throw std::system_error{posix::get_errno(), std::system_category(), "connect failed"};
 }
 
 endpointstream connect(const uri& url,
@@ -84,5 +80,3 @@ endpointstream connect(const uri& url,
 }
 
 } // namespace net
-
-

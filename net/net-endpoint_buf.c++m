@@ -135,14 +135,13 @@ protected:
     bool send_all(const char* buf, std::size_t len)
     {
         std::size_t total_sent = 0;
-        auto retry = 0;
         while(total_sent < len)
         {
             const auto sent = ::send(this->m_socket, buf + total_sent, len - total_sent, 0);
             if(sent < 1)
             {
+                if(sent == -1 && errno == EINTR) continue;
                 if((errno == EWOULDBLOCK or errno == EAGAIN) and this->m_socket.wait()) continue;
-                if(++retry < 3) continue;
                 return false;
             }
             total_sent += sent;

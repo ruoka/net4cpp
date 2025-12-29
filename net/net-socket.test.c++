@@ -1,8 +1,5 @@
-module;
-#include <sys/socket.h>
-#include <netinet/in.h>
-
 module net;
+import :posix;
 import tester;
 import std;
 
@@ -27,13 +24,13 @@ auto socket_test_reg = test_case("Socket construction and move") = [] {
     if(!network_tests_enabled()) return;
     tester::bdd::scenario("Basic construction") = [] {
         tester::bdd::given("An IPv4 TCP socket") = [] {
-            const net::socket s{AF_INET, SOCK_STREAM};
+            const net::socket s{posix::af_inet, posix::sock_stream};
             check_true(!(!s));
             int fd = s;
             check_true(fd > 0);
             
             auto yes = 1;
-            auto e = posix::setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes);
+            auto e = posix::setsockopt(s, posix::sol_socket, posix::so_reuseaddr, &yes, sizeof yes);
             check_eq(e, 0);
         };
 
@@ -44,13 +41,13 @@ auto socket_test_reg = test_case("Socket construction and move") = [] {
             check_eq(fd, 2112);
             
             auto yes = 1;
-            auto e = posix::setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes);
+            auto e = posix::setsockopt(s, posix::sol_socket, posix::so_reuseaddr, &yes, sizeof yes);
             // This should fail because 2112 is likely not a valid socket FD in this context
             check_eq(e, -1);
         };
 
         tester::bdd::given("A socket being moved") = [] {
-            auto s1 = net::socket{AF_INET, SOCK_DGRAM};
+            auto s1 = net::socket{posix::af_inet, posix::sock_dgram};
             check_true(!(!s1));
             int fd1 = s1;
             check_true(fd1 > 0);
@@ -68,7 +65,7 @@ auto socket_test_reg = test_case("Socket construction and move") = [] {
 
     tester::bdd::scenario("Socket wait_for") = [] {
         tester::bdd::given("A new TCP socket") = [] {
-            const auto s = net::socket{AF_INET, SOCK_STREAM};
+            const auto s = net::socket{posix::af_inet, posix::sock_stream};
             using namespace std::chrono_literals;
             auto b = s.wait_for(1ms);
             check_true(!b);
