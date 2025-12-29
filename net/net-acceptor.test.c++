@@ -18,9 +18,11 @@ inline bool network_tests_enabled()
 }
 }
 
-auto acceptor_test_reg = test_case("Acceptor") = [] {
-    if(!network_tests_enabled()) return;
-    tester::bdd::scenario("Basic construction") = [] {
+auto register_acceptor_tests()
+{
+    if(!network_tests_enabled()) return false;
+
+    tester::bdd::scenario("Basic construction, [net]") = [] {
         tester::bdd::given("An acceptor for localhost:54321") = [] {
             auto ator = net::acceptor{"localhost","54321"};
             check_eq(ator.host(),"localhost");
@@ -29,7 +31,7 @@ auto acceptor_test_reg = test_case("Acceptor") = [] {
         };
     };
 
-    tester::bdd::scenario("Accept a connection") = [] {
+    tester::bdd::scenario("Accept a connection, [net]") = [] {
         tester::bdd::given("An acceptor and a connector") = [] {
             using namespace std::chrono_literals;
             std::atomic<bool> accepted{false};
@@ -41,7 +43,7 @@ auto acceptor_test_reg = test_case("Acceptor") = [] {
             auto host_mutex = std::mutex{};
 
             std::thread t1{
-                [&]{
+                [&]() {
                     try {
                         auto ator = net::acceptor{"localhost","50001"};
                         ator.timeout(2s);
@@ -60,7 +62,7 @@ auto acceptor_test_reg = test_case("Acceptor") = [] {
             std::this_thread::sleep_for(100ms);
 
             std::thread t2{
-                [&]{
+                [&]() {
                     try {
                         auto s = net::connect("localhost","50001");
                         connect_ok = static_cast<bool>(s);
@@ -92,4 +94,7 @@ auto acceptor_test_reg = test_case("Acceptor") = [] {
             }
         };
     };
-};
+    return true;
+}
+
+const auto _ = register_acceptor_tests();

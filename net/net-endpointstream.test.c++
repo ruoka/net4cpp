@@ -18,9 +18,11 @@ inline bool network_tests_enabled()
 }
 }
 
-auto endpointstream_test_reg = test_case("Endpoint Stream") = [] {
-    if(!network_tests_enabled()) return;
-    tester::bdd::scenario("Join and Distribute (Dgram)") = [] {
+auto register_endpointstream_tests()
+{
+    if(!network_tests_enabled()) return false;
+
+    tester::bdd::scenario("Join and Distribute (Dgram), [net]") = [] {
         tester::bdd::given("A multicast join and distribute") = [] {
             check_nothrow([] {
                 auto is = join("228.0.0.4","54321");
@@ -29,7 +31,7 @@ auto endpointstream_test_reg = test_case("Endpoint Stream") = [] {
         };
     };
 
-    tester::bdd::scenario("HTTP Request and Response") = [] {
+tester::bdd::scenario("HTTP Request and Response, [net]") = [] {
         tester::bdd::given("A connection to google.fi") = [] {
             check_nothrow([] {
                 try {
@@ -61,7 +63,7 @@ auto endpointstream_test_reg = test_case("Endpoint Stream") = [] {
         };
     };
 
-    tester::bdd::scenario("Stream Move") = [] {
+tester::bdd::scenario("Stream Move, [net]") = [] {
         tester::bdd::given("An endpointstream that is moved") = [] {
             check_nothrow([] {
                 try {
@@ -74,7 +76,7 @@ auto endpointstream_test_reg = test_case("Endpoint Stream") = [] {
         };
     };
 
-    tester::bdd::scenario("Bulk Data Transfer") = [] {
+tester::bdd::scenario("Bulk Data Transfer, [net]") = [] {
         tester::bdd::given("A local TCP connection") = [] {
             acceptor acc{"127.0.0.1", "0"};
             const auto port = acc.bound_port();
@@ -107,4 +109,8 @@ auto endpointstream_test_reg = test_case("Endpoint Stream") = [] {
             check_eq(sent_data, received_data);
         };
     };
-};
+
+    return true;
+}
+
+const auto _ = register_endpointstream_tests();

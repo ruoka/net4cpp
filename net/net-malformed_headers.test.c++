@@ -11,7 +11,8 @@ using tester::assertions::check_eq;
 using tester::assertions::check_false;
 }
 
-auto malformed_headers_test_reg = test_case("Malformed HTTP Headers") = [] {
+auto register_malformed_headers_tests()
+{
     // 1. Parsing broken header lines
     {
         auto raw = "Valid-Header: correct\r\n"
@@ -53,4 +54,8 @@ auto malformed_headers_test_reg = test_case("Malformed HTTP Headers") = [] {
         check_eq(hs["header1"], "v1");
         check_eq(hs["header2"], "v2");
     }
-};
+
+    return true;
+}
+
+const auto _ = register_malformed_headers_tests();

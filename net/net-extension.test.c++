@@ -8,10 +8,11 @@ using tester::assertions::check_eq;
 using tester::assertions::check_true;
 }
 
-auto extension_test_reg = test_case("Std Extension") = [] {
+auto register_extension_tests()
+{
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    tester::bdd::scenario("Months to String") = [] {
+    tester::bdd::scenario("Months to String, [net]") = [] {
         using namespace std::chrono;
         check_eq("Jan", ext::month_to_string(month{1}));
         check_eq("Feb", ext::month_to_string(month{2}));
@@ -27,7 +28,7 @@ auto extension_test_reg = test_case("Std Extension") = [] {
         check_eq("Dec", ext::month_to_string(month{12}));
     };
 
-    tester::bdd::scenario("Weekday to String") = [] {
+    tester::bdd::scenario("Weekday to String, [net]") = [] {
         using namespace std::chrono;
         check_eq("Sun", ext::weekday_to_string(weekday{0}));
         check_eq("Mon", ext::weekday_to_string(weekday{1}));
@@ -38,7 +39,7 @@ auto extension_test_reg = test_case("Std Extension") = [] {
         check_eq("Sat", ext::weekday_to_string(weekday{6}));
     };
 
-    tester::bdd::scenario("Time Point to RFC1123") = [] {
+    tester::bdd::scenario("Time Point to RFC1123, [net]") = [] {
         using namespace std::chrono;
         using namespace std::chrono_literals;
         check_eq("Thu, 01 Jan 1970 00:00:00 GMT", ext::to_rfc1123(system_clock::time_point{0us}));
@@ -51,13 +52,13 @@ auto extension_test_reg = test_case("Std Extension") = [] {
 #pragma clang diagnostic pop
 
 #if defined(__APPLE__) && defined(__clang__) && (__clang_major__ >= 22)
-    tester::bdd::scenario("std::vformat (chrono) RFC1123") = [] {
+    tester::bdd::scenario("std::vformat (chrono) RFC1123, [net]") = [] {
         // clang-22 (macOS) has a frontend crash compiling chrono formatting via std::format/vformat
         // in our modules setup. Keep CI coverage (Linux/clang-20) while avoiding local crashes.
         check_true(true);
     };
 #else
-    tester::bdd::scenario("std::vformat (chrono) RFC1123") = [] {
+    tester::bdd::scenario("std::vformat (chrono) RFC1123, [net]") = [] {
         using namespace std::chrono;
         using namespace std::chrono_literals;
 
@@ -75,7 +76,7 @@ auto extension_test_reg = test_case("Std Extension") = [] {
     };
 #endif
 
-    tester::bdd::scenario("String to Time Point") = [] {
+    tester::bdd::scenario("String to Time Point, [net]") = [] {
         using namespace std::chrono;
         using namespace std::chrono_literals;
         check_eq(system_clock::time_point{0us}, ext::to_time_point("1970-01-01T00:00:00.000Z"));
@@ -86,5 +87,9 @@ auto extension_test_reg = test_case("Std Extension") = [] {
         check_eq(system_clock::time_point{12h}, ext::to_time_point("1970-01-01T12:00:00.000Z"));
         check_eq(system_clock::time_point{days{1}}, ext::to_time_point("1970-01-02T00:00:00.000Z"));
     };
-};
+
+    return true;
+}
+
+const auto _ = register_extension_tests();
 

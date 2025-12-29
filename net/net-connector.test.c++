@@ -20,9 +20,11 @@ inline bool network_tests_enabled()
 }
 }
 
-auto connector_test_reg = test_case("Connector") = [] {
-    if(!network_tests_enabled()) return;
-    tester::bdd::scenario("Basic construction") = [] {
+auto register_connector_tests()
+{
+    if(!network_tests_enabled()) return false;
+
+    tester::bdd::scenario("Basic construction, [net]") = [] {
         tester::bdd::given("A connector to google.com:http") = [] {
             const auto ctor = net::connector{"google.com","http"};
             check_eq(ctor.host(), "google.com");
@@ -31,7 +33,7 @@ auto connector_test_reg = test_case("Connector") = [] {
         };
     };
 
-    tester::bdd::scenario("Connecting to a host") = [] {
+    tester::bdd::scenario("Connecting to a host, [net]") = [] {
         tester::bdd::given("A connection to google.com:http") = [] {
             check_nothrow([] {
                 const auto s = net::connect("google.com","http");
@@ -40,7 +42,7 @@ auto connector_test_reg = test_case("Connector") = [] {
         };
     };
 
-    tester::bdd::scenario("Connection timeout and failures") = [] {
+    tester::bdd::scenario("Connection timeout and failures, [net]") = [] {
         tester::bdd::given("A connector to localhost on a busy port") = [] {
             const auto address = address_info{"localhost", "1999", posix::sock_stream, posix::ai_passive};
             net::socket s{address->ai_family, address->ai_socktype, address->ai_protocol};
@@ -51,4 +53,8 @@ auto connector_test_reg = test_case("Connector") = [] {
             // We don't necessarily want to assert a throw here as it depends on system state
         };
     };
-};
+
+    return true;
+}
+
+const auto _ = register_connector_tests();

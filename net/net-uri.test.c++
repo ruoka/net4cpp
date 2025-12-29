@@ -11,8 +11,9 @@ using tester::assertions::check_false;
 using tester::assertions::check_eq;
 }
 
-auto uri_test_reg = test_case("URI Parsing") = [] {
-    tester::bdd::scenario("Full HTTP URI") = [] {
+auto register_uri_tests()
+{
+    tester::bdd::scenario("Full HTTP URI, [net]") = [] {
         tester::bdd::given("A full http uri string") = [] {
             auto raw = "http://kake:passwd@www.appinf.com:88/sample/isin?eq=FI123456789#frags";
             auto parsed = net::uri{raw};
@@ -31,7 +32,7 @@ auto uri_test_reg = test_case("URI Parsing") = [] {
         };
     };
 
-    tester::bdd::scenario("Simple HTTPS URI") = [] {
+    tester::bdd::scenario("Simple HTTPS URI, [net]") = [] {
         tester::bdd::given("A simple https uri string") = [] {
             auto raw = "https://localhost/test/13";
             auto parsed = net::uri{raw};
@@ -50,7 +51,7 @@ auto uri_test_reg = test_case("URI Parsing") = [] {
         };
     };
 
-    tester::bdd::scenario("Relative URI") = [] {
+    tester::bdd::scenario("Relative URI, [net]") = [] {
         tester::bdd::given("A relative uri string") = [] {
             auto raw = "../../sample/55#frags3";
             auto parsed = net::uri{raw};
@@ -70,7 +71,7 @@ auto uri_test_reg = test_case("URI Parsing") = [] {
         };
     };
 
-    tester::bdd::scenario("Port without host") = [] {
+    tester::bdd::scenario("Port without host, [net]") = [] {
         tester::bdd::given("A URI with port but no host") = [] {
             auto raw = "FIXT.1.1://KAKE@:2112/xxx?tail=10";
             auto parsed = net::uri{raw};
@@ -85,4 +86,8 @@ auto uri_test_reg = test_case("URI Parsing") = [] {
             check_eq(static_cast<std::string_view>(parsed.fragment), "");
         };
     };
-};
+
+    return true;
+}
+
+const auto _ = register_uri_tests();

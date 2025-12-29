@@ -7,8 +7,9 @@ using tester::basic::test_case;
 using tester::assertions::check_eq;
 }
 
-auto base64_test_reg = test_case("Base64") = [] {
-    tester::bdd::scenario("To Character Set") = [] {
+auto register_base64_tests()
+{
+    tester::bdd::scenario("To Character Set, [net]") = [] {
         check_eq('A', http::base64::to_character_set(0));
         check_eq('B', http::base64::to_character_set(1));
         check_eq('a', http::base64::to_character_set(26));
@@ -19,7 +20,7 @@ auto base64_test_reg = test_case("Base64") = [] {
         check_eq('=', http::base64::to_character_set(64));
     };
 
-    tester::bdd::scenario("Encode") = [] {
+    tester::bdd::scenario("Encode, [net]") = [] {
         check_eq("", http::base64::encode(""));
         check_eq("TQ==", http::base64::encode("M"));
         check_eq("TWE=", http::base64::encode("Ma"));
@@ -32,7 +33,7 @@ auto base64_test_reg = test_case("Base64") = [] {
         check_eq("c3VyZS4=", http::base64::encode("sure."));
     };
 
-    tester::bdd::scenario("To Index") = [] {
+    tester::bdd::scenario("To Index, [net]") = [] {
         check_eq(0, http::base64::to_index('A'));
         check_eq(1, http::base64::to_index('B'));
         check_eq(26, http::base64::to_index('a'));
@@ -43,7 +44,7 @@ auto base64_test_reg = test_case("Base64") = [] {
         check_eq(64, http::base64::to_index('='));
     };
 
-    tester::bdd::scenario("Decode") = [] {
+    tester::bdd::scenario("Decode, [net]") = [] {
         check_eq("", http::base64::decode(""));
         check_eq("M", http::base64::decode("TQ=="));
         check_eq("Ma", http::base64::decode("TWE="));
@@ -55,5 +56,9 @@ auto base64_test_reg = test_case("Base64") = [] {
         check_eq("asure.", http::base64::decode("YXN1cmUu"));
         check_eq("sure.", http::base64::decode("c3VyZS4="));
     };
-};
+
+    return true;
+}
+
+const auto _ = register_base64_tests();
 

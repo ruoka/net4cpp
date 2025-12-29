@@ -5,7 +5,6 @@ import std;
 using namespace net;
 
 namespace {
-using tester::basic::test_case;
 using tester::assertions::check_eq;
 using tester::assertions::check_true;
 
@@ -53,8 +52,10 @@ void test_route_registration() {
     check_eq(c3, "<p>/foo/123</p>");
 }
 
-void test_server_start_stop() {
+void test_server_start_stop()
+{
     if(!network_tests_enabled()) return;
+
     http::server server{};
     server.get("/").text("OK");
 
@@ -80,12 +81,17 @@ void test_server_start_stop() {
 
 } // namespace
 
-auto server_test_reg = test_case("HTTP Server") = [] {
-    tester::bdd::scenario("Route registration and rendering") = [] {
+auto register_server_tests()
+{
+    tester::bdd::scenario("Route registration and rendering, [net]") = [] {
         test_route_registration();
     };
-    
-    tester::bdd::scenario("Server start and stop sequence") = [] {
+
+    tester::bdd::scenario("Server start and stop sequence, [net]") = [] {
         test_server_start_stop();
     };
-};
+
+    return true;
+}
+
+const auto _ = register_server_tests();

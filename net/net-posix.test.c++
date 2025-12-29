@@ -18,10 +18,11 @@ inline bool network_tests_enabled()
 }
 }
 
-auto posix_test_reg = test_case("POSIX utilities") = [] {
-    if(!network_tests_enabled()) return;
+auto register_posix_tests()
+{
+    if(!network_tests_enabled()) return false;
 
-    tester::bdd::scenario("connect_with_timeout success") = [] {
+    tester::bdd::scenario("connect_with_timeout success, [net]") = [] {
         struct State {
             int listen_fd = -1;
             posix::sockaddr_in addr{};
@@ -55,7 +56,7 @@ auto posix_test_reg = test_case("POSIX utilities") = [] {
         };
     };
 
-    tester::bdd::scenario("connect_with_timeout failure - connection refused") = [] {
+    tester::bdd::scenario("connect_with_timeout failure - connection refused, [net]") = [] {
         auto addr = std::make_shared<posix::sockaddr_in>();
         addr->sin_family = posix::af_inet;
         addr->sin_addr.s_addr = posix::htonl(posix::inaddr_loopback);
@@ -73,7 +74,7 @@ auto posix_test_reg = test_case("POSIX utilities") = [] {
         };
     };
 
-    tester::bdd::scenario("connect_with_timeout failure - timeout") = [] {
+    tester::bdd::scenario("connect_with_timeout failure - timeout, [net]") = [] {
         auto addr = std::make_shared<posix::sockaddr_in>();
         addr->sin_family = posix::af_inet;
         posix::inet_pton(posix::af_inet, "10.255.255.1", &addr->sin_addr); 
@@ -96,4 +97,8 @@ auto posix_test_reg = test_case("POSIX utilities") = [] {
             posix::close(client_fd);
         };
     };
-};
+
+    return true;
+}
+
+const auto _ = register_posix_tests();

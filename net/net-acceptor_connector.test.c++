@@ -17,8 +17,9 @@ inline bool network_tests_enabled()
 }
 }
 
-auto acceptor_connector_test_reg = test_case("Acceptor and Connector") = [] {
-    if(!network_tests_enabled()) return;
+auto register_acceptor_connector_tests()
+{
+    if(!network_tests_enabled()) return false;
     std::array<int, 100> data;
     for (int i = 0; i < 100; ++i) data[i] = i + 1;
 
@@ -82,4 +83,8 @@ auto acceptor_connector_test_reg = test_case("Acceptor and Connector") = [] {
         check_eq(data[idx], received[idx]);
     if(received.size() != data.size())
         failed("Connector did not receive all expected values");
-};
+
+    return true;
+}
+
+const auto _ = register_acceptor_connector_tests();

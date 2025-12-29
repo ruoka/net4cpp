@@ -14,8 +14,9 @@ using tester::assertions::check_true;
 using tester::assertions::check_eq;
 }
 
-auto address_info_test_reg = test_case("Address Info construction") = [] {
-    tester::bdd::scenario("Stream construction") = [] {
+auto register_address_info_tests()
+{
+    tester::bdd::scenario("Stream construction, [net]") = [] {
         tester::bdd::given("A localhost stream address") = [] {
             auto ai = address_info{"localhost", "54321", SOCK_STREAM};
             auto b = begin(ai);
@@ -26,7 +27,7 @@ auto address_info_test_reg = test_case("Address Info construction") = [] {
         };
     };
 
-    tester::bdd::scenario("Datagram construction") = [] {
+    tester::bdd::scenario("Datagram construction, [net]") = [] {
         tester::bdd::given("A localhost datagram address") = [] {
             auto ai = address_info{"localhost", "54321", SOCK_DGRAM};
             auto b = begin(ai);
@@ -37,7 +38,7 @@ auto address_info_test_reg = test_case("Address Info construction") = [] {
         };
     };
 
-    tester::bdd::scenario("No host construction") = [] {
+    tester::bdd::scenario("No host construction, [net]") = [] {
         tester::bdd::given("An empty host stream address") = [] {
             auto ai = address_info{"", "54321", SOCK_STREAM};
             auto b = begin(ai);
@@ -47,4 +48,8 @@ auto address_info_test_reg = test_case("Address Info construction") = [] {
                 check_eq(a.ai_socktype, SOCK_STREAM);
         };
     };
-};
+
+    return true;
+}
+
+const auto _ = register_address_info_tests();

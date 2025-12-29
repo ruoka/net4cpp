@@ -5,7 +5,6 @@ import std;
 using namespace net;
 
 namespace {
-using tester::basic::test_case;
 using tester::assertions::check_eq;
 using tester::assertions::check_true;
 using tester::assertions::warning;
@@ -18,8 +17,9 @@ inline bool network_tests_enabled()
 }
 }
 
-auto receiver_sender_test_reg = test_case("Receiver and Sender") = [] {
-    if(!network_tests_enabled()) return;
+auto register_receiver_sender_tests()
+{
+    if(!network_tests_enabled()) return false;
     std::array<int, 100> data;
     for (int i = 0; i < 100; ++i) data[i] = i + 1;
 
@@ -35,7 +35,7 @@ auto receiver_sender_test_reg = test_case("Receiver and Sender") = [] {
     auto received_mutex = std::mutex{};
 
     std::thread t1{
-        [&]{
+        [&]() {
             try {
                 auto rver = net::receiver{"228.0.0.4", "54321"};
                 auto is = rver.join();
@@ -66,7 +66,7 @@ auto receiver_sender_test_reg = test_case("Receiver and Sender") = [] {
     }
 
     std::thread t2{
-        [&]{
+        [&]() {
             try {
                 auto sder = net::sender{"228.0.0.4", "54321"};
                 auto os = sder.distribute();
@@ -97,11 +97,11 @@ auto receiver_sender_test_reg = test_case("Receiver and Sender") = [] {
     // If multicast is unavailable, treat as a warning rather than failing CI/dev machines.
     if (sender_failed) {
         warning("Sender failed (multicast may be unavailable on this host/network)");
-        return;
+        return false;
     }
     if (receiver_failed) {
         warning("Receiver failed (multicast may be unavailable on this host/network)");
-        return;
+        return false;
     }
 
     // Validate whatever we received.
@@ -111,4 +111,8 @@ auto receiver_sender_test_reg = test_case("Receiver and Sender") = [] {
     if (received.size() != data.size()) {
         warning("Multicast data incomplete (multicast may be unavailable on this host/network)");
     }
-};
+
+    return true;
+}
+
+const auto _ = register_receiver_sender_tests();

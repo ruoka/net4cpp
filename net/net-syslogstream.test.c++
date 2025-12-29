@@ -5,7 +5,6 @@ import std;
 using namespace net;
 
 namespace {
-using tester::basic::test_case;
 using tester::assertions::check_true;
 using tester::assertions::check_eq;
 using tester::assertions::check_nothrow;
@@ -18,8 +17,11 @@ inline bool network_tests_enabled()
 }
 }
 
-auto syslogstream_test_reg = test_case("Syslog Stream") = [] {
-    tester::bdd::scenario("Timestamp formatting") = [] {
+auto register_syslogstream_tests()
+{
+    if(!network_tests_enabled()) return false;
+
+    tester::bdd::scenario("Timestamp formatting, [net]") = [] {
         using namespace std::chrono;
         using namespace std::chrono_literals;
 
@@ -30,8 +32,9 @@ auto syslogstream_test_reg = test_case("Syslog Stream") = [] {
         check_eq("1970-01-01T01:00:00.000Z", syslog::format_timestamp(system_clock::time_point{1h}));
     };
 
-    if(!network_tests_enabled()) return;
-    tester::bdd::scenario("Setup and Log levels") = [] {
+    if(!network_tests_enabled()) return false;
+
+    tester::bdd::scenario("Setup and Log levels, [net]") = [] {
         tester::bdd::given("A syslog stream setup") = [] {
             slog.appname("tester");
             slog.facility(syslog::facility::local0);
@@ -59,5 +62,8 @@ auto syslogstream_test_reg = test_case("Syslog Stream") = [] {
             };
         };
     };
-};
+    return true;
+}
+
+const auto _ = register_syslogstream_tests();
 
