@@ -41,10 +41,10 @@ using ::close;
 using ::fcntl;
 using ::socket;
 
-inline std::uint32_t (htonl)(std::uint32_t x) { return htonl(x); }
-inline std::uint16_t (htons)(std::uint16_t x) { return htons(x); }
-inline std::uint32_t (ntohl)(std::uint32_t x) { return ntohl(x); }
-inline std::uint16_t (ntohs)(std::uint16_t x) { return ntohs(x); }
+inline std::uint32_t (htonl)(std::uint32_t x) { return ::htonl(x); }
+inline std::uint16_t (htons)(std::uint16_t x) { return ::htons(x); }
+inline std::uint32_t (ntohl)(std::uint32_t x) { return ::ntohl(x); }
+inline std::uint16_t (ntohs)(std::uint16_t x) { return ::ntohs(x); }
 
 using ::inet_pton;
 using ::inet_ntop;
@@ -85,8 +85,8 @@ constexpr auto so_nosigpipe = SO_NOSIGPIPE;
 constexpr auto so_nosigpipe = 0;
 #endif
 
-constexpr auto ipproto_ip = IPPROTO_IP;
-constexpr auto ipproto_ipv6 = IPPROTO_IPV6;
+[[maybe_unused]] constexpr auto ipproto_ip = IPPROTO_IP;
+[[maybe_unused]] constexpr auto ipproto_ipv6 = IPPROTO_IPV6;
 
 constexpr auto ip_multicast_loop = IP_MULTICAST_LOOP;
 constexpr auto ip_multicast_ttl = IP_MULTICAST_TTL;
