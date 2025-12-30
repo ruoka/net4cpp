@@ -703,10 +703,10 @@ auto register_syslogstream_tests()
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream with info level") = [captured_output] {
-            slog.appname("testapp");
-            slog.level(syslog::severity::info);
-            (void)slog.set_format(log_format::jsonl);
-            (void)slog.redirect(*captured_output);
+            slog.set_app_name("testapp")
+                .set_log_level(syslog::severity::info)
+                .set_format(log_format::jsonl)
+                .redirect(*captured_output);
 
             tester::bdd::when("Logging at debug level (should be filtered)") = [captured_output] {
                 using namespace std::string_literals;
