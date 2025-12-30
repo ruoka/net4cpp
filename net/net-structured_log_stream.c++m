@@ -498,6 +498,11 @@ public:
         return std::string(v);
     }
 
+    // Special handling for std::error_code - convert to string with value and message
+    static value convert_to_value(const std::error_code& ec) {
+        return std::to_string(ec.value()) + " (" + ec.message() + ")";
+    }
+
     // Structured fields: {"key", value} or std::pair{"key", value}
     // Optimized: uses emplace to avoid double conversion
     template<class K, class V>
