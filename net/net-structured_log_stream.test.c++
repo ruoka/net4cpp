@@ -273,8 +273,8 @@ auto register_syslogstream_tests()
 
     tester::bdd::scenario("Facility configuration, [net]") = [] {
         tester::bdd::given("A syslog stream") = [] {
-            slog.app_name("tester");
-            slog.log_level(syslog::severity::debug);
+            slog.app_name("tester")
+                .log_level(syslog::severity::debug);
 
             tester::bdd::when("Setting different facilities") = [] {
                 check_nothrow([] {
