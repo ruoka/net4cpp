@@ -83,7 +83,7 @@ auto register_syslogstream_tests()
         tester::bdd::given("A syslog stream setup") = [] {
             slog.appname("tester");
             slog.level(syslog::severity::debug);
-            slog.redirect(std::clog);
+            (void)slog.redirect(std::clog);
 
             tester::bdd::when("Adding structured fields") = [] {
                 using namespace std::string_literals;
