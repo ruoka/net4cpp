@@ -38,7 +38,7 @@ auto register_syslogstream_tests()
             slog.appname("tester");
             slog.facility(syslog::facility::local0);
             slog.level(syslog::severity::debug);
-            slog.redirect(std::clog);
+            (void)slog.redirect(std::clog);
 
             tester::bdd::when("Logging at various levels") = [] {
                 using namespace std::string_literals;
@@ -66,7 +66,7 @@ auto register_syslogstream_tests()
         tester::bdd::given("A syslog stream setup") = [] {
             slog.appname("tester");
             slog.level(syslog::severity::debug);
-            slog.redirect(std::clog);
+            (void)slog.redirect(std::clog);
 
             tester::bdd::when("Using syslog::helper API") = [] {
                 using namespace std::string_literals;
@@ -235,7 +235,7 @@ auto register_syslogstream_tests()
         tester::bdd::given("A syslog stream with info level") = [] {
             slog.appname("tester");
             slog.level(syslog::severity::info);
-            slog.redirect(std::clog);
+            (void)slog.redirect(std::clog);
 
             tester::bdd::when("Logging at different levels") = [] {
                 using namespace std::string_literals;
@@ -604,7 +604,7 @@ auto register_syslogstream_tests()
         tester::bdd::given("A syslog stream with info level") = [] {
             slog.appname("testapp");
             slog.level(syslog::severity::info);
-            slog.redirect(std::clog);
+            (void)slog.redirect(std::clog);
 
             tester::bdd::when("Checking if different severity levels are enabled") = [] {
                 // Debug should be disabled (below info)
@@ -787,7 +787,7 @@ auto register_syslogstream_tests()
         tester::bdd::given("A syslog stream") = [] {
             slog.appname("testapp");
             slog.level(syslog::severity::debug);
-            slog.redirect(std::clog);
+            (void)slog.redirect(std::clog);
 
             tester::bdd::when("Calling flush()") = [] {
                 check_nothrow([] {
