@@ -37,7 +37,7 @@ auto register_syslogstream_tests()
             slog.appname("tester");
             slog.facility(syslog::facility::local0);
             slog.level(syslog::severity::debug);
-            slog.redirect(std::clog);
+            (void)slog.redirect(std::clog);
 
             tester::bdd::when("Logging at various levels") = [] {
                 using namespace std::string_literals;
@@ -65,7 +65,7 @@ auto register_syslogstream_tests()
         tester::bdd::given("A syslog stream setup") = [] {
             slog.appname("tester");
             slog.level(syslog::severity::debug);
-            slog.redirect(std::clog);
+            (void)slog.redirect(std::clog);
 
             tester::bdd::when("Using syslog::helper API") = [] {
                 using namespace std::string_literals;
@@ -82,7 +82,7 @@ auto register_syslogstream_tests()
         tester::bdd::given("A syslog stream setup") = [] {
             slog.appname("tester");
             slog.level(syslog::severity::debug);
-            slog.redirect(std::clog);
+            (void)slog.redirect(std::clog);
 
             tester::bdd::when("Adding structured fields") = [] {
                 using namespace std::string_literals;
@@ -139,9 +139,9 @@ auto register_syslogstream_tests()
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
             slog.appname("testapp");
             slog.level(syslog::severity::debug);
-            slog.set_format(log_format::jsonl);
+            (void)slog.set_format(log_format::jsonl);
             slog.sd_id("api");
-            slog.redirect(*captured_output);
+            (void)slog.redirect(*captured_output);
 
             tester::bdd::when("Logging with structured fields using new style syntax") = [captured_output] {
                 using namespace std::string_literals;
@@ -158,7 +158,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "\"msg_id\":\"SERVER_START\"");
                     check_contains(output, "Listening on port 21120");
                     // Reset redirect to default to avoid dangling pointer
-                    slog.redirect(std::clog);
+                    (void)slog.redirect(std::clog);
                 };
             };
         };
@@ -170,9 +170,9 @@ auto register_syslogstream_tests()
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
             slog.appname("testapp");
             slog.level(syslog::severity::debug);
-            slog.set_format(log_format::jsonl);
+            (void)slog.set_format(log_format::jsonl);
             slog.sd_id("api");
-            slog.redirect(*captured_output);
+            (void)slog.redirect(*captured_output);
 
             tester::bdd::when("Logging error with structured fields") = [captured_output] {
                 using namespace std::string_literals;
@@ -190,7 +190,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "\"ip\":\"192.168.1.100\"");
                     check_contains(output, "\"timeout_sec\":30");
                     check_contains(output, "Timeout from client");
-                    slog.redirect(std::clog);
+                    (void)slog.redirect(std::clog);
                 };
             };
         };
@@ -203,9 +203,9 @@ auto register_syslogstream_tests()
             slog.appname("testapp");
             slog.facility(syslog::facility::local0);
             slog.level(syslog::severity::debug);
-            slog.set_format(log_format::syslog);
+            (void)slog.set_format(log_format::syslog);
             slog.sd_id("test@12345");
-            slog.redirect(*captured_output);
+            (void)slog.redirect(*captured_output);
 
             tester::bdd::when("Logging with structured fields using new style syntax") = [captured_output] {
                 using namespace std::string_literals;
@@ -224,7 +224,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "21120");
                     check_contains(output, "SERVER_START");
                     check_contains(output, "Listening on port 21120");
-                    slog.redirect(std::clog);
+                    (void)slog.redirect(std::clog);
                 };
             };
         };
@@ -234,7 +234,7 @@ auto register_syslogstream_tests()
         tester::bdd::given("A syslog stream with info level") = [] {
             slog.appname("tester");
             slog.level(syslog::severity::info);
-            slog.redirect(std::clog);
+            (void)slog.redirect(std::clog);
 
             tester::bdd::when("Logging at different levels") = [] {
                 using namespace std::string_literals;
@@ -255,8 +255,8 @@ auto register_syslogstream_tests()
         tester::bdd::given("A syslog stream configured for JSONL format") = [] {
             slog.appname("tester");
             slog.level(syslog::severity::debug);
-            slog.set_format(log_format::jsonl);
-            slog.redirect(std::clog);
+            (void)slog.set_format(log_format::jsonl);
+            (void)slog.redirect(std::clog);
 
             tester::bdd::when("Logging a message") = [] {
                 using namespace std::string_literals;
@@ -303,8 +303,8 @@ auto register_syslogstream_tests()
             slog.appname("testapp");
             slog.facility(syslog::facility::local0);
             slog.level(syslog::severity::debug);
-            slog.set_format(log_format::syslog);
-            slog.redirect(*captured_output);
+            (void)slog.set_format(log_format::syslog);
+            (void)slog.redirect(*captured_output);
 
             tester::bdd::when("Logging a simple message") = [captured_output] {
                 using namespace std::string_literals;
@@ -317,7 +317,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "testapp");
                     check_contains(output, "test_msg");
                     check_contains(output, "Simple test message");
-                    slog.redirect(std::clog);
+                    (void)slog.redirect(std::clog);
                 };
             };
         };
@@ -330,9 +330,9 @@ auto register_syslogstream_tests()
             slog.appname("testapp");
             slog.facility(syslog::facility::local0);
             slog.level(syslog::severity::debug);
-            slog.set_format(log_format::syslog);
+            (void)slog.set_format(log_format::syslog);
             slog.sd_id("test@12345");
-            slog.redirect(*captured_output);
+            (void)slog.redirect(*captured_output);
 
             tester::bdd::when("Logging with structured fields") = [captured_output] {
                 using namespace std::string_literals;
@@ -349,7 +349,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "path=");
                     check_contains(output, "status=");
                     check_contains(output, "/api/users");
-                    slog.redirect(std::clog);
+                    (void)slog.redirect(std::clog);
                 };
             };
         };
@@ -361,9 +361,9 @@ auto register_syslogstream_tests()
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
             slog.appname("testapp");
             slog.level(syslog::severity::debug);
-            slog.set_format(log_format::jsonl);
+            (void)slog.set_format(log_format::jsonl);
             slog.sd_id("test_source");
-            slog.redirect(*captured_output);
+            (void)slog.redirect(*captured_output);
 
             tester::bdd::when("Logging a simple message") = [captured_output] {
                 using namespace std::string_literals;
@@ -381,7 +381,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "User action completed");
                     check_starts_with(output, "{");
                     check_contains(output, "}");
-                    slog.redirect(std::clog);
+                    (void)slog.redirect(std::clog);
                 };
             };
         };
@@ -393,9 +393,9 @@ auto register_syslogstream_tests()
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
             slog.appname("testapp");
             slog.level(syslog::severity::debug);
-            slog.set_format(log_format::jsonl);
+            (void)slog.set_format(log_format::jsonl);
             slog.sd_id("api");
-            slog.redirect(*captured_output);
+            (void)slog.redirect(*captured_output);
 
             tester::bdd::when("Logging with structured fields") = [captured_output] {
                 using namespace std::string_literals;
@@ -413,7 +413,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "\"retry_count\":3");
                     check_contains(output, "\"timeout\":true");
                     check_contains(output, "\"level\":\"error\"");
-                    slog.redirect(std::clog);
+                    (void)slog.redirect(std::clog);
                 };
             };
         };
@@ -425,17 +425,17 @@ auto register_syslogstream_tests()
         tester::bdd::given("A syslog stream") = [captured_output] {
             slog.appname("testapp");
             slog.level(syslog::severity::debug);
-            slog.redirect(*captured_output);
+            (void)slog.redirect(*captured_output);
 
             tester::bdd::when("Switching between formats") = [captured_output] {
                 using namespace std::string_literals;
                 
                 // First log in syslog format
-                slog.set_format(log_format::syslog);
+                (void)slog.set_format(log_format::syslog);
                 slog << net::info("format_test") << "Syslog format message"s << net::flush;
                 
                 // Then switch to JSONL
-                slog.set_format(log_format::jsonl);
+                (void)slog.set_format(log_format::jsonl);
                 slog << net::info("format_test") << "JSONL format message"s << net::flush;
 
                 tester::bdd::then("Both formats should be present in output") = [captured_output] {
@@ -446,7 +446,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "\"time\":");
                     check_contains(output, "Syslog format message");
                     check_contains(output, "JSONL format message");
-                    slog.redirect(std::clog);
+                    (void)slog.redirect(std::clog);
                 };
             };
         };
@@ -458,8 +458,8 @@ auto register_syslogstream_tests()
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
             slog.appname("testapp");
             slog.level(syslog::severity::debug);
-            slog.set_format(log_format::jsonl);
-            slog.redirect(*captured_output);
+            (void)slog.set_format(log_format::jsonl);
+            (void)slog.redirect(*captured_output);
 
             tester::bdd::when("Logging with various value types") = [captured_output] {
                 using namespace std::string_literals;
@@ -476,7 +476,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "\"int_val\":42");
                     check_contains(output, "\"double_val\":3.14");
                     check_contains(output, "\"bool_val\":true");
-                    slog.redirect(std::clog);
+                    (void)slog.redirect(std::clog);
                 };
             };
         };
@@ -488,8 +488,8 @@ auto register_syslogstream_tests()
         tester::bdd::given("A syslog stream configured for syslog format") = [captured_output] {
             slog.appname("testapp");
             slog.level(syslog::severity::debug);
-            slog.set_format(log_format::syslog);
-            slog.redirect(*captured_output);
+            (void)slog.set_format(log_format::syslog);
+            (void)slog.redirect(*captured_output);
 
             tester::bdd::when("Logging with different facilities and severities") = [captured_output] {
                 using namespace std::string_literals;
@@ -508,7 +508,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "<134>");
                     // Priority for user + error = 1*8+3 = 11
                     check_contains(output, "<11>");
-                    slog.redirect(std::clog);
+                    (void)slog.redirect(std::clog);
                 };
             };
         };
