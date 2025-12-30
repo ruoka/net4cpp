@@ -115,15 +115,15 @@ constexpr auto so_error         = SO_ERROR;
 constexpr auto so_reuseaddr     = SO_REUSEADDR;
 
 #ifdef SO_REUSEPORT
-    constexpr auto so_reuseport = SO_REUSEPORT;
+constexpr auto so_reuseport = SO_REUSEPORT;
 #else
-    constexpr auto so_reuseport = 0;
+constexpr auto so_reuseport = 0;
 #endif
 
 #ifdef SO_NOSIGPIPE
-    constexpr auto so_nosigpipe = SO_NOSIGPIPE;
+constexpr auto so_nosigpipe = SO_NOSIGPIPE;
 #else
-    constexpr auto so_nosigpipe = 0;
+constexpr auto so_nosigpipe = 0;
 #endif
 
 constexpr auto somaxconn        = SOMAXCONN;
@@ -147,21 +147,21 @@ constexpr auto ai_numericnode   = AI_NUMERICHOST;
 constexpr auto ai_numericserv   = AI_NUMERICSERV;
 
 #ifdef AI_ALL
-    constexpr auto ai_all = AI_ALL;
+constexpr auto ai_all = AI_ALL;
 #else
-    constexpr auto ai_all = 0;
+constexpr auto ai_all = 0;
 #endif
 
 #ifdef AI_ADDRCONFIG
-    constexpr auto ai_addrconfig = AI_ADDRCONFIG;
+constexpr auto ai_addrconfig = AI_ADDRCONFIG;
 #else
-    constexpr auto ai_addrconfig = 0;
+constexpr auto ai_addrconfig = 0;
 #endif
 
 #ifdef AI_V4MAPPED
-    constexpr auto ai_v4mapped = AI_V4MAPPED;
+constexpr auto ai_v4mapped = AI_V4MAPPED;
 #else
-    constexpr auto ai_v4mapped = 0;
+constexpr auto ai_v4mapped = 0;
 #endif
 
 constexpr auto ni_numerichost   = NI_NUMERICHOST;

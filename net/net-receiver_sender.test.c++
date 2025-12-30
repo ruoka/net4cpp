@@ -7,7 +7,6 @@ using namespace net;
 namespace {
 using tester::assertions::check_eq;
 using tester::assertions::check_true;
-using tester::assertions::warning;
 
 inline bool network_tests_enabled()
 {
@@ -96,11 +95,11 @@ auto register_receiver_sender_tests()
     // Only assert in the main thread (tester output is not guaranteed to be thread-safe).
     // If multicast is unavailable, treat as a warning rather than failing CI/dev machines.
     if (sender_failed) {
-        warning("Sender failed (multicast may be unavailable on this host/network)");
+        tester::assertions::warning("Sender failed (multicast may be unavailable on this host/network)");
         return false;
     }
     if (receiver_failed) {
-        warning("Receiver failed (multicast may be unavailable on this host/network)");
+        tester::assertions::warning("Receiver failed (multicast may be unavailable on this host/network)");
         return false;
     }
 
@@ -109,7 +108,7 @@ auto register_receiver_sender_tests()
         check_eq(data[idx], received[idx]);
     }
     if (received.size() != data.size()) {
-        warning("Multicast data incomplete (multicast may be unavailable on this host/network)");
+        tester::assertions::warning("Multicast data incomplete (multicast may be unavailable on this host/network)");
     }
 
     return true;

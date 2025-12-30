@@ -1,0 +1,460 @@
+export module net:syslogstream;
+import :posix;
+import std;
+
+export namespace net::syslog {
+
+const int version = 1;
+
+enum class facility : int
+{
+    user   = 1,
+    local0 = 16,
+    local1 = 17,
+    local2 = 18,
+    local3 = 19,
+    local4 = 20,
+    local5 = 21,
+    local6 = 22,
+    local7 = 23
+};
+
+enum class severity : int
+{
+     emergency = 0,
+     alert     = 1,
+     critical  = 2,
+     error     = 3,
+     warning   = 4,
+     notice    = 5,
+     info      = 6,
+     debug     = 7
+};
+
+inline std::string gethostname()
+{
+    char buffer[posix::ni_maxhost];
+    posix::gethostname(buffer, posix::ni_maxhost);
+    return buffer;
+}
+
+struct helper
+{
+    severity severity;
+    std::string_view msgid;
+};
+
+std::string format_timestamp(std::chrono::system_clock::time_point tp)
+{
+    using namespace std::chrono;
+    const auto midnight = floor<days>(tp);
+    const auto date = year_month_day{midnight};
+    const auto time = hh_mm_ss{tp - midnight};
+    const auto ms = duration_cast<milliseconds>(time.subseconds()).count();
+
+    return std::format(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        static_cast<int>(date.year()),
+        static_cast<unsigned>(date.month()),
+        static_cast<unsigned>(date.day()),
+        static_cast<int>(time.hours().count()),
+        static_cast<int>(time.minutes().count()),
+        static_cast<int>(time.seconds().count()),
+        static_cast<int>(ms));
+}
+
+} // namespace net::syslog
+
+export namespace net {
+
+enum class log_format { syslog, jsonl };
+
+using value = std::variant<std::nullptr_t, bool, long long, double, std::string>;
+
+struct level_manip {
+    syslog::severity sev;
+    const char* msg_id = nullptr;
+};
+
+class structured_log_stream {
+private:
+    // Instance configuration (was static, now instance members for singleton pattern)
+    syslog::severity       m_log_level = syslog::severity::debug;
+    log_format             m_format = log_format::jsonl;
+    std::string            m_app_name = "slog";
+    std::string            m_sd_id = "slog";
+    int                    m_facility_value = 1;  // user facility
+
+    // Thread-safety and output redirection (instance members for singleton)
+    std::mutex                     m_log_mutex;
+    std::unique_ptr<std::ofstream> m_file_stream;
+    std::ostream*                  m_output_stream = &std::clog;
+
+    // Per-entry state (instance members, like original syslogstream - mutex serializes access)
+    bool                        entry_enabled    = false;
+    syslog::severity            entry_severity   = syslog::severity::debug;
+    const char*                 entry_msg_id     = nullptr;
+    std::string                 entry_msg_id_storage;
+    std::map<std::string, value> structured_fields;
+    std::stringstream           human_message;
+    
+    // Metadata (generated per output, like original syslogstream)
+    std::string                 hostname;
+    std::string                 procid;
+    std::string                 timestamp;
+
+    std::string get_severity_str() const {
+        switch (entry_severity) {
+            case syslog::severity::debug:     return "debug";
+            case syslog::severity::info:      return "info";
+            case syslog::severity::notice:    return "notice";
+            case syslog::severity::warning:   return "warning";
+            case syslog::severity::error:     return "error";
+            case syslog::severity::critical:  return "critical";
+            case syslog::severity::alert:     return "alert";
+            case syslog::severity::emergency: return "emergency";
+            default:                          return "info";
+        }
+    }
+
+    static std::string json_escape(const std::string& s) {
+        std::string esc;
+        esc.reserve(s.size());
+        for (char c : s) {
+            switch (c) {
+                case '"':  esc += "\\\""; break;
+                case '\\': esc += "\\\\"; break;
+                case '\b': esc += "\\b";  break;
+                case '\f': esc += "\\f";  break;
+                case '\n': esc += "\\n";  break;
+                case '\r': esc += "\\r";  break;
+                case '\t': esc += "\\t";  break;
+                default:   esc += c;      break;
+            }
+        }
+        return esc;
+    }
+
+    static std::string sd_escape(const std::string& s) {
+        std::string esc;
+        esc.reserve(s.size());
+        for (char c : s) {
+            if (c == '"' || c == '\\' || c == ']') esc += '\\';
+            esc += c;
+        }
+        return esc;
+    }
+
+    static std::string value_to_str(const value& v) {
+        return std::visit([](auto&& arg) -> std::string {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, std::nullptr_t>) return "null";
+            if constexpr (std::is_same_v<T, bool>)           return arg ? "true" : "false";
+            if constexpr (std::is_arithmetic_v<T>)           return std::to_string(arg);
+            if constexpr (std::is_same_v<T, std::string>)    return arg;
+        }, v);
+    }
+
+    static void value_to_json(std::ostream& os, const value& v) {
+        std::visit([&os](auto&& arg) {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, std::string>) {
+                os << '"' << json_escape(arg) << '"';
+            } else if constexpr (std::is_same_v<T, std::nullptr_t>) {
+                os << "null";
+            } else if constexpr (std::is_same_v<T, bool>) {
+                os << (arg ? "true" : "false");
+            } else {
+                os << arg;
+            }
+        }, v);
+    }
+
+    void generate_metadata() {
+        char host[posix::ni_maxhost];
+        if (posix::gethostname(host, posix::ni_maxhost) == 0) hostname = host;
+        else hostname = "localhost";
+
+        procid = std::to_string(posix::getpid());
+
+        auto now = std::chrono::system_clock::now();
+        auto tt  = std::chrono::system_clock::to_time_t(now);
+        auto ms  = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       now.time_since_epoch()) % 1000;
+
+        std::stringstream ts;
+        ts << std::put_time(std::gmtime(&tt), "%Y-%m-%dT%H:%M:%S.")
+           << std::setfill('0') << std::setw(3) << ms.count() << "Z";
+        timestamp = ts.str();
+    }
+
+    void output() {
+        if (!entry_enabled) return;
+
+        // Note: m_log_mutex must be held by caller (already locked in operator<<)
+        generate_metadata();
+
+        std::stringstream full_line;
+
+        if (m_format == log_format::jsonl) {
+            full_line << "{"
+                      << "\"time\":\"" << timestamp << "\","
+                      << "\"host\":\"" << json_escape(hostname) << "\","
+                      << "\"app\":\"" << json_escape(m_app_name) << "\","
+                      << "\"pid\":\"" << procid << "\","
+                      << "\"level\":\"" << get_severity_str() << "\","
+                      << "\"source\":\"" << json_escape(m_sd_id) << "\"";
+
+            if (entry_msg_id) {
+                full_line << ",\"msg_id\":\"" << json_escape(entry_msg_id) << "\"";
+            }
+
+            full_line << ",\"message\":\"" << json_escape(human_message.str()) << "\"";
+
+            for (const auto& [k, v] : structured_fields) {
+                full_line << ",\"" << json_escape(k) << "\":";
+                value_to_json(full_line, v);
+            }
+            full_line << "}";
+
+        } else {  // syslog (RFC 5424)
+            int pri = m_facility_value * 8 + static_cast<int>(entry_severity);
+            full_line << "<" << pri << ">1 " << timestamp << " " << hostname << " "
+                      << m_app_name << " " << procid << " "
+                      << (entry_msg_id ? entry_msg_id : "-");  // MSGID
+
+            if (structured_fields.empty()) {
+                full_line << "- ";
+            } else {
+                full_line << "[" << m_sd_id;
+                for (const auto& [k, v] : structured_fields) {
+                    full_line << " " << k << "=\"" << sd_escape(value_to_str(v)) << "\"";
+                }
+                full_line << "] ";
+            }
+
+            full_line << "\xEF\xBB\xBF" << human_message.str();
+        }
+
+        std::string line = full_line.str();
+
+        if (m_output_stream) {
+            *m_output_stream << line << '\n';
+        }
+    }
+
+public:
+    // Configuration (instance methods)
+    void set_log_level(syslog::severity level) { 
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        m_log_level = level; 
+    }
+    void set_format(log_format f) { 
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        m_format = f; 
+    }
+    void set_app_name(const std::string& name) { 
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        m_app_name = name; 
+    }
+    void set_sd_id(const std::string& id) { 
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        m_sd_id = id; 
+    }
+    void set_facility(int f) { 
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        m_facility_value = f; 
+    }
+
+    // Output redirection
+    void redirect(const std::string& file_path) {
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        if (file_path.empty()) {
+            m_file_stream.reset();
+            m_output_stream = &std::cout;
+        } else {
+            m_file_stream = std::make_unique<std::ofstream>(file_path, std::ios::app);
+            if (m_file_stream->is_open()) {
+                m_output_stream = m_file_stream.get();
+            } else {
+                m_file_stream.reset();
+                m_output_stream = &std::cout;
+            }
+        }
+    }
+
+    // Redirect to ostream (backward compatibility)
+    void redirect(std::ostream& os) {
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        m_file_stream.reset();
+        m_output_stream = &os;
+    }
+
+    // Backward compatibility methods
+    void facility(syslog::facility f) { 
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        m_facility_value = static_cast<int>(f);
+    }
+
+    template<std::unsigned_integral T>
+    void facility(T f) { 
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        m_facility_value = static_cast<int>(f);
+    }
+
+    void level(syslog::severity s) { 
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        m_log_level = s;
+    }
+
+    template<std::unsigned_integral T>
+    void level(T s) { 
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        m_log_level = static_cast<syslog::severity>(s);
+    }
+
+    void appname(std::string_view app) { 
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        m_app_name = std::string(app);
+    }
+
+    void sd_id(std::string_view id) { 
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        m_sd_id = std::string(id);
+    }
+
+    [[deprecated("Use appname() instead.")]]
+    void tag(std::string_view app) { appname(app); }
+
+    // Streaming interface
+    // Lock once at start of log entry (matches original syslogstream pattern)
+    // Using thread_local for per-entry state to support singleton slog across threads
+    structured_log_stream& operator<<(const level_manip& manip) {
+        m_log_mutex.lock();  // Lock at start (matches original syslogstream)
+        structured_fields.clear();
+        human_message.str("");
+        human_message.clear();
+
+        entry_severity = manip.sev;
+        entry_msg_id   = manip.msg_id;
+        entry_enabled  = static_cast<int>(manip.sev) <= static_cast<int>(m_log_level);
+
+        return *this;
+    }
+
+    structured_log_stream& operator<<(const syslog::helper& h) {
+        m_log_mutex.lock();  // Lock at start (matches original syslogstream)
+        structured_fields.clear();
+        human_message.str("");
+        human_message.clear();
+
+        entry_severity = h.severity;
+        entry_msg_id_storage = std::string(h.msgid);
+        entry_msg_id   = entry_msg_id_storage.c_str();
+        entry_enabled  = static_cast<int>(h.severity) <= static_cast<int>(m_log_level);
+
+        return *this;
+    }
+
+    structured_log_stream& operator<<(syslog::severity s) {
+        m_log_mutex.lock();  // Lock at start (matches original syslogstream)
+        structured_fields.clear();
+        human_message.str("");
+        human_message.clear();
+
+        entry_severity = s;
+        entry_msg_id   = nullptr;
+        entry_enabled  = static_cast<int>(s) <= static_cast<int>(m_log_level);
+
+        return *this;
+    }
+
+    // Intermediate operators don't lock (lock already held from start of entry)
+    template<typename T>
+    requires (not std::is_same_v<std::remove_cvref_t<T>, level_manip> and
+              not std::is_same_v<std::remove_cvref_t<T>, syslog::helper> and
+              not std::is_same_v<std::remove_cvref_t<T>, syslog::severity>)
+    structured_log_stream& operator<<(T&& t) {
+        if (entry_enabled) human_message << std::forward<T>(t);
+        return *this;
+    }
+
+    // Structured fields: {"key", value} or std::pair{"key", value}
+    template<class K, class V>
+    structured_log_stream& operator<<(const std::pair<K, V>& kv) {
+        if (entry_enabled) {
+            structured_fields[std::string(kv.first)] = value(kv.second);
+        }
+        return *this;
+    }
+
+    // Support for braced-init-list syntax: {"key", value}
+    template<class K, class V>
+    structured_log_stream& operator<<(std::pair<K, V>&& kv) {
+        if (entry_enabled) {
+            structured_fields[std::string(kv.first)] = value(kv.second);
+        }
+        return *this;
+    }
+
+    // flush / endl - calls flush() which unlocks (matches original syslogstream pattern)
+    structured_log_stream& operator<<(std::ostream& (*)(std::ostream&)) {
+        // For any manipulator (endl, flush), call flush() which handles unlock
+        return flush();
+    }
+
+    // Backward compatibility: flush() method - ONLY this unlocks (matches original syslogstream)
+    structured_log_stream& flush() {
+        if (entry_enabled) {
+            output();
+        }
+        m_log_mutex.unlock();  // Unlock at end (matches original syslogstream - only flush() unlocks)
+        return *this;
+    }
+};
+
+// Backward compatibility: syslogstream is an alias
+using syslogstream = structured_log_stream;
+
+// Global instance
+inline structured_log_stream slog;
+
+// Function object for level manipulators (supports both error and error("msgid"))
+struct level_manip_functor {
+    syslog::severity sev;
+    
+    // Implicit conversion to level_manip (for slog << error)
+    operator level_manip() const { return {sev, nullptr}; }
+    
+    // Function call operator with no args (for slog << error()) - internal/test use only
+    level_manip operator()() const { return {sev, nullptr}; }
+    
+    // Function call operator with msgid (for slog << error("msgid"))
+    level_manip operator()(const char* id) const { return {sev, id}; }
+};
+
+// Backward compatibility: Global manipulator objects (can be used without parentheses)
+// These work as both objects (slog << error) and functions (slog << error("msgid"))
+inline constexpr level_manip_functor emergency{syslog::severity::emergency};
+inline constexpr level_manip_functor alert   {syslog::severity::alert};
+inline constexpr level_manip_functor critical{syslog::severity::critical};
+inline constexpr level_manip_functor error   {syslog::severity::error};
+inline constexpr level_manip_functor warning {syslog::severity::warning};
+inline constexpr level_manip_functor notice  {syslog::severity::notice};
+inline constexpr level_manip_functor info    {syslog::severity::info};
+inline constexpr level_manip_functor debug   {syslog::severity::debug};
+
+// Support for level_manip_functor in streams (implicitly converts to level_manip)
+inline structured_log_stream& operator<<(structured_log_stream& stream, const level_manip_functor& functor) {
+    return stream << static_cast<level_manip>(functor);
+}
+
+inline auto& flush(structured_log_stream& ss) { ss.flush(); return ss; }
+
+// Helper function for structured fields: field("name", value)
+template<typename K, typename V>
+inline auto field(K&& key, V&& val) {
+    return std::pair{std::forward<K>(key), std::forward<V>(val)};
+}
+
+} // namespace net
