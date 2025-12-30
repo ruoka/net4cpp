@@ -266,9 +266,6 @@ auto register_syslogstream_tests()
                          << "User logged in" << net::flush;
                 });
             };
-
-            // Reset to syslog format
-            slog.set_format(log_format::syslog);
         };
     };
 
@@ -451,9 +448,6 @@ auto register_syslogstream_tests()
                     slog.redirect(std::clog);
                 };
             };
-
-            // Reset to syslog format
-            slog.set_format(log_format::syslog);
         };
     };
 
