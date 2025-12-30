@@ -454,7 +454,8 @@ public:
     template<typename T>
     requires (not std::is_same_v<std::remove_cvref_t<T>, level_manip> and
               not std::is_same_v<std::remove_cvref_t<T>, syslog::helper> and
-              not std::is_same_v<std::remove_cvref_t<T>, syslog::severity>)
+              not std::is_same_v<std::remove_cvref_t<T>, syslog::severity> and
+              not std::is_same_v<std::remove_cvref_t<T>, std::source_location>)
     structured_log_stream& operator<<(T&& t) {
         if (entry_enabled) human_message << std::forward<T>(t);
         return *this;
@@ -527,9 +528,15 @@ public:
     // Source location support (C++20)
     structured_log_stream& operator<<(const std::source_location& loc) {
         if (entry_enabled) {
-            field("file", loc.file_name());
-            field("line", loc.line());
-            field("function", loc.function_name());
+            structured_fields.emplace(std::piecewise_construct,
+                                     std::forward_as_tuple("file"sv),
+                                     std::forward_as_tuple(convert_to_value(loc.file_name())));
+            structured_fields.emplace(std::piecewise_construct,
+                                     std::forward_as_tuple("line"sv),
+                                     std::forward_as_tuple(convert_to_value(loc.line())));
+            structured_fields.emplace(std::piecewise_construct,
+                                     std::forward_as_tuple("function"sv),
+                                     std::forward_as_tuple(convert_to_value(loc.function_name())));
         }
         return *this;
     }
