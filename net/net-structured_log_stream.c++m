@@ -84,6 +84,49 @@ using value = std::variant<
     std::string
 >;
 
+// Concepts for type categorization in convert_to_value
+template<typename T>
+concept exact_value_type = std::same_as<std::remove_cvref_t<T>, std::nullptr_t> ||
+                           std::same_as<std::remove_cvref_t<T>, bool> ||
+                           std::same_as<std::remove_cvref_t<T>, int> ||
+                           std::same_as<std::remove_cvref_t<T>, unsigned int> ||
+                           std::same_as<std::remove_cvref_t<T>, long> ||
+                           std::same_as<std::remove_cvref_t<T>, unsigned long> ||
+                           std::same_as<std::remove_cvref_t<T>, long long> ||
+                           std::same_as<std::remove_cvref_t<T>, unsigned long long> ||
+                           std::same_as<std::remove_cvref_t<T>, double> ||
+                           std::same_as<std::remove_cvref_t<T>, std::string>;
+
+template<typename T>
+concept c_string_type = std::same_as<std::remove_cvref_t<T>, const char*> ||
+                        std::same_as<std::remove_cvref_t<T>, char*>;
+
+template<typename T>
+concept string_view_convertible = !exact_value_type<T> && 
+                                  !c_string_type<T> &&
+                                  std::convertible_to<T, std::string_view>;
+
+template<typename T>
+concept integral_convertible = !exact_value_type<T> &&
+                               !c_string_type<T> &&
+                               !string_view_convertible<T> &&
+                               std::integral<std::remove_cvref_t<T>>;
+
+template<typename T>
+concept floating_convertible = !exact_value_type<T> &&
+                               !c_string_type<T> &&
+                               !string_view_convertible<T> &&
+                               !integral_convertible<T> &&
+                               std::floating_point<std::remove_cvref_t<T>>;
+
+template<typename T>
+concept string_convertible = !exact_value_type<T> &&
+                             !c_string_type<T> &&
+                             !string_view_convertible<T> &&
+                             !integral_convertible<T> &&
+                             !floating_convertible<T> &&
+                             std::convertible_to<T, std::string>;
+
 struct level_manip {
     syslog::severity sev;
     const char* msg_id = nullptr;
@@ -103,6 +146,11 @@ private:
     std::unique_ptr<std::ofstream> m_file_stream;
     std::ostream*                  m_output_stream = &std::clog;
 
+    // Cached metadata (rarely changes, cache for performance)
+    std::string                 m_hostname;
+    std::string                 m_procid;
+    bool                        m_metadata_cached = false;
+
     // Per-entry state (instance members, like original syslogstream - mutex serializes access)
     bool                        entry_enabled    = false;
     syslog::severity            entry_severity   = syslog::severity::debug;
@@ -110,11 +158,6 @@ private:
     std::string                 entry_msg_id_storage;
     std::map<std::string, value> structured_fields;
     std::stringstream           human_message;
-    
-    // Metadata (generated per output, like original syslogstream)
-    std::string                 hostname;
-    std::string                 procid;
-    std::string                 timestamp;
 
     std::string get_severity_str() const {
         switch (entry_severity) {
@@ -185,38 +228,39 @@ private:
         }, v);
     }
 
-    void generate_metadata() {
-        char host[posix::ni_maxhost];
-        if (posix::gethostname(host, posix::ni_maxhost) == 0) hostname = host;
-        else hostname = "localhost";
+    void ensure_metadata_cached() {
+        if (!m_metadata_cached) {
+            char host[posix::ni_maxhost];
+            if (posix::gethostname(host, posix::ni_maxhost) == 0) {
+                m_hostname = host;
+            } else {
+                m_hostname = "localhost";
+            }
+            m_procid = std::to_string(posix::getpid());
+            m_metadata_cached = true;
+        }
+    }
 
-        procid = std::to_string(posix::getpid());
-
+    std::string generate_timestamp() const {
         auto now = std::chrono::system_clock::now();
-        auto tt  = std::chrono::system_clock::to_time_t(now);
-        auto ms  = std::chrono::duration_cast<std::chrono::milliseconds>(
-                       now.time_since_epoch()) % 1000;
-
-        std::stringstream ts;
-        ts << std::put_time(std::gmtime(&tt), "%Y-%m-%dT%H:%M:%S.")
-           << std::setfill('0') << std::setw(3) << ms.count() << "Z";
-        timestamp = ts.str();
+        return syslog::format_timestamp(now);
     }
 
     void output() {
         if (!entry_enabled) return;
 
         // Note: m_log_mutex must be held by caller (already locked in operator<<)
-        generate_metadata();
+        ensure_metadata_cached();
+        const auto timestamp = generate_timestamp();
 
         std::stringstream full_line;
 
         if (m_format == log_format::jsonl) {
             full_line << "{"
                       << "\"time\":\"" << timestamp << "\","
-                      << "\"host\":\"" << json_escape(hostname) << "\","
+                      << "\"host\":\"" << json_escape(m_hostname) << "\","
                       << "\"app\":\"" << json_escape(m_app_name) << "\","
-                      << "\"pid\":\"" << procid << "\","
+                      << "\"pid\":\"" << m_procid << "\","
                       << "\"level\":\"" << get_severity_str() << "\","
                       << "\"source\":\"" << json_escape(m_sd_id) << "\"";
 
@@ -234,21 +278,21 @@ private:
 
         } else {  // syslog (RFC 5424)
             int pri = m_facility_value * 8 + static_cast<int>(entry_severity);
-            full_line << "<" << pri << ">1 " << timestamp << " " << hostname << " "
-                      << m_app_name << " " << procid << " "
+            full_line << "<" << pri << ">1 " << timestamp << " " << m_hostname << " "
+                      << m_app_name << " " << m_procid << " "
                       << (entry_msg_id ? entry_msg_id : "-");  // MSGID
 
             if (structured_fields.empty()) {
-                full_line << "- ";
+                full_line << " - ";  // NILVALUE for SD
             } else {
-                full_line << "[" << m_sd_id;
+                full_line << " [" << m_sd_id;
                 for (const auto& [k, v] : structured_fields) {
                     full_line << " " << k << "=\"" << sd_escape(value_to_str(v)) << "\"";
                 }
-                full_line << "] ";
+                full_line << "]";
             }
 
-            full_line << "\xEF\xBB\xBF" << human_message.str();
+            full_line << " \xEF\xBB\xBF" << human_message.str();  // Space + BOM + MSG
         }
 
         std::string line = full_line.str();
@@ -259,30 +303,35 @@ private:
     }
 
 public:
-    // Configuration (instance methods)
-    void set_log_level(syslog::severity level) { 
+    // Configuration (instance methods) - chained for fluent API
+    [[nodiscard]] structured_log_stream& set_log_level(syslog::severity level) { 
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_log_level = level; 
+        return *this;
     }
-    void set_format(log_format f) { 
+    [[nodiscard]] structured_log_stream& set_format(log_format f) { 
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_format = f; 
+        return *this;
     }
-    void set_app_name(const std::string& name) { 
+    [[nodiscard]] structured_log_stream& set_app_name(const std::string& name) { 
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_app_name = name; 
+        return *this;
     }
-    void set_sd_id(const std::string& id) { 
+    [[nodiscard]] structured_log_stream& set_sd_id(const std::string& id) { 
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_sd_id = id; 
+        return *this;
     }
-    void set_facility(int f) { 
+    [[nodiscard]] structured_log_stream& set_facility(int f) { 
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_facility_value = f; 
+        return *this;
     }
 
-    // Output redirection
-    void redirect(const std::string& file_path) {
+    // Output redirection - chained for fluent API
+    [[nodiscard]] structured_log_stream& redirect(const std::string& file_path) {
         std::lock_guard<std::mutex> lock(m_log_mutex);
         if (file_path.empty()) {
             m_file_stream.reset();
@@ -296,13 +345,15 @@ public:
                 m_output_stream = &std::cout;
             }
         }
+        return *this;
     }
 
     // Redirect to ostream (backward compatibility)
-    void redirect(std::ostream& os) {
+    [[nodiscard]] structured_log_stream& redirect(std::ostream& os) {
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_file_stream.reset();
         m_output_stream = &os;
+        return *this;
     }
 
     // Backward compatibility methods
@@ -343,43 +394,58 @@ public:
 
     // Streaming interface
     // Lock once at start of log entry (matches original syslogstream pattern)
-    // Using thread_local for per-entry state to support singleton slog across threads
+    // Note: Manual lock/unlock pattern required because flush() unlocks, not scope exit
     structured_log_stream& operator<<(const level_manip& manip) {
-        m_log_mutex.lock();  // Lock at start (matches original syslogstream)
-        structured_fields.clear();
-        human_message.str("");
-        human_message.clear();
-
+        m_log_mutex.lock();  // Lock at start (unlocked by flush())
         entry_severity = manip.sev;
         entry_msg_id   = manip.msg_id;
         entry_enabled  = static_cast<int>(manip.sev) <= static_cast<int>(m_log_level);
+        
+        // Early exit: skip expensive buffer clearing if disabled
+        if (!entry_enabled) {
+            return *this;
+        }
+        
+        structured_fields.clear();
+        human_message.str("");
+        human_message.clear();
 
         return *this;
     }
 
     structured_log_stream& operator<<(const syslog::helper& h) {
-        m_log_mutex.lock();  // Lock at start (matches original syslogstream)
-        structured_fields.clear();
-        human_message.str("");
-        human_message.clear();
-
+        m_log_mutex.lock();  // Lock at start (unlocked by flush())
         entry_severity = h.severity;
         entry_msg_id_storage = std::string(h.msgid);
         entry_msg_id   = entry_msg_id_storage.c_str();
         entry_enabled  = static_cast<int>(h.severity) <= static_cast<int>(m_log_level);
+        
+        // Early exit: skip expensive buffer clearing if disabled
+        if (!entry_enabled) {
+            return *this;
+        }
+        
+        structured_fields.clear();
+        human_message.str("");
+        human_message.clear();
 
         return *this;
     }
 
     structured_log_stream& operator<<(syslog::severity s) {
-        m_log_mutex.lock();  // Lock at start (matches original syslogstream)
-        structured_fields.clear();
-        human_message.str("");
-        human_message.clear();
-
+        m_log_mutex.lock();  // Lock at start (unlocked by flush())
         entry_severity = s;
         entry_msg_id   = nullptr;
         entry_enabled  = static_cast<int>(s) <= static_cast<int>(m_log_level);
+        
+        // Early exit: skip expensive buffer clearing if disabled
+        if (!entry_enabled) {
+            return *this;
+        }
+        
+        structured_fields.clear();
+        human_message.str("");
+        human_message.clear();
 
         return *this;
     }
@@ -395,51 +461,45 @@ public:
     }
 
     // Helper to convert any type to the appropriate variant type
-    template<typename T>
+    // Optimized with concepts for better compile-time dispatch
+    template<exact_value_type T>
     static value convert_to_value(T&& v) {
-        using U = std::remove_cvref_t<T>;
-        if constexpr (std::is_same_v<U, std::nullptr_t>) {
-            return nullptr;
-        } else if constexpr (std::is_same_v<U, bool>) {
-            return v;
-        } else if constexpr (std::is_same_v<U, int>) {
-            return v;
-        } else if constexpr (std::is_same_v<U, unsigned int>) {
-            return v;
-        } else if constexpr (std::is_same_v<U, long>) {
-            return v;
-        } else if constexpr (std::is_same_v<U, unsigned long>) {
-            return v;
-        } else if constexpr (std::is_same_v<U, long long>) {
-            return v;
-        } else if constexpr (std::is_same_v<U, unsigned long long>) {
-            return v;
-        } else if constexpr (std::is_same_v<U, double>) {
-            return v;
-        } else if constexpr (std::is_same_v<U, std::string>) {
-            return v;
-        } else if constexpr (std::is_same_v<U, const char*> || std::is_same_v<U, char*>) {
-            return std::string(v);
-        } else if constexpr (std::is_convertible_v<T, std::string_view>) {
-            return std::string(v);
-        } else if constexpr (std::is_integral_v<U>) {
-            // Convert any other integer type to long long
-            return static_cast<long long>(v);
-        } else if constexpr (std::is_floating_point_v<U>) {
-            // Convert any other floating point type to double
-            return static_cast<double>(v);
-        } else {
-            static_assert(std::is_convertible_v<T, std::string>, "Type must be convertible to string");
-            return std::string(v);
-        }
+        return std::forward<T>(v);
+    }
+
+    template<c_string_type T>
+    static value convert_to_value(T v) {
+        return std::string(v);
+    }
+
+    template<string_view_convertible T>
+    static value convert_to_value(T&& v) {
+        return std::string(v);
+    }
+
+    template<integral_convertible T>
+    static value convert_to_value(T v) {
+        return static_cast<long long>(v);
+    }
+
+    template<floating_convertible T>
+    static value convert_to_value(T v) {
+        return static_cast<double>(v);
+    }
+
+    template<string_convertible T>
+    static value convert_to_value(T&& v) {
+        return std::string(v);
     }
 
     // Structured fields: {"key", value} or std::pair{"key", value}
+    // Optimized: uses emplace to avoid double conversion
     template<class K, class V>
     structured_log_stream& operator<<(const std::pair<K, V>& kv) {
         if (entry_enabled) {
-            // Convert key to string (handles string_view, const char*, string, etc.)
-            structured_fields[std::string(std::string_view(kv.first))] = convert_to_value(kv.second);
+            structured_fields.emplace(std::piecewise_construct,
+                                      std::forward_as_tuple(kv.first),
+                                      std::forward_as_tuple(convert_to_value(kv.second)));
         }
         return *this;
     }
@@ -448,8 +508,28 @@ public:
     template<class K, class V>
     structured_log_stream& operator<<(std::pair<K, V>&& kv) {
         if (entry_enabled) {
-            // Convert key to string (handles string_view, const char*, string, etc.)
-            structured_fields[std::string(std::string_view(kv.first))] = convert_to_value(std::forward<V>(kv.second));
+            structured_fields.emplace(std::piecewise_construct,
+                                      std::forward_as_tuple(kv.first),
+                                      std::forward_as_tuple(convert_to_value(std::forward<V>(kv.second))));
+        }
+        return *this;
+    }
+
+    // Convenience method for structured fields with string_view key
+    template<typename V>
+    structured_log_stream& field(std::string_view key, V&& value) {
+        if (entry_enabled) {
+            structured_fields[std::string(key)] = convert_to_value(std::forward<V>(value));
+        }
+        return *this;
+    }
+
+    // Source location support (C++20)
+    structured_log_stream& operator<<(const std::source_location& loc) {
+        if (entry_enabled) {
+            field("file", loc.file_name());
+            field("line", loc.line());
+            field("function", loc.function_name());
         }
         return *this;
     }
@@ -461,12 +541,18 @@ public:
     }
 
     // Backward compatibility: flush() method - ONLY this unlocks (matches original syslogstream)
-    structured_log_stream& flush() {
+    [[nodiscard]] structured_log_stream& flush() {
         if (entry_enabled) {
             output();
         }
         m_log_mutex.unlock();  // Unlock at end (matches original syslogstream - only flush() unlocks)
         return *this;
+    }
+
+    // Query method to check if a severity level would be logged
+    [[nodiscard]] bool is_enabled(syslog::severity s) const {
+        std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(m_log_mutex));
+        return static_cast<int>(s) <= static_cast<int>(m_log_level);
     }
 };
 
@@ -506,6 +592,9 @@ inline structured_log_stream& operator<<(structured_log_stream& stream, const le
     return stream << static_cast<level_manip>(functor);
 }
 
-inline auto& flush(structured_log_stream& ss) { ss.flush(); return ss; }
+[[nodiscard]] inline auto& flush(structured_log_stream& ss) { 
+    [[maybe_unused]] auto& _ = ss.flush(); 
+    return ss; 
+}
 
 } // namespace net

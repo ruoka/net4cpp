@@ -92,11 +92,11 @@ catch(const exception& e)
 
 # Syslog Stream Example
 
+## Basic Usage
+
 ```cpp
 import net;
 import std;
-
-[...]
 
 using namespace net;
 using namespace std::string_literals;
@@ -116,4 +116,53 @@ slog << notice  << "Tell my " << spouse << " I love her very much!" << flush;
 slog << warning << "Ground Control to Major Tom Your circuit's dead, there's something " << boolalpha << wrong << '?' << flush;
 
 slog << error   << "Planet Earth is blue and there's nothing I can do." << flush;
+```
+
+## Fluent Configuration API
+
+The structured log stream supports method chaining for convenient configuration:
+
+```cpp
+slog.set_format(net::log_format::jsonl)
+    .set_app_name("my-service")
+    .set_log_level(syslog::severity::info)
+    .set_sd_id("app")
+    .redirect("logs/app.log");
+```
+
+All configuration methods return `structured_log_stream&` to enable fluent chaining.
+
+## Structured Logging with Fields
+
+```cpp
+// Using pair syntax
+slog << info << std::pair{"user_id", 42} << std::pair{"ip", "192.168.1.1"} << "User logged in" << flush;
+
+// Using field() convenience method
+slog << info << slog.field("user_id", 42) << slog.field("ip", "192.168.1.1") << "User logged in" << flush;
+```
+
+## Source Location Support (C++20)
+
+Automatically capture file, line, and function information:
+
+```cpp
+slog << info << std::source_location::current() << "Operation completed" << flush;
+
+// Or with structured fields
+slog << error 
+     << std::source_location::current()
+     << slog.field("duration_ms", 127)
+     << "Request failed"
+     << flush;
+```
+
+## Check Log Level Before Logging
+
+```cpp
+if (slog.is_enabled(syslog::severity::debug)) {
+    // Expensive debug computation
+    auto details = compute_debug_info();
+    slog << debug << details << flush;
+}
 ```
