@@ -118,14 +118,15 @@ auto register_syslogstream_tests()
                 });
             };
 
-            tester::bdd::when("Adding structured fields using field() helper") = [] {
+            tester::bdd::when("Adding structured fields using std::pair") = [] {
                 using namespace std::string_literals;
+                using namespace std::string_view_literals;
                 check_nothrow([] {
                     slog << net::info("http") 
-                         << net::field("method", "GET")
-                         << net::field("path", "/api/users")
-                         << net::field("status", 200)
-                         << net::field("duration_ms", 45.5)
+                         << std::pair{"method"sv, "GET"sv}
+                         << std::pair{"path"sv, "/api/users"sv}
+                         << std::pair{"status"sv, 200}
+                         << std::pair{"duration_ms"sv, 45.5}
                          << "Request completed" << net::flush;
                 });
             };

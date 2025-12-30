@@ -69,7 +69,20 @@ export namespace net {
 
 enum class log_format { syslog, jsonl };
 
-using value = std::variant<std::nullptr_t, bool, long long, double, std::string>;
+// Support multiple integer types to avoid casts
+// Note: std::size_t may alias unsigned long or unsigned long long, so we handle it via template conversion
+using value = std::variant<
+    std::nullptr_t,
+    bool,
+    int,
+    unsigned int,
+    long,
+    unsigned long,
+    long long,
+    unsigned long long,
+    double,
+    std::string
+>;
 
 struct level_manip {
     syslog::severity sev;
@@ -150,8 +163,10 @@ private:
             using T = std::decay_t<decltype(arg)>;
             if constexpr (std::is_same_v<T, std::nullptr_t>) return "null";
             if constexpr (std::is_same_v<T, bool>)           return arg ? "true" : "false";
-            if constexpr (std::is_arithmetic_v<T>)           return std::to_string(arg);
-            if constexpr (std::is_same_v<T, std::string>)    return arg;
+            if constexpr (std::is_same_v<T, std::string>)   return arg;
+            if constexpr (std::is_integral_v<T>)             return std::to_string(arg);
+            if constexpr (std::is_floating_point_v<T>)       return std::to_string(arg);
+            return "";  // Should never reach here
         }, v);
     }
 
@@ -164,7 +179,7 @@ private:
                 os << "null";
             } else if constexpr (std::is_same_v<T, bool>) {
                 os << (arg ? "true" : "false");
-            } else {
+            } else if constexpr (std::is_integral_v<T> || std::is_floating_point_v<T>) {
                 os << arg;
             }
         }, v);
@@ -379,11 +394,52 @@ public:
         return *this;
     }
 
+    // Helper to convert any type to the appropriate variant type
+    template<typename T>
+    static value convert_to_value(T&& v) {
+        using U = std::remove_cvref_t<T>;
+        if constexpr (std::is_same_v<U, std::nullptr_t>) {
+            return nullptr;
+        } else if constexpr (std::is_same_v<U, bool>) {
+            return v;
+        } else if constexpr (std::is_same_v<U, int>) {
+            return v;
+        } else if constexpr (std::is_same_v<U, unsigned int>) {
+            return v;
+        } else if constexpr (std::is_same_v<U, long>) {
+            return v;
+        } else if constexpr (std::is_same_v<U, unsigned long>) {
+            return v;
+        } else if constexpr (std::is_same_v<U, long long>) {
+            return v;
+        } else if constexpr (std::is_same_v<U, unsigned long long>) {
+            return v;
+        } else if constexpr (std::is_same_v<U, double>) {
+            return v;
+        } else if constexpr (std::is_same_v<U, std::string>) {
+            return v;
+        } else if constexpr (std::is_same_v<U, const char*> || std::is_same_v<U, char*>) {
+            return std::string(v);
+        } else if constexpr (std::is_convertible_v<T, std::string_view>) {
+            return std::string(v);
+        } else if constexpr (std::is_integral_v<U>) {
+            // Convert any other integer type to long long
+            return static_cast<long long>(v);
+        } else if constexpr (std::is_floating_point_v<U>) {
+            // Convert any other floating point type to double
+            return static_cast<double>(v);
+        } else {
+            static_assert(std::is_convertible_v<T, std::string>, "Type must be convertible to string");
+            return std::string(v);
+        }
+    }
+
     // Structured fields: {"key", value} or std::pair{"key", value}
     template<class K, class V>
     structured_log_stream& operator<<(const std::pair<K, V>& kv) {
         if (entry_enabled) {
-            structured_fields[std::string(kv.first)] = value(kv.second);
+            // Convert key to string (handles string_view, const char*, string, etc.)
+            structured_fields[std::string(std::string_view(kv.first))] = convert_to_value(kv.second);
         }
         return *this;
     }
@@ -392,7 +448,8 @@ public:
     template<class K, class V>
     structured_log_stream& operator<<(std::pair<K, V>&& kv) {
         if (entry_enabled) {
-            structured_fields[std::string(kv.first)] = value(kv.second);
+            // Convert key to string (handles string_view, const char*, string, etc.)
+            structured_fields[std::string(std::string_view(kv.first))] = convert_to_value(std::forward<V>(kv.second));
         }
         return *this;
     }
@@ -450,11 +507,5 @@ inline structured_log_stream& operator<<(structured_log_stream& stream, const le
 }
 
 inline auto& flush(structured_log_stream& ss) { ss.flush(); return ss; }
-
-// Helper function for structured fields: field("name", value)
-template<typename K, typename V>
-inline auto field(K&& key, V&& val) {
-    return std::pair{std::forward<K>(key), std::forward<V>(val)};
-}
 
 } // namespace net

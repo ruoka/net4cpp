@@ -151,20 +151,26 @@ public:
 
     void listen(std::string_view service_or_port = "http")
     {
+        using namespace std::string_view_literals;
         m_stop.store(false);
-        net::slog << net::notice("httpd") << "starting up at " << service_or_port << net::flush;
+        net::slog << net::notice("SERVER_START") << "starting up at " << service_or_port
+                  << std::pair{"port"sv, service_or_port}
+                  << net::flush;
         try
         {
             auto endpoint = net::acceptor{"0.0.0.0", service_or_port};
             auto check_timeout = m_timeout.count() ? m_timeout : std::chrono::seconds{1};
             endpoint.timeout(std::chrono::milliseconds{check_timeout.count() * 1000});
-            net::slog << net::notice("httpd") << "started up at " << endpoint.host() << ":" << endpoint.service_or_port() << net::flush;
+            net::slog << net::notice("SERVER_READY") << "started up at " << endpoint.host() << ":" << endpoint.service_or_port()
+                      << std::pair{"addr", endpoint.host()}
+                      << std::pair{"port", endpoint.service_or_port()}
+                      << net::flush;
             
             while(!m_stop.load())
             {
                 try
                 {
-                    net::slog << net::info("httpd") << "accepting connections" << net::flush;
+                    net::slog << net::info("ACCEPT_WAIT") << "accepting connections" << net::flush;
                     auto client = endpoint.accept();
                     std::thread{[client_data = std::move(client), this]() mutable { handle(client_data); }}.detach();
                 }
@@ -174,25 +180,32 @@ public:
                     {
                         continue;
                     }
-                    net::slog << net::error("httpd") << "failed to accept connection: " << e.what() << " (code: " << e.code() << ")" << net::flush;
+                    net::slog << net::error("ACCEPT_ERROR") << "failed to accept connection: " << e.what() << " (code: " << e.code() << ")"
+                              << std::pair{"errno", e.code().value()}
+                              << net::flush;
                     throw;
                 }
                 catch(const std::exception& e)
                 {
-                    net::slog << net::error("httpd") << "exception while accepting connection: " << e.what() << net::flush;
+                    net::slog << net::error("ACCEPT_EXCEPTION") << "exception while accepting connection: " << e.what() << net::flush;
                     throw;
                 }
             }
-            net::slog << net::notice("httpd") << "server stopped" << net::flush;
+            net::slog << net::notice("SERVER_STOP") << "server stopped" << net::flush;
         }
         catch(const std::system_error& e)
         {
-            net::slog << net::error("httpd") << "failed to create acceptor on " << service_or_port << ": " << e.what() << " (code: " << e.code() << ")" << net::flush;
+            net::slog << net::error("LISTEN_ERROR") << "failed to create acceptor on " << service_or_port << ": " << e.what() << " (code: " << e.code() << ")"
+                      << std::pair{"port"sv, service_or_port}
+                      << std::pair{"errno", e.code().value()}
+                      << net::flush;
             throw;
         }
         catch(const std::exception& e)
         {
-            net::slog << net::error("httpd") << "exception during server startup on " << service_or_port << ": " << e.what() << net::flush;
+            net::slog << net::error("LISTEN_EXCEPTION") << "exception during server startup on " << service_or_port << ": " << e.what()
+                      << std::pair{"port"sv, service_or_port}
+                      << net::flush;
             throw;
         }
     }
@@ -267,8 +280,12 @@ private:
 
     void handle(auto& client)
     {
+        using namespace std::string_view_literals;
         auto& [stream, endpoint, port] = client;
-        net::slog << net::notice("httpd") << "accepted connection from " << endpoint << ":" << port << net::flush;
+        net::slog << net::notice("CONN_ACCEPT") << "accepted connection from " << endpoint << ":" << port
+                  << std::pair{"ip"sv, endpoint}
+                  << std::pair{"port", port}
+                  << net::flush;
 
         try
         {
@@ -281,16 +298,31 @@ private:
                 {
                     if(stream.eof())
                     {
-                        net::slog << net::info("httpd") << "connection closed by client " << endpoint << ":" << port << net::flush;
+                        net::slog << net::info("CONN_CLOSED") << "connection closed by client " << endpoint << ":" << port
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << net::flush;
                     }
                     else
                     {
-                        net::slog << net::warning("httpd") << "stream error reading request from " << endpoint << ":" << port << " (eof: " << stream.eof() << ", fail: " << stream.fail() << ", bad: " << stream.bad() << ")" << net::flush;
+                        net::slog << net::warning("STREAM_ERROR") << "stream error reading request from " << endpoint << ":" << port << " (eof: " << stream.eof() << ", fail: " << stream.fail() << ", bad: " << stream.bad() << ")"
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"eof", stream.eof()}
+                                  << std::pair{"fail", stream.fail()}
+                                  << std::pair{"bad", stream.bad()}
+                                  << net::flush;
                     }
                     break;
                 }
 
-                net::slog << net::notice("httpd") << "request \"" << method << ' ' << uri << ' ' << version << "\"" << net::flush;
+                net::slog << net::notice("HTTP_REQUEST") << "request \"" << method << ' ' << uri << ' ' << version << "\""
+                          << std::pair{"ip"sv, endpoint}
+                          << std::pair{"port", port}
+                          << std::pair{"method", method}
+                          << std::pair{"uri", std::string{uri}}
+                          << std::pair{"version", version}
+                          << net::flush;
 
                 headers hs{};
                 try
@@ -299,7 +331,11 @@ private:
                 }
                 catch(const std::exception& e)
                 {
-                    net::slog << net::error("httpd") << "failed to parse headers from " << endpoint << ":" << port << ": " << e.what() << net::flush;
+                    net::slog << net::error("PARSE_HEADERS_ERROR") << "failed to parse headers from " << endpoint << ":" << port << ": " << e.what()
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << std::pair{"status", 400}
+                              << net::flush;
                     stream << "HTTP/1.0 400 Bad Request" << net::crlf
                            << "Date: " << date() << net::crlf
                            << "Server: " << host() << net::crlf
@@ -325,23 +361,39 @@ private:
                         content_length = std::stoll(hs["content-length"]);
                         if(content_length < 0)
                         {
-                            net::slog << net::warning("httpd") << "negative content-length from " << endpoint << ":" << port << net::flush;
+                            net::slog << net::warning("INVALID_CONTENT_LENGTH") << "negative content-length from " << endpoint << ":" << port
+                                      << std::pair{"ip"sv, endpoint}
+                                      << std::pair{"port", port}
+                                      << std::pair{"content_length", content_length}
+                                      << net::flush;
                             content_length = 0;
                         }
                     }
                     catch(const std::invalid_argument&)
                     {
-                        net::slog << net::warning("httpd") << "invalid content-length format \"" << hs["content-length"] << "\" from " << endpoint << ":" << port << net::flush;
+                        net::slog << net::warning("INVALID_CONTENT_LENGTH") << "invalid content-length format \"" << hs["content-length"] << "\" from " << endpoint << ":" << port
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"content_length_str", hs["content-length"]}
+                                  << net::flush;
                         content_length = 0;
                     }
                     catch(const std::out_of_range&)
                     {
-                        net::slog << net::warning("httpd") << "content-length out of range \"" << hs["content-length"] << "\" from " << endpoint << ":" << port << net::flush;
+                        net::slog << net::warning("INVALID_CONTENT_LENGTH") << "content-length out of range \"" << hs["content-length"] << "\" from " << endpoint << ":" << port
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"content_length_str", hs["content-length"]}
+                                  << net::flush;
                         content_length = 0;
                     }
                     catch(const std::exception& e)
                     {
-                        net::slog << net::warning("httpd") << "error parsing content-length \"" << hs["content-length"] << "\" from " << endpoint << ":" << port << ": " << e.what() << net::flush;
+                        net::slog << net::warning("INVALID_CONTENT_LENGTH") << "error parsing content-length \"" << hs["content-length"] << "\" from " << endpoint << ":" << port << ": " << e.what()
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"content_length_str", hs["content-length"]}
+                                  << net::flush;
                         content_length = 0;
                     }
                 }
@@ -354,7 +406,11 @@ private:
                         auto ch = stream.get();
                         if(stream.eof() || stream.fail())
                         {
-                            net::slog << net::warning("httpd") << "incomplete body read from " << endpoint << ":" << port << " (expected " << content_length << " bytes)" << net::flush;
+                            net::slog << net::warning("INCOMPLETE_BODY") << "incomplete body read from " << endpoint << ":" << port << " (expected " << content_length << " bytes)"
+                                      << std::pair{"ip"sv, endpoint}
+                                      << std::pair{"port", port}
+                                      << std::pair{"expected_bytes", static_cast<long long>(content_length)}
+                                      << net::flush;
                             break;
                         }
                         c = static_cast<char>(ch);
@@ -362,14 +418,28 @@ private:
                 }
                 catch(const std::exception& e)
                 {
-                    net::slog << net::error("httpd") << "error reading body from " << endpoint << ":" << port << ": " << e.what() << net::flush;
+                    net::slog << net::error("BODY_READ_ERROR") << "error reading body from " << endpoint << ":" << port << ": " << e.what()
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << net::flush;
                 }
 
-                net::slog << net::debug << "request body \"" << body << "\"" << net::flush;
+                net::slog << net::debug("REQUEST_BODY") << "request body \"" << body << "\""
+                          << std::pair{"ip"sv, endpoint}
+                          << std::pair{"port", port}
+                          << std::pair{"body_size", static_cast<long long>(body.size())}
+                          << net::flush;
 
                 if(version != "HTTP/1.1")
                 {
-                    net::slog << net::warning("httpd") << "unsupported HTTP version \"" << version << "\" from " << endpoint << ":" << port << net::flush;
+                    net::slog << net::warning("UNSUPPORTED_VERSION") << "unsupported HTTP version \"" << version << "\" from " << endpoint << ":" << port
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << std::pair{"method", method}
+                              << std::pair{"uri", std::string{uri}}
+                              << std::pair{"version", version}
+                              << std::pair{"status", 505}
+                              << net::flush;
                     stream << "HTTP/1.1 505 HTTP Version Not Supported" << net::crlf
                            << "Date: "         << date()                << net::crlf
                            << "Server: "       << host()                << net::crlf
@@ -379,7 +449,13 @@ private:
                 }
                 else if(!m_methods.contains(method))
                 {
-                    net::slog << net::warning("httpd") << "unsupported HTTP method \"" << method << "\" for \"" << uri << "\" from " << endpoint << ":" << port << net::flush;
+                    net::slog << net::warning("UNSUPPORTED_METHOD") << "unsupported HTTP method \"" << method << "\" for \"" << uri << "\" from " << endpoint << ":" << port
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << std::pair{"method", method}
+                              << std::pair{"uri", std::string{uri}}
+                              << std::pair{"status", 400}
+                              << net::flush;
                     stream << "HTTP/1.1 400 Bad Request"                    << net::crlf
                            << "Date: "         << date()                    << net::crlf
                            << "Server: "       << host()                    << net::crlf
@@ -390,7 +466,13 @@ private:
                 }
                 else if(uri == "/favicon.ico")
                 {
-                    net::slog << net::debug("httpd") << "favicon request from " << endpoint << ":" << port << net::flush;
+                    net::slog << net::debug("FAVICON_REQUEST") << "favicon request from " << endpoint << ":" << port
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << std::pair{"method", method}
+                              << std::pair{"uri", std::string{uri}}
+                              << std::pair{"status", 404}
+                              << net::flush;
                     stream << "HTTP/1.1 404 Not Found"           << net::crlf
                            << "Date: "         << date()         << net::crlf
                            << "Server: "       << host()         << net::crlf
@@ -400,7 +482,13 @@ private:
                 }
                 else if(!std::regex_match(std::string{uri}, std::regex(m_public_paths)) && !m_credentials.contains(authorization))
                 {
-                    net::slog << net::warning("httpd") << "unauthorized request for \"" << uri << "\" from " << endpoint << ":" << port << net::flush;
+                    net::slog << net::warning("UNAUTHORIZED") << "unauthorized request for \"" << uri << "\" from " << endpoint << ":" << port
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << std::pair{"method", method}
+                              << std::pair{"uri", std::string{uri}}
+                              << std::pair{"status", 401}
+                              << net::flush;
                     stream << "HTTP/1.1 401 Unauthorized status"                     << net::crlf
                            << "Date: "         << date()                             << net::crlf
                            << "Server: "       << host()                             << net::crlf
@@ -432,7 +520,14 @@ private:
                                 }
                                 catch(const std::exception& e)
                                 {
-                                    net::slog << net::error("httpd") << "exception in handler for \"" << method << " " << uri << "\" (route: " << path << "): " << e.what() << net::flush;
+                                    net::slog << net::error("HANDLER_EXCEPTION") << "exception in handler for \"" << method << " " << uri << "\" (route: " << path << "): " << e.what()
+                                              << std::pair{"ip"sv, endpoint}
+                                              << std::pair{"port", port}
+                                              << std::pair{"method", method}
+                                              << std::pair{"uri", std::string{uri}}
+                                              << std::pair{"route", path}
+                                              << std::pair{"status", 500}
+                                              << net::flush;
                                     res_status = "500 Internal Server Error";
                                     res_content = "";
                                     res_type = m_content_type;
@@ -444,6 +539,23 @@ private:
 
                     if(!res_type.empty())
                     {
+                        // Extract status code from status string (e.g., "200 OK" -> 200)
+                        auto status_code = 200ll;
+                        try {
+                            if(auto space_pos = res_status.find(' '); space_pos != std::string::npos) {
+                                status_code = std::stoll(res_status.substr(0, space_pos));
+                            }
+                        } catch(...) {}
+                        
+                        net::slog << net::info("HTTP_RESPONSE") << "response " << res_status
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"method", method}
+                                  << std::pair{"uri", std::string{uri}}
+                                  << std::pair{"status", status_code}
+                                  << std::pair{"content_length", static_cast<long long>(res_content.length())}
+                                  << net::flush;
+                        
                         stream << "HTTP/1.1 " << res_status                                   << net::crlf
                                << "Date: " << date()                                          << net::crlf
                                << "Server: " << host()                                        << net::crlf
@@ -463,7 +575,13 @@ private:
                     }
                     else
                     {
-                        net::slog << net::warning("httpd") << "no route found for \"" << method << " " << uri << "\" from " << endpoint << ":" << port << net::flush;
+                        net::slog << net::warning("ROUTE_NOT_FOUND") << "no route found for \"" << method << " " << uri << "\" from " << endpoint << ":" << port
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"method", method}
+                                  << std::pair{"uri", std::string{uri}}
+                                  << std::pair{"status", 404}
+                                  << net::flush;
                         stream << "HTTP/1.0 404 Not Found"                                    << net::crlf
                                << "Date: " << date()                                          << net::crlf
                                << "Server: " << host()                                        << net::crlf
@@ -478,11 +596,19 @@ private:
                     }
                 }
             }
-            net::slog << net::syslog::severity::info << "connection closed" << net::flush;
+            net::slog << net::info("CONN_CLOSED") << "connection closed"
+                              << std::pair{"ip"sv, endpoint}
+                      << std::pair{"port", port}
+                      << net::flush;
         }
         catch(const std::system_error& e)
         {
-            net::slog << net::error("httpd") << "system error handling connection from " << endpoint << ":" << port << ": " << e.what() << " (code: " << e.code() << ")" << net::flush;
+            net::slog << net::error("SYSTEM_ERROR") << "system error handling connection from " << endpoint << ":" << port << ": " << e.what() << " (code: " << e.code() << ")"
+                              << std::pair{"ip"sv, endpoint}
+                      << std::pair{"port", port}
+                      << std::pair{"errno", e.code().value()}
+                      << std::pair{"status", 500}
+                      << net::flush;
             try
             {
                 stream << "HTTP/1.0 500 Internal Server Error" << net::crlf
@@ -494,12 +620,19 @@ private:
             }
             catch(const std::exception& write_error)
             {
-                net::slog << net::error("httpd") << "failed to write error response to " << endpoint << ":" << port << ": " << write_error.what() << net::flush;
+                net::slog << net::error("WRITE_ERROR") << "failed to write error response to " << endpoint << ":" << port << ": " << write_error.what()
+                          << std::pair{"ip"sv, endpoint}
+                          << std::pair{"port", port}
+                          << net::flush;
             }
         }
         catch(const std::exception& e)
         {
-            net::slog << net::error("httpd") << "exception handling connection from " << endpoint << ":" << port << ": " << e.what() << net::flush;
+            net::slog << net::error("CONN_EXCEPTION") << "exception handling connection from " << endpoint << ":" << port << ": " << e.what()
+                              << std::pair{"ip"sv, endpoint}
+                      << std::pair{"port", port}
+                      << std::pair{"status", 500}
+                      << net::flush;
             try
             {
                 stream << "HTTP/1.0 500 Internal Server Error" << net::crlf
@@ -511,12 +644,19 @@ private:
             }
             catch(const std::exception& write_error)
             {
-                net::slog << net::error("httpd") << "failed to write error response to " << endpoint << ":" << port << ": " << write_error.what() << net::flush;
+                net::slog << net::error("WRITE_ERROR") << "failed to write error response to " << endpoint << ":" << port << ": " << write_error.what()
+                          << std::pair{"ip"sv, endpoint}
+                          << std::pair{"port", port}
+                          << net::flush;
             }
         }
         catch(...)
         {
-            net::slog << net::error("httpd") << "unknown exception (non-standard exception type) handling connection from " << endpoint << ":" << port << net::flush;
+            net::slog << net::error("UNKNOWN_EXCEPTION") << "unknown exception (non-standard exception type) handling connection from " << endpoint << ":" << port
+                              << std::pair{"ip"sv, endpoint}
+                      << std::pair{"port", port}
+                      << std::pair{"status", 500}
+                      << net::flush;
             try
             {
                 stream << "HTTP/1.0 500 Internal Server Error" << net::crlf
@@ -528,11 +668,17 @@ private:
             }
             catch(const std::exception& write_error)
             {
-                net::slog << net::error("httpd") << "failed to write error response to " << endpoint << ":" << port << ": " << write_error.what() << net::flush;
+                net::slog << net::error("WRITE_ERROR") << "failed to write error response to " << endpoint << ":" << port << ": " << write_error.what()
+                          << std::pair{"ip"sv, endpoint}
+                          << std::pair{"port", port}
+                          << net::flush;
             }
             catch(...)
             {
-                net::slog << net::error("httpd") << "failed to write error response to " << endpoint << ":" << port << " (unknown exception in write)" << net::flush;
+                net::slog << net::error("WRITE_ERROR") << "failed to write error response to " << endpoint << ":" << port << " (unknown exception in write)"
+                          << std::pair{"ip"sv, endpoint}
+                          << std::pair{"port", port}
+                          << net::flush;
             }
         }
     }
