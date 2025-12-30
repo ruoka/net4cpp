@@ -545,8 +545,10 @@ auto register_syslogstream_tests()
             tester::bdd::when("Logging with source_location and structured fields") = [captured_output] {
                 using namespace std::string_literals;
                 using namespace std::string_view_literals;
-                captured_output->str(""); // Clear previous output
+                // Redirect again to ensure stream is active, and clear old content
+                captured_output->str("");
                 captured_output->clear();
+                (void)slog.redirect(*captured_output);
                 slog << net::error("ERROR_WITH_SOURCE")
                      << std::source_location::current()
                      << std::pair{"error_code"sv, 500}
@@ -684,8 +686,10 @@ auto register_syslogstream_tests()
                 using namespace std::string_literals;
                 using namespace std::string_view_literals;
                 
-                captured_output->str(""); // Clear previous output
+                // Redirect again to ensure stream is active, and clear old content
+                captured_output->str("");
                 captured_output->clear();
+                (void)slog.redirect(*captured_output);
                 slog << net::warning("MIXED_KEYS_TEST")
                      << std::pair{"key1"sv, "value1"sv}
                      << std::pair{"key2", "value2"}
