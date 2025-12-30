@@ -278,10 +278,10 @@ auto register_syslogstream_tests()
 
             tester::bdd::when("Setting different facilities") = [] {
                 check_nothrow([] {
-                    slog.facility(syslog::facility::local0);
-                    slog.facility(syslog::facility::local1);
-                    slog.facility(16);  // local0
-                    slog.facility(23);  // local7
+                    slog.facility(syslog::facility::local0)
+                        .facility(syslog::facility::local1)
+                        .facility(16)  // local0
+                        .facility(23); // local7
                 });
             };
         };
