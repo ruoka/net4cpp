@@ -256,8 +256,8 @@ auto register_syslogstream_tests()
         tester::bdd::given("A syslog stream configured for JSONL format") = [] {
             slog.appname("tester");
             slog.level(syslog::severity::debug);
-            (void)slog.set_format(log_format::jsonl);
-            slog.redirect(std::clog);
+            (void)            (void)slog.set_format(log_format::jsonl);
+            (void)slog.redirect(std::clog);
 
             tester::bdd::when("Logging a message") = [] {
                 using namespace std::string_literals;
