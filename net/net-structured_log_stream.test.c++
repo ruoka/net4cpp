@@ -573,7 +573,7 @@ auto register_syslogstream_tests()
                         .set_app_name("chained-app")
                         .set_log_level(syslog::severity::warning)
                         .set_sd_id("test-source")
-                        .set_facility(static_cast<int>(syslog::facility::local1))
+                        .set_facility(syslog::facility::local1)
                         .redirect(std::clog);
                 });
             };

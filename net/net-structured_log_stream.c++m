@@ -329,6 +329,11 @@ public:
         m_facility_value = f; 
         return *this;
     }
+    [[nodiscard]] structured_log_stream& set_facility(syslog::facility f) { 
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        m_facility_value = static_cast<int>(f); 
+        return *this;
+    }
 
     // Output redirection - chained for fluent API
     [[nodiscard]] structured_log_stream& redirect(const std::string& file_path) {
