@@ -11,6 +11,7 @@ export import :http_base64;
 export import :http_headers;
 export import :http_server;
 export import :http_uri;
+export import :posix;
 export import :receiver;
 export import :sender;
 export import :socket;
