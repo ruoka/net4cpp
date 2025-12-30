@@ -514,6 +514,291 @@ auto register_syslogstream_tests()
         };
     };
 
+    tester::bdd::scenario("Source location support (C++20), [net]") = [] {
+        auto captured_output = std::make_shared<std::stringstream>();
+        
+        tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
+            slog.appname("testapp");
+            slog.level(syslog::severity::debug);
+            slog.set_format(log_format::jsonl);
+            slog.redirect(*captured_output);
+
+            tester::bdd::when("Logging with source_location") = [captured_output] {
+                using namespace std::string_literals;
+                auto loc = std::source_location::current();
+                slog << net::info("SOURCE_LOC_TEST")
+                     << std::source_location::current()
+                     << "Message with source location"s
+                     << net::flush;
+
+                tester::bdd::then("Output should contain file, line, and function fields") = [captured_output] {
+                    std::string output = captured_output->str();
+                    check_contains(output, "\"file\":");
+                    check_contains(output, "\"line\":");
+                    check_contains(output, "\"function\":");
+                    check_contains(output, "register_syslogstream_tests");
+                    check_contains(output, "Message with source location");
+                    slog.redirect(std::clog);
+                };
+            };
+
+            tester::bdd::when("Logging with source_location and structured fields") = [captured_output] {
+                using namespace std::string_literals;
+                slog << net::error("ERROR_WITH_SOURCE")
+                     << std::source_location::current()
+                     << std::pair{"error_code"sv, 500}
+                     << std::pair{"error_msg"sv, "Database connection failed"sv}
+                     << "Critical error occurred"s
+                     << net::flush;
+
+                tester::bdd::then("Output should contain both source location and structured fields") = [captured_output] {
+                    std::string output = captured_output->str();
+                    check_contains(output, "\"file\":");
+                    check_contains(output, "\"line\":");
+                    check_contains(output, "\"function\":");
+                    check_contains(output, "\"error_code\":500");
+                    check_contains(output, "\"error_msg\":\"Database connection failed\"");
+                    check_contains(output, "Critical error occurred");
+                    slog.redirect(std::clog);
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("Fluent configuration API (method chaining), [net]") = [] {
+        tester::bdd::given("A syslog stream") = [] {
+            tester::bdd::when("Using fluent/chained configuration") = [] {
+                check_nothrow([] {
+                    slog.set_format(log_format::jsonl)
+                        .set_app_name("chained-app")
+                        .set_log_level(syslog::severity::warning)
+                        .set_sd_id("test-source")
+                        .set_facility(syslog::facility::local1)
+                        .redirect(std::clog);
+                });
+            };
+
+            tester::bdd::when("Chaining configuration with logging") = [] {
+                auto captured_output = std::make_shared<std::stringstream>();
+                check_nothrow([captured_output] {
+                    slog.set_format(log_format::jsonl)
+                        .set_app_name("chained-test")
+                        .set_log_level(syslog::severity::info)
+                        .redirect(*captured_output);
+                    
+                    slog << net::info("CHAINED_TEST")
+                         << std::pair{"test"sv, "value"sv}
+                         << "Chained configuration test"
+                         << net::flush;
+                    
+                    std::string output = captured_output->str();
+                    check_contains(output, "\"app\":\"chained-test\"");
+                    check_contains(output, "\"test\":\"value\"");
+                    slog.redirect(std::clog);
+                });
+            };
+        };
+    };
+
+    tester::bdd::scenario("is_enabled() method, [net]") = [] {
+        tester::bdd::given("A syslog stream with info level") = [] {
+            slog.appname("testapp");
+            slog.level(syslog::severity::info);
+            slog.redirect(std::clog);
+
+            tester::bdd::when("Checking if different severity levels are enabled") = [] {
+                // Debug should be disabled (below info)
+                check_eq(false, slog.is_enabled(syslog::severity::debug));
+                
+                // Info and above should be enabled
+                check_eq(true, slog.is_enabled(syslog::severity::info));
+                check_eq(true, slog.is_enabled(syslog::severity::notice));
+                check_eq(true, slog.is_enabled(syslog::severity::warning));
+                check_eq(true, slog.is_enabled(syslog::severity::error));
+                check_eq(true, slog.is_enabled(syslog::severity::critical));
+                check_eq(true, slog.is_enabled(syslog::severity::alert));
+                check_eq(true, slog.is_enabled(syslog::severity::emergency));
+            };
+
+            tester::bdd::when("Setting level to warning") = [] {
+                slog.level(syslog::severity::warning);
+                
+                check_eq(false, slog.is_enabled(syslog::severity::debug));
+                check_eq(false, slog.is_enabled(syslog::severity::info));
+                check_eq(false, slog.is_enabled(syslog::severity::notice));
+                check_eq(true, slog.is_enabled(syslog::severity::warning));
+                check_eq(true, slog.is_enabled(syslog::severity::error));
+            };
+
+            tester::bdd::when("Setting level to error") = [] {
+                slog.level(syslog::severity::error);
+                
+                check_eq(false, slog.is_enabled(syslog::severity::debug));
+                check_eq(false, slog.is_enabled(syslog::severity::info));
+                check_eq(false, slog.is_enabled(syslog::severity::notice));
+                check_eq(false, slog.is_enabled(syslog::severity::warning));
+                check_eq(true, slog.is_enabled(syslog::severity::error));
+                check_eq(true, slog.is_enabled(syslog::severity::critical));
+            };
+        };
+    };
+
+    tester::bdd::scenario("Structured fields with string_view keys (sv suffix), [net]") = [] {
+        auto captured_output = std::make_shared<std::stringstream>();
+        
+        tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
+            slog.appname("testapp");
+            slog.level(syslog::severity::debug);
+            slog.set_format(log_format::jsonl);
+            slog.redirect(*captured_output);
+
+            tester::bdd::when("Using string_view keys with sv suffix") = [captured_output] {
+                using namespace std::string_literals;
+                using namespace std::string_view_literals;
+                
+                slog << net::info("SV_KEY_TEST")
+                     << std::pair{"user_id"sv, 12345}
+                     << std::pair{"username"sv, "alice"sv}
+                     << std::pair{"email"sv, "alice@example.com"s}
+                     << std::pair{"active"sv, true}
+                     << std::pair{"score"sv, 98.5}
+                     << "User profile updated"s
+                     << net::flush;
+
+                tester::bdd::then("Output should contain all structured fields") = [captured_output] {
+                    std::string output = captured_output->str();
+                    check_contains(output, "\"user_id\":12345");
+                    check_contains(output, "\"username\":\"alice\"");
+                    check_contains(output, "\"email\":\"alice@example.com\"");
+                    check_contains(output, "\"active\":true");
+                    check_contains(output, "\"score\":98.5");
+                    check_contains(output, "User profile updated");
+                    slog.redirect(std::clog);
+                };
+            };
+
+            tester::bdd::when("Mixing string_view and string literal keys") = [captured_output] {
+                using namespace std::string_literals;
+                using namespace std::string_view_literals;
+                
+                slog << net::warning("MIXED_KEYS_TEST")
+                     << std::pair{"key1"sv, "value1"sv}
+                     << std::pair{"key2", "value2"}
+                     << std::pair{"key3"sv, 42}
+                     << "Mixed key types test"s
+                     << net::flush;
+
+                tester::bdd::then("Both key types should work correctly") = [captured_output] {
+                    std::string output = captured_output->str();
+                    check_contains(output, "\"key1\":\"value1\"");
+                    check_contains(output, "\"key2\":\"value2\"");
+                    check_contains(output, "\"key3\":42");
+                    slog.redirect(std::clog);
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("Early filtering optimization, [net]") = [] {
+        auto captured_output = std::make_shared<std::stringstream>();
+        
+        tester::bdd::given("A syslog stream with info level") = [captured_output] {
+            slog.appname("testapp");
+            slog.level(syslog::severity::info);
+            slog.set_format(log_format::jsonl);
+            slog.redirect(*captured_output);
+
+            tester::bdd::when("Logging at debug level (should be filtered)") = [captured_output] {
+                using namespace std::string_literals;
+                captured_output->str("");  // Clear output
+                
+                slog << net::debug("FILTERED_MSG")
+                     << std::pair{"data"sv, "should not appear"sv}
+                     << "This debug message should be filtered"
+                     << net::flush;
+
+                tester::bdd::then("No output should be generated") = [captured_output] {
+                    std::string output = captured_output->str();
+                    check_eq("", output);
+                };
+            };
+
+            tester::bdd::when("Logging at info level (should not be filtered)") = [captured_output] {
+                using namespace std::string_literals;
+                captured_output->str("");  // Clear output
+                
+                slog << net::info("NOT_FILTERED_MSG")
+                     << std::pair{"data"sv, "should appear"sv}
+                     << "This info message should be logged"
+                     << net::flush;
+
+                tester::bdd::then("Output should be generated") = [captured_output] {
+                    std::string output = captured_output->str();
+                    check_contains(output, "NOT_FILTERED_MSG");
+                    check_contains(output, "\"data\":\"should appear\"");
+                    check_contains(output, "This info message should be logged");
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("RFC 5424 MSG-ID patterns, [net]") = [] {
+        auto captured_output = std::make_shared<std::stringstream>();
+        
+        tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
+            slog.appname("testapp");
+            slog.level(syslog::severity::debug);
+            slog.set_format(log_format::jsonl);
+            slog.redirect(*captured_output);
+
+            tester::bdd::when("Using RFC 5424 compliant MSG-IDs") = [captured_output] {
+                using namespace std::string_literals;
+                
+                slog << net::info("SERVER_START")
+                     << "Server starting up"s
+                     << net::flush;
+                
+                slog << net::error("CONN_ERROR")
+                     << std::pair{"error_code"sv, 10054}
+                     << "Connection failed"s
+                     << net::flush;
+                
+                slog << net::warning("AUTH_FAILED")
+                     << std::pair{"user"sv, "admin"sv}
+                     << std::pair{"ip"sv, "192.168.1.1"sv}
+                     << "Authentication failed"s
+                     << net::flush;
+
+                tester::bdd::then("All MSG-IDs should be properly formatted") = [captured_output] {
+                    std::string output = captured_output->str();
+                    check_contains(output, "\"msg_id\":\"SERVER_START\"");
+                    check_contains(output, "\"msg_id\":\"CONN_ERROR\"");
+                    check_contains(output, "\"msg_id\":\"AUTH_FAILED\"");
+                    check_contains(output, "\"level\":\"info\"");
+                    check_contains(output, "\"level\":\"error\"");
+                    check_contains(output, "\"level\":\"warning\"");
+                    slog.redirect(std::clog);
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("Flush method returns structured_log_stream&, [net]") = [] {
+        tester::bdd::given("A syslog stream") = [] {
+            slog.appname("testapp");
+            slog.level(syslog::severity::debug);
+            slog.redirect(std::clog);
+
+            tester::bdd::when("Calling flush()") = [] {
+                check_nothrow([] {
+                    // flush() should return structured_log_stream& for chaining
+                    auto& result = slog.flush();
+                    (void)result;  // Just verify it compiles and returns reference
+                });
+            };
+        };
+    };
+
     return true;
 }
 
