@@ -13,6 +13,7 @@ public:
     iendpointstream(iendpointstream&& s) noexcept : std::istream{s.m_buf}, m_buf{s.m_buf} { init(m_buf); s.m_buf = nullptr; }
     ~iendpointstream() override { if(m_buf) delete m_buf; }
     iendpointstream& operator=(iendpointstream&& s) noexcept { if(m_buf) delete m_buf; m_buf = s.m_buf; s.m_buf = nullptr; init(m_buf); return *this; }
+    void close() noexcept { if(m_buf) { delete m_buf; m_buf = nullptr; } }
     bool wait_for(const std::chrono::milliseconds& timeout) { return m_buf->wait_for(timeout) && peek() != std::char_traits<char>::eof(); }
 private:
     iendpointstream(const iendpointstream&) = delete;
@@ -26,6 +27,7 @@ public:
     oendpointstream(oendpointstream&& s) noexcept : std::ostream{s.m_buf}, m_buf{s.m_buf} { s.m_buf = nullptr; init(m_buf); }
     ~oendpointstream() override { if(m_buf) delete m_buf; }
     oendpointstream& operator=(oendpointstream&& s) noexcept { if(m_buf) delete m_buf; m_buf = s.m_buf; s.m_buf = nullptr; init(m_buf); return *this; }
+    void close() noexcept { if(m_buf) { delete m_buf; m_buf = nullptr; } }
 private:
     oendpointstream(const oendpointstream&) = delete;
     gsl::owner<endpointbuf_base*> m_buf;
@@ -38,6 +40,7 @@ public:
     endpointstream(endpointstream&& s) noexcept : std::iostream{s.m_buf}, m_buf{s.m_buf} { s.m_buf = nullptr; init(m_buf); }
     ~endpointstream() override { if(m_buf) delete m_buf; }
     endpointstream& operator=(endpointstream&& s) noexcept { if(m_buf) delete m_buf; m_buf = s.m_buf; s.m_buf = nullptr; init(m_buf); return *this; }
+    void close() noexcept { if(m_buf) { delete m_buf; m_buf = nullptr; } }
     bool wait_for(const std::chrono::milliseconds& timeout) { return m_buf->wait_for(timeout) && peek() != std::char_traits<char>::eof(); }
 private:
     endpointstream(const endpointstream&) = delete;
