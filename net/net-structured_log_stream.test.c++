@@ -35,10 +35,10 @@ auto register_syslogstream_tests()
 
     tester::bdd::scenario("Setup and Log levels, [net]") = [] {
         tester::bdd::given("A syslog stream setup") = [] {
-            slog.appname("tester");
-            slog.facility(syslog::facility::local0);
-            slog.level(syslog::severity::debug);
-            (void)slog.redirect(std::clog);
+            slog.set_app_name("tester")
+                .set_facility(static_cast<int>(syslog::facility::local0))
+                .set_log_level(syslog::severity::debug)
+                .redirect(std::clog);
 
             tester::bdd::when("Logging at various levels") = [] {
                 using namespace std::string_literals;
@@ -64,9 +64,9 @@ auto register_syslogstream_tests()
 
     tester::bdd::scenario("Backward compatibility with syslog::helper, [net]") = [] {
         tester::bdd::given("A syslog stream setup") = [] {
-            slog.appname("tester");
-            slog.level(syslog::severity::debug);
-            (void)slog.redirect(std::clog);
+            slog.set_app_name("tester")
+                .set_log_level(syslog::severity::debug)
+                .redirect(std::clog);
 
             tester::bdd::when("Using syslog::helper API") = [] {
                 using namespace std::string_literals;
@@ -81,9 +81,9 @@ auto register_syslogstream_tests()
 
     tester::bdd::scenario("Structured logging with fields, [net]") = [] {
         tester::bdd::given("A syslog stream setup") = [] {
-            slog.appname("tester");
-            slog.level(syslog::severity::debug);
-            (void)slog.redirect(std::clog);
+            slog.set_app_name("tester")
+                .set_log_level(syslog::severity::debug)
+                .redirect(std::clog);
 
             tester::bdd::when("Adding structured fields") = [] {
                 using namespace std::string_literals;
@@ -138,11 +138,11 @@ auto register_syslogstream_tests()
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
-            slog.appname("testapp");
-            slog.level(syslog::severity::debug);
-            (void)slog.set_format(log_format::jsonl);
-            slog.sd_id("api");
-            (void)slog.redirect(*captured_output);
+            slog.set_app_name("testapp")
+                .set_log_level(syslog::severity::debug)
+                .set_format(log_format::jsonl)
+                .set_sd_id("api")
+                .redirect(*captured_output);
 
             tester::bdd::when("Logging with structured fields using new style syntax") = [captured_output] {
                 using namespace std::string_literals;
@@ -169,11 +169,11 @@ auto register_syslogstream_tests()
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
-            slog.appname("testapp");
-            slog.level(syslog::severity::debug);
-            (void)slog.set_format(log_format::jsonl);
-            slog.sd_id("api");
-            (void)slog.redirect(*captured_output);
+            slog.set_app_name("testapp")
+                .set_log_level(syslog::severity::debug)
+                .set_format(log_format::jsonl)
+                .set_sd_id("api")
+                .redirect(*captured_output);
 
             tester::bdd::when("Logging error with structured fields") = [captured_output] {
                 using namespace std::string_literals;
@@ -201,12 +201,12 @@ auto register_syslogstream_tests()
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for syslog format") = [captured_output] {
-            slog.appname("testapp");
-            slog.facility(syslog::facility::local0);
-            slog.level(syslog::severity::debug);
-            (void)slog.set_format(log_format::syslog);
-            slog.sd_id("test@12345");
-            (void)slog.redirect(*captured_output);
+            slog.set_app_name("testapp")
+                .set_facility(static_cast<int>(syslog::facility::local0))
+                .set_log_level(syslog::severity::debug)
+                .set_format(log_format::syslog)
+                .set_sd_id("test@12345")
+                .redirect(*captured_output);
 
             tester::bdd::when("Logging with structured fields using new style syntax") = [captured_output] {
                 using namespace std::string_literals;
@@ -233,9 +233,9 @@ auto register_syslogstream_tests()
 
     tester::bdd::scenario("Log level filtering, [net]") = [] {
         tester::bdd::given("A syslog stream with info level") = [] {
-            slog.appname("tester");
-            slog.level(syslog::severity::info);
-            (void)slog.redirect(std::clog);
+            slog.set_app_name("tester")
+                .set_log_level(syslog::severity::info)
+                .redirect(std::clog);
 
             tester::bdd::when("Logging at different levels") = [] {
                 using namespace std::string_literals;
@@ -254,10 +254,10 @@ auto register_syslogstream_tests()
 
     tester::bdd::scenario("JSONL format output, [net]") = [] {
         tester::bdd::given("A syslog stream configured for JSONL format") = [] {
-            slog.appname("tester");
-            slog.level(syslog::severity::debug);
-            (void)            (void)slog.set_format(log_format::jsonl);
-            (void)slog.redirect(std::clog);
+            slog.set_app_name("tester")
+                .set_log_level(syslog::severity::debug)
+                .set_format(log_format::jsonl)
+                .redirect(std::clog);
 
             tester::bdd::when("Logging a message") = [] {
                 using namespace std::string_literals;
@@ -301,11 +301,11 @@ auto register_syslogstream_tests()
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for syslog format") = [captured_output] {
-            slog.appname("testapp");
-            slog.facility(syslog::facility::local0);
-            slog.level(syslog::severity::debug);
-            (void)slog.set_format(log_format::syslog);
-            (void)slog.redirect(*captured_output);
+            slog.set_app_name("testapp")
+                .set_facility(static_cast<int>(syslog::facility::local0))
+                .set_log_level(syslog::severity::debug)
+                .set_format(log_format::syslog)
+                .redirect(*captured_output);
 
             tester::bdd::when("Logging a simple message") = [captured_output] {
                 using namespace std::string_literals;
@@ -328,12 +328,12 @@ auto register_syslogstream_tests()
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for syslog format") = [captured_output] {
-            slog.appname("testapp");
-            slog.facility(syslog::facility::local0);
-            slog.level(syslog::severity::debug);
-            (void)slog.set_format(log_format::syslog);
-            slog.sd_id("test@12345");
-            (void)slog.redirect(*captured_output);
+            slog.set_app_name("testapp")
+                .set_facility(static_cast<int>(syslog::facility::local0))
+                .set_log_level(syslog::severity::debug)
+                .set_format(log_format::syslog)
+                .set_sd_id("test@12345")
+                .redirect(*captured_output);
 
             tester::bdd::when("Logging with structured fields") = [captured_output] {
                 using namespace std::string_literals;
@@ -360,11 +360,11 @@ auto register_syslogstream_tests()
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
-            slog.appname("testapp");
-            slog.level(syslog::severity::debug);
-            (void)slog.set_format(log_format::jsonl);
-            slog.sd_id("test_source");
-            (void)slog.redirect(*captured_output);
+            slog.set_app_name("testapp")
+                .set_log_level(syslog::severity::debug)
+                .set_format(log_format::jsonl)
+                .set_sd_id("test_source")
+                .redirect(*captured_output);
 
             tester::bdd::when("Logging a simple message") = [captured_output] {
                 using namespace std::string_literals;
@@ -392,11 +392,11 @@ auto register_syslogstream_tests()
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
-            slog.appname("testapp");
-            slog.level(syslog::severity::debug);
-            (void)slog.set_format(log_format::jsonl);
-            slog.sd_id("api");
-            (void)slog.redirect(*captured_output);
+            slog.set_app_name("testapp")
+                .set_log_level(syslog::severity::debug)
+                .set_format(log_format::jsonl)
+                .set_sd_id("api")
+                .redirect(*captured_output);
 
             tester::bdd::when("Logging with structured fields") = [captured_output] {
                 using namespace std::string_literals;
@@ -424,9 +424,9 @@ auto register_syslogstream_tests()
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream") = [captured_output] {
-            slog.appname("testapp");
-            slog.level(syslog::severity::debug);
-            (void)slog.redirect(*captured_output);
+            slog.set_app_name("testapp")
+                .set_log_level(syslog::severity::debug)
+                .redirect(*captured_output);
 
             tester::bdd::when("Switching between formats") = [captured_output] {
                 using namespace std::string_literals;
@@ -457,10 +457,10 @@ auto register_syslogstream_tests()
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
-            slog.appname("testapp");
-            slog.level(syslog::severity::debug);
-            (void)slog.set_format(log_format::jsonl);
-            (void)slog.redirect(*captured_output);
+            slog.set_app_name("testapp")
+                .set_log_level(syslog::severity::debug)
+                .set_format(log_format::jsonl)
+                .redirect(*captured_output);
 
             tester::bdd::when("Logging with various value types") = [captured_output] {
                 using namespace std::string_literals;
@@ -519,10 +519,10 @@ auto register_syslogstream_tests()
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
-            slog.appname("testapp");
-            slog.level(syslog::severity::debug);
-            (void)slog.set_format(log_format::jsonl);
-            (void)slog.redirect(*captured_output);
+            slog.set_app_name("testapp")
+                .set_log_level(syslog::severity::debug)
+                .set_format(log_format::jsonl)
+                .redirect(*captured_output);
 
             tester::bdd::when("Logging with source_location") = [captured_output] {
                 using namespace std::string_literals;
@@ -602,9 +602,9 @@ auto register_syslogstream_tests()
 
     tester::bdd::scenario("is_enabled() method, [net]") = [] {
         tester::bdd::given("A syslog stream with info level") = [] {
-            slog.appname("testapp");
-            slog.level(syslog::severity::info);
-            (void)slog.redirect(std::clog);
+            slog.set_app_name("testapp")
+                .set_log_level(syslog::severity::info)
+                .redirect(std::clog);
 
             tester::bdd::when("Checking if different severity levels are enabled") = [] {
                 // Debug should be disabled (below info)
@@ -647,10 +647,10 @@ auto register_syslogstream_tests()
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
-            slog.appname("testapp");
-            slog.level(syslog::severity::debug);
-            (void)slog.set_format(log_format::jsonl);
-            (void)slog.redirect(*captured_output);
+            slog.set_app_name("testapp")
+                .set_log_level(syslog::severity::debug)
+                .set_format(log_format::jsonl)
+                .redirect(*captured_output);
 
             tester::bdd::when("Using string_view keys with sv suffix") = [captured_output] {
                 using namespace std::string_literals;
@@ -746,10 +746,10 @@ auto register_syslogstream_tests()
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
-            slog.appname("testapp");
-            slog.level(syslog::severity::debug);
-            (void)slog.set_format(log_format::jsonl);
-            (void)slog.redirect(*captured_output);
+            slog.set_app_name("testapp")
+                .set_log_level(syslog::severity::debug)
+                .set_format(log_format::jsonl)
+                .redirect(*captured_output);
 
             tester::bdd::when("Using RFC 5424 compliant MSG-IDs") = [captured_output] {
                 using namespace std::string_literals;
@@ -785,9 +785,9 @@ auto register_syslogstream_tests()
 
     tester::bdd::scenario("Flush method returns structured_log_stream&, [net]") = [] {
         tester::bdd::given("A syslog stream") = [] {
-            slog.appname("testapp");
-            slog.level(syslog::severity::debug);
-            (void)slog.redirect(std::clog);
+            slog.set_app_name("testapp")
+                .set_log_level(syslog::severity::debug)
+                .redirect(std::clog);
 
             tester::bdd::when("Calling flush()") = [] {
                 check_nothrow([] {
