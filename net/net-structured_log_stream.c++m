@@ -142,7 +142,7 @@ private:
     int                    m_facility_value = 1;  // user facility
 
     // Thread-safety and output redirection (instance members for singleton)
-    std::mutex                     m_log_mutex;
+    mutable std::mutex             m_log_mutex;  // mutable for const getter methods
     std::unique_ptr<std::ofstream> m_file_stream;
     std::ostream*                  m_output_stream = &std::clog;
 
@@ -304,32 +304,57 @@ private:
 
 public:
     // Configuration (instance methods) - chained for fluent API
-    [[nodiscard]] structured_log_stream& set_log_level(syslog::severity level) { 
+    // C++-idiomatic getters and setters using bare names with overloads
+    syslog::severity log_level() const {
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        return m_log_level;
+    }
+    [[nodiscard]] structured_log_stream& log_level(syslog::severity level) { 
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_log_level = level; 
         return *this;
     }
-    [[nodiscard]] structured_log_stream& set_format(log_format f) { 
+    
+    log_format format() const {
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        return m_format;
+    }
+    [[nodiscard]] structured_log_stream& format(log_format f) { 
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_format = f; 
         return *this;
     }
-    [[nodiscard]] structured_log_stream& set_app_name(const std::string& name) { 
+    
+    const std::string& app_name() const {
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        return m_app_name;
+    }
+    [[nodiscard]] structured_log_stream& app_name(const std::string& name) { 
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_app_name = name; 
         return *this;
     }
-    [[nodiscard]] structured_log_stream& set_sd_id(const std::string& id) { 
+    
+    const std::string& sd_id() const {
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        return m_sd_id;
+    }
+    [[nodiscard]] structured_log_stream& sd_id(const std::string& id) { 
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_sd_id = id; 
         return *this;
     }
-    [[nodiscard]] structured_log_stream& set_facility(int f) { 
+    
+    int facility() const {
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        return m_facility_value;
+    }
+    [[nodiscard]] structured_log_stream& facility(int f) { 
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_facility_value = f; 
         return *this;
     }
-    [[nodiscard]] structured_log_stream& set_facility(syslog::facility f) { 
+    [[nodiscard]] structured_log_stream& facility(syslog::facility f) { 
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_facility_value = static_cast<int>(f); 
         return *this;
@@ -361,41 +386,29 @@ public:
         return *this;
     }
 
-    // Backward compatibility methods
-    void facility(syslog::facility f) { 
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        m_facility_value = static_cast<int>(f);
-    }
-
-    template<std::unsigned_integral T>
-    void facility(T f) { 
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        m_facility_value = static_cast<int>(f);
-    }
-
-    void level(syslog::severity s) { 
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        m_log_level = s;
-    }
-
-    template<std::unsigned_integral T>
-    void level(T s) { 
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        m_log_level = static_cast<syslog::severity>(s);
-    }
-
+    // Backward compatibility methods (deprecated - use fluent API instead)
+    // These void methods are kept for backward compatibility but delegate to fluent API
+    [[deprecated("Use app_name() fluent API instead (returns *this for chaining)")]]
     void appname(std::string_view app) { 
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        m_app_name = std::string(app);
+        (void)app_name(std::string(app));
     }
 
-    void sd_id(std::string_view id) { 
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        m_sd_id = std::string(id);
+    [[deprecated("Use log_level() fluent API instead (returns *this for chaining)")]]
+    void level(syslog::severity s) { 
+        (void)log_level(s);
     }
 
-    [[deprecated("Use appname() instead.")]]
-    void tag(std::string_view app) { appname(app); }
+    template<std::unsigned_integral T>
+    [[deprecated("Use log_level() fluent API instead (returns *this for chaining)")]]
+    void level(T s) { 
+        (void)log_level(static_cast<syslog::severity>(s));
+    }
+
+    // Note: Old void facility() methods conflict with fluent API facility() that returns *this
+    // They have been removed. Use the fluent API facility() method instead.
+
+    [[deprecated("Use app_name() instead.")]]
+    void tag(std::string_view app) { (void)app_name(std::string(app)); }
 
     // Streaming interface
     // Lock once at start of log entry (matches original syslogstream pattern)
@@ -569,7 +582,7 @@ public:
 
     // Query method to check if a severity level would be logged
     [[nodiscard]] bool is_enabled(syslog::severity s) const {
-        std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(m_log_mutex));
+        std::lock_guard<std::mutex> lock(m_log_mutex);
         return static_cast<int>(s) <= static_cast<int>(m_log_level);
     }
 };

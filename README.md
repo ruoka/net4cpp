@@ -123,10 +123,10 @@ slog << error   << "Planet Earth is blue and there's nothing I can do." << flush
 The structured log stream supports method chaining for convenient configuration:
 
 ```cpp
-slog.set_format(net::log_format::jsonl)
-    .set_app_name("my-service")
-    .set_log_level(syslog::severity::info)
-    .set_sd_id("app")
+slog.format(net::log_format::jsonl)
+    .app_name("my-service")
+    .log_level(syslog::severity::info)
+    .sd_id("app")
     .redirect("logs/app.log");
 ```
 
