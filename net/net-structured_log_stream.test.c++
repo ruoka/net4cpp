@@ -487,10 +487,10 @@ auto register_syslogstream_tests()
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for syslog format") = [captured_output] {
-            slog.appname("testapp");
-            slog.level(syslog::severity::debug);
-            (void)slog.set_format(log_format::syslog);
-            (void)slog.redirect(*captured_output);
+            slog.set_app_name("testapp")
+                .set_log_level(syslog::severity::debug)
+                .set_format(log_format::syslog)
+                .redirect(*captured_output);
 
             tester::bdd::when("Logging with different facilities and severities") = [captured_output] {
                 using namespace std::string_literals;
