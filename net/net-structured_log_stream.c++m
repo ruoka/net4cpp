@@ -528,6 +528,7 @@ public:
     // Source location support (C++20)
     structured_log_stream& operator<<(const std::source_location& loc) {
         if (entry_enabled) {
+            using namespace std::string_view_literals;
             structured_fields.emplace(std::piecewise_construct,
                                      std::forward_as_tuple("file"sv),
                                      std::forward_as_tuple(convert_to_value(loc.file_name())));
