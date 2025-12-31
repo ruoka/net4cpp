@@ -281,7 +281,9 @@ private:
     void handle(auto& client)
     {
         using namespace std::string_view_literals;
+        using namespace std::chrono;
         auto& [stream, endpoint, port] = client;
+        const auto conn_start = system_clock::now();
         net::slog << net::notice("CONN_ACCEPT") << "accepted connection from " << endpoint << ":" << port
                   << std::pair{"ip"sv, endpoint}
                   << std::pair{"port", port}
@@ -298,23 +300,32 @@ private:
                 {
                     if(stream.eof())
                     {
+                        const auto conn_duration = duration_cast<milliseconds>(system_clock::now() - conn_start).count();
                         net::slog << net::info("CONN_CLOSED") << "connection closed by client " << endpoint << ":" << port
                                   << std::pair{"ip"sv, endpoint}
                                   << std::pair{"port", port}
+                                  << std::pair{"connection_duration_ms", conn_duration}
                                   << net::flush;
                     }
                     else
                     {
+                        const auto conn_duration = duration_cast<milliseconds>(system_clock::now() - conn_start).count();
                         net::slog << net::warning("STREAM_ERROR") << "stream error reading request from " << endpoint << ":" << port << " (eof: " << stream.eof() << ", fail: " << stream.fail() << ", bad: " << stream.bad() << ")"
                                   << std::pair{"ip"sv, endpoint}
                                   << std::pair{"port", port}
                                   << std::pair{"eof", stream.eof()}
                                   << std::pair{"fail", stream.fail()}
                                   << std::pair{"bad", stream.bad()}
+                                  << std::pair{"connection_duration_ms", conn_duration}
                                   << net::flush;
                     }
                     break;
                 }
+
+                // Generate request ID for correlation
+                static std::atomic<std::uint64_t> request_counter{0};
+                const auto request_id = std::to_string(++request_counter);
+                const auto request_start = system_clock::now();
 
                 net::slog << net::notice("HTTP_REQUEST") << "request \"" << method << ' ' << uri << ' ' << version << "\""
                           << std::pair{"ip"sv, endpoint}
@@ -322,6 +333,7 @@ private:
                           << std::pair{"method", method}
                           << std::pair{"uri", std::string{uri}}
                           << std::pair{"version", version}
+                          << std::pair{"request_id", request_id}
                           << net::flush;
 
                 headers hs{};
@@ -331,10 +343,13 @@ private:
                 }
                 catch(const std::exception& e)
                 {
+                    const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
                     net::slog << net::error("PARSE_HEADERS_ERROR") << "failed to parse headers from " << endpoint << ":" << port << ": " << e.what()
                               << std::pair{"ip"sv, endpoint}
                               << std::pair{"port", port}
                               << std::pair{"status", 400}
+                              << std::pair{"request_id", request_id}
+                              << std::pair{"duration_ms", request_duration}
                               << net::flush;
                     stream << "HTTP/1.0 400 Bad Request" << net::crlf
                            << "Date: " << date() << net::crlf
@@ -352,6 +367,32 @@ private:
                 std::string authorization = "";
                 if(hs.contains("authorization"))
                     authorization = hs["authorization"];
+
+                // Extract additional headers for logging
+                std::string user_agent = "";
+                if(hs.contains("user-agent"))
+                    user_agent = hs["user-agent"];
+
+                std::string content_type = "";
+                if(hs.contains("content-type"))
+                    content_type = hs["content-type"];
+
+                std::string accept = "";
+                if(hs.contains("accept"))
+                    accept = hs["accept"];
+
+                // Log additional headers if present
+                if(!user_agent.empty() || !content_type.empty() || !accept.empty())
+                {
+                    net::slog << net::debug("HTTP_REQUEST_HEADERS") << "request headers"
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << std::pair{"request_id", request_id}
+                              << std::pair{"user_agent", user_agent}
+                              << std::pair{"content_type", content_type}
+                              << std::pair{"accept", accept}
+                              << net::flush;
+                }
 
                 long long content_length = 0;
                 if(hs.contains("content-length"))
@@ -432,6 +473,7 @@ private:
 
                 if(version != "HTTP/1.1")
                 {
+                    const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
                     net::slog << net::warning("UNSUPPORTED_VERSION") << "unsupported HTTP version \"" << version << "\" from " << endpoint << ":" << port
                               << std::pair{"ip"sv, endpoint}
                               << std::pair{"port", port}
@@ -439,6 +481,8 @@ private:
                               << std::pair{"uri", std::string{uri}}
                               << std::pair{"version", version}
                               << std::pair{"status", 505}
+                              << std::pair{"request_id", request_id}
+                              << std::pair{"duration_ms", request_duration}
                               << net::flush;
                     stream << "HTTP/1.1 505 HTTP Version Not Supported" << net::crlf
                            << "Date: "         << date()                << net::crlf
@@ -449,12 +493,15 @@ private:
                 }
                 else if(!m_methods.contains(method))
                 {
+                    const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
                     net::slog << net::warning("UNSUPPORTED_METHOD") << "unsupported HTTP method \"" << method << "\" for \"" << uri << "\" from " << endpoint << ":" << port
                               << std::pair{"ip"sv, endpoint}
                               << std::pair{"port", port}
                               << std::pair{"method", method}
                               << std::pair{"uri", std::string{uri}}
                               << std::pair{"status", 400}
+                              << std::pair{"request_id", request_id}
+                              << std::pair{"duration_ms", request_duration}
                               << net::flush;
                     stream << "HTTP/1.1 400 Bad Request"                    << net::crlf
                            << "Date: "         << date()                    << net::crlf
@@ -466,12 +513,15 @@ private:
                 }
                 else if(uri == "/favicon.ico")
                 {
+                    const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
                     net::slog << net::debug("FAVICON_REQUEST") << "favicon request from " << endpoint << ":" << port
                               << std::pair{"ip"sv, endpoint}
                               << std::pair{"port", port}
                               << std::pair{"method", method}
                               << std::pair{"uri", std::string{uri}}
                               << std::pair{"status", 404}
+                              << std::pair{"request_id", request_id}
+                              << std::pair{"duration_ms", request_duration}
                               << net::flush;
                     stream << "HTTP/1.1 404 Not Found"           << net::crlf
                            << "Date: "         << date()         << net::crlf
@@ -482,12 +532,15 @@ private:
                 }
                 else if(!std::regex_match(std::string{uri}, std::regex(m_public_paths)) && !m_credentials.contains(authorization))
                 {
+                    const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
                     net::slog << net::warning("UNAUTHORIZED") << "unauthorized request for \"" << uri << "\" from " << endpoint << ":" << port
                               << std::pair{"ip"sv, endpoint}
                               << std::pair{"port", port}
                               << std::pair{"method", method}
                               << std::pair{"uri", std::string{uri}}
                               << std::pair{"status", 401}
+                              << std::pair{"request_id", request_id}
+                              << std::pair{"duration_ms", request_duration}
                               << net::flush;
                     stream << "HTTP/1.1 401 Unauthorized status"                     << net::crlf
                            << "Date: "         << date()                             << net::crlf
@@ -520,6 +573,7 @@ private:
                                 }
                                 catch(const std::exception& e)
                                 {
+                                    const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
                                     net::slog << net::error("HANDLER_EXCEPTION") << "exception in handler for \"" << method << " " << uri << "\" (route: " << path << "): " << e.what()
                                               << std::pair{"ip"sv, endpoint}
                                               << std::pair{"port", port}
@@ -527,6 +581,8 @@ private:
                                               << std::pair{"uri", std::string{uri}}
                                               << std::pair{"route", path}
                                               << std::pair{"status", 500}
+                                              << std::pair{"request_id", request_id}
+                                              << std::pair{"duration_ms", request_duration}
                                               << net::flush;
                                     res_status = "500 Internal Server Error";
                                     res_content = "";
@@ -547,6 +603,9 @@ private:
                             }
                         } catch(...) {}
                         
+                        // Calculate request duration
+                        const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                        
                         net::slog << net::info("HTTP_RESPONSE") << "response " << res_status
                                   << std::pair{"ip"sv, endpoint}
                                   << std::pair{"port", port}
@@ -554,6 +613,8 @@ private:
                                   << std::pair{"uri", std::string{uri}}
                                   << std::pair{"status", status_code}
                                   << std::pair{"content_length", static_cast<long long>(res_content.length())}
+                                  << std::pair{"request_id", request_id}
+                                  << std::pair{"duration_ms", request_duration}
                                   << net::flush;
                         
                         stream << "HTTP/1.1 " << res_status                                   << net::crlf
@@ -575,12 +636,17 @@ private:
                     }
                     else
                     {
+                            // Calculate request duration for 404
+                        const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                        
                         net::slog << net::warning("ROUTE_NOT_FOUND") << "no route found for \"" << method << " " << uri << "\" from " << endpoint << ":" << port
                                   << std::pair{"ip"sv, endpoint}
                                   << std::pair{"port", port}
                                   << std::pair{"method", method}
                                   << std::pair{"uri", std::string{uri}}
                                   << std::pair{"status", 404}
+                                  << std::pair{"request_id", request_id}
+                                  << std::pair{"duration_ms", request_duration}
                                   << net::flush;
                         stream << "HTTP/1.0 404 Not Found"                                    << net::crlf
                                << "Date: " << date()                                          << net::crlf
@@ -596,9 +662,11 @@ private:
                     }
                 }
             }
+            const auto conn_duration = duration_cast<milliseconds>(system_clock::now() - conn_start).count();
             net::slog << net::info("CONN_CLOSED") << "connection closed"
                               << std::pair{"ip"sv, endpoint}
                       << std::pair{"port", port}
+                      << std::pair{"connection_duration_ms", conn_duration}
                       << net::flush;
         }
         catch(const std::system_error& e)
