@@ -291,7 +291,7 @@ auto register_syslogstream_tests()
         tester::bdd::given("A syslog stream") = [] {
             tester::bdd::when("Setting app name") = [] {
                 check_nothrow([] {
-                    slog.appname("myapp");
+                    slog.app_name("myapp");
                 });
             };
         };
@@ -626,7 +626,7 @@ auto register_syslogstream_tests()
             };
 
             tester::bdd::when("Setting level to warning") = [] {
-                slog.level(syslog::severity::warning);
+                slog.log_level(syslog::severity::warning);
                 
                 check_eq(false, slog.is_enabled(syslog::severity::debug));
                 check_eq(false, slog.is_enabled(syslog::severity::info));
@@ -636,7 +636,7 @@ auto register_syslogstream_tests()
             };
 
             tester::bdd::when("Setting level to error") = [] {
-                slog.level(syslog::severity::error);
+                slog.log_level(syslog::severity::error);
                 
                 check_eq(false, slog.is_enabled(syslog::severity::debug));
                 check_eq(false, slog.is_enabled(syslog::severity::info));
@@ -801,8 +801,8 @@ auto register_syslogstream_tests()
             tester::bdd::when("Calling flush()") = [] {
                 check_nothrow([] {
                     // flush() should return structured_log_stream& for chaining
-                    auto& result = slog.flush();
-                    result;  // Just verify it compiles and returns reference
+                    [[maybe_unused]] auto& result = slog.flush();
+                    // Just verify it compiles and returns reference
                 });
             };
         };
