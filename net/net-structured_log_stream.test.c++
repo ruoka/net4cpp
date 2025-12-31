@@ -159,7 +159,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "\"msg_id\":\"SERVER_START\"");
                     check_contains(output, "Listening on port 21120");
                     // Reset redirect to default to avoid dangling pointer
-                    (void)slog.redirect(std::clog);
+                    slog.redirect(std::clog);
                 };
             };
         };
@@ -191,7 +191,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "\"ip\":\"192.168.1.100\"");
                     check_contains(output, "\"timeout_sec\":30");
                     check_contains(output, "Timeout from client");
-                    (void)slog.redirect(std::clog);
+                    slog.redirect(std::clog);
                 };
             };
         };
@@ -225,7 +225,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "21120");
                     check_contains(output, "SERVER_START");
                     check_contains(output, "Listening on port 21120");
-                    (void)slog.redirect(std::clog);
+                    slog.redirect(std::clog);
                 };
             };
         };
@@ -318,7 +318,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "testapp");
                     check_contains(output, "test_msg");
                     check_contains(output, "Simple test message");
-                    (void)slog.redirect(std::clog);
+                    slog.redirect(std::clog);
                 };
             };
         };
@@ -350,7 +350,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "path=");
                     check_contains(output, "status=");
                     check_contains(output, "/api/users");
-                    (void)slog.redirect(std::clog);
+                    slog.redirect(std::clog);
                 };
             };
         };
@@ -382,7 +382,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "User action completed");
                     check_starts_with(output, "{");
                     check_contains(output, "}");
-                    (void)slog.redirect(std::clog);
+                    slog.redirect(std::clog);
                 };
             };
         };
@@ -414,7 +414,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "\"retry_count\":3");
                     check_contains(output, "\"timeout\":true");
                     check_contains(output, "\"level\":\"error\"");
-                    (void)slog.redirect(std::clog);
+                    slog.redirect(std::clog);
                 };
             };
         };
@@ -432,11 +432,11 @@ auto register_syslogstream_tests()
                 using namespace std::string_literals;
                 
                 // First log in syslog format
-                (void)slog.format(log_format::syslog);
+                slog.format(log_format::syslog);
                 slog << net::info("format_test") << "Syslog format message"s << net::flush;
                 
                 // Then switch to JSONL
-                (void)slog.format(log_format::jsonl);
+                slog.format(log_format::jsonl);
                 slog << net::info("format_test") << "JSONL format message"s << net::flush;
 
                 tester::bdd::then("Both formats should be present in output") = [captured_output] {
@@ -447,7 +447,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "\"time\":");
                     check_contains(output, "Syslog format message");
                     check_contains(output, "JSONL format message");
-                    (void)slog.redirect(std::clog);
+                    slog.redirect(std::clog);
                 };
             };
         };
@@ -477,7 +477,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "\"int_val\":42");
                     check_contains(output, "\"double_val\":3.14");
                     check_contains(output, "\"bool_val\":true");
-                    (void)slog.redirect(std::clog);
+                    slog.redirect(std::clog);
                 };
             };
         };
@@ -509,7 +509,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "<134>");
                     // Priority for user + error = 1*8+3 = 11
                     check_contains(output, "<11>");
-                    (void)slog.redirect(std::clog);
+                    slog.redirect(std::clog);
                 };
             };
         };
@@ -538,7 +538,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "\"function\":");
                     check_contains(output, "register_syslogstream_tests");
                     check_contains(output, "Message with source location");
-                    (void)slog.redirect(std::clog);
+                    slog.redirect(std::clog);
                 };
             };
 
@@ -548,7 +548,7 @@ auto register_syslogstream_tests()
                 // Redirect again to ensure stream is active, and clear old content
                 captured_output->str("");
                 captured_output->clear();
-                (void)slog.redirect(*captured_output);
+                slog.redirect(*captured_output);
                 slog << net::error("ERROR_WITH_SOURCE")
                      << std::source_location::current()
                      << std::pair{"error_code"sv, 500}
@@ -564,7 +564,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "\"error_code\":500");
                     check_contains(output, "\"error_msg\":\"Database connection failed\"");
                     check_contains(output, "Critical error occurred");
-                    (void)slog.redirect(std::clog);
+                    slog.redirect(std::clog);
                 };
             };
         };
@@ -599,7 +599,7 @@ auto register_syslogstream_tests()
                     std::string output = captured_output->str();
                     check_contains(output, "\"app\":\"chained-test\"");
                     check_contains(output, "\"test\":\"value\"");
-                    (void)slog.redirect(std::clog);
+                    slog.redirect(std::clog);
                 });
             };
         };
@@ -678,7 +678,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "\"active\":true");
                     check_contains(output, "\"score\":98.5");
                     check_contains(output, "User profile updated");
-                    (void)slog.redirect(std::clog);
+                    slog.redirect(std::clog);
                 };
             };
 
@@ -689,7 +689,7 @@ auto register_syslogstream_tests()
                 // Redirect again to ensure stream is active, and clear old content
                 captured_output->str("");
                 captured_output->clear();
-                (void)slog.redirect(*captured_output);
+                slog.redirect(*captured_output);
                 slog << net::warning("MIXED_KEYS_TEST")
                      << std::pair{"key1"sv, "value1"sv}
                      << std::pair{"key2", "value2"}
@@ -702,7 +702,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "\"key1\":\"value1\"");
                     check_contains(output, "\"key2\":\"value2\"");
                     check_contains(output, "\"key3\":42");
-                    (void)slog.redirect(std::clog);
+                    slog.redirect(std::clog);
                 };
             };
         };
@@ -786,7 +786,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "\"level\":\"info\"");
                     check_contains(output, "\"level\":\"error\"");
                     check_contains(output, "\"level\":\"warning\"");
-                    (void)slog.redirect(std::clog);
+                    slog.redirect(std::clog);
                 };
             };
         };
@@ -802,7 +802,7 @@ auto register_syslogstream_tests()
                 check_nothrow([] {
                     // flush() should return structured_log_stream& for chaining
                     auto& result = slog.flush();
-                    (void)result;  // Just verify it compiles and returns reference
+                    result;  // Just verify it compiles and returns reference
                 });
             };
         };

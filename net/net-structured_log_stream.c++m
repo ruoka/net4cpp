@@ -246,6 +246,43 @@ private:
         return syslog::format_timestamp(now);
     }
 
+    // Helper to convert any type to the appropriate variant type
+    // Optimized with concepts for better compile-time dispatch
+    template<exact_value_type T>
+    static value convert_to_value(T&& v) {
+        return std::forward<T>(v);
+    }
+
+    template<c_string_type T>
+    static value convert_to_value(T v) {
+        return std::string(v);
+    }
+
+    template<string_view_convertible T>
+    static value convert_to_value(T&& v) {
+        return std::string(v);
+    }
+
+    template<integral_convertible T>
+    static value convert_to_value(T v) {
+        return static_cast<long long>(v);
+    }
+
+    template<floating_convertible T>
+    static value convert_to_value(T v) {
+        return static_cast<double>(v);
+    }
+
+    template<string_convertible T>
+    static value convert_to_value(T&& v) {
+        return std::string(v);
+    }
+
+    // Special handling for std::error_code - convert to string with value and message
+    static value convert_to_value(const std::error_code& ec) {
+        return std::to_string(ec.value()) + " (" + ec.message() + ")";
+    }
+
     void output() {
         if (!entry_enabled) return;
 
@@ -305,11 +342,18 @@ private:
 public:
     // Configuration (instance methods) - chained for fluent API
     // C++-idiomatic getters and setters using bare names with overloads
+    
+    // Query method to check if a severity level would be logged
+    bool is_enabled(syslog::severity s) const {
+        std::lock_guard<std::mutex> lock(m_log_mutex);
+        return static_cast<int>(s) <= static_cast<int>(m_log_level);
+    }
+    
     syslog::severity log_level() const {
         std::lock_guard<std::mutex> lock(m_log_mutex);
         return m_log_level;
     }
-    [[nodiscard]] structured_log_stream& log_level(syslog::severity level) { 
+    structured_log_stream& log_level(syslog::severity level) { 
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_log_level = level; 
         return *this;
@@ -319,7 +363,7 @@ public:
         std::lock_guard<std::mutex> lock(m_log_mutex);
         return m_format;
     }
-    [[nodiscard]] structured_log_stream& format(log_format f) { 
+    structured_log_stream& format(log_format f) { 
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_format = f; 
         return *this;
@@ -329,7 +373,7 @@ public:
         std::lock_guard<std::mutex> lock(m_log_mutex);
         return m_app_name;
     }
-    [[nodiscard]] structured_log_stream& app_name(const std::string& name) { 
+    structured_log_stream& app_name(const std::string& name) { 
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_app_name = name; 
         return *this;
@@ -339,7 +383,7 @@ public:
         std::lock_guard<std::mutex> lock(m_log_mutex);
         return m_sd_id;
     }
-    [[nodiscard]] structured_log_stream& sd_id(const std::string& id) { 
+    structured_log_stream& sd_id(const std::string& id) { 
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_sd_id = id; 
         return *this;
@@ -349,19 +393,19 @@ public:
         std::lock_guard<std::mutex> lock(m_log_mutex);
         return m_facility_value;
     }
-    [[nodiscard]] structured_log_stream& facility(int f) { 
+    structured_log_stream& facility(int f) { 
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_facility_value = f; 
         return *this;
     }
-    [[nodiscard]] structured_log_stream& facility(syslog::facility f) { 
+    structured_log_stream& facility(syslog::facility f) { 
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_facility_value = static_cast<int>(f); 
         return *this;
     }
 
     // Output redirection - chained for fluent API
-    [[nodiscard]] structured_log_stream& redirect(const std::string& file_path) {
+    structured_log_stream& redirect(const std::string& file_path) {
         std::lock_guard<std::mutex> lock(m_log_mutex);
         if (file_path.empty()) {
             m_file_stream.reset();
@@ -379,7 +423,7 @@ public:
     }
 
     // Redirect to ostream (backward compatibility)
-    [[nodiscard]] structured_log_stream& redirect(std::ostream& os) {
+    structured_log_stream& redirect(std::ostream& os) {
         std::lock_guard<std::mutex> lock(m_log_mutex);
         m_file_stream.reset();
         m_output_stream = &os;
@@ -390,25 +434,25 @@ public:
     // These void methods are kept for backward compatibility but delegate to fluent API
     [[deprecated("Use app_name() fluent API instead (returns *this for chaining)")]]
     void appname(std::string_view app) { 
-        (void)app_name(std::string(app));
+        app_name(std::string(app));
     }
 
     [[deprecated("Use log_level() fluent API instead (returns *this for chaining)")]]
     void level(syslog::severity s) { 
-        (void)log_level(s);
+        log_level(s);
     }
 
     template<std::unsigned_integral T>
     [[deprecated("Use log_level() fluent API instead (returns *this for chaining)")]]
     void level(T s) { 
-        (void)log_level(static_cast<syslog::severity>(s));
+        log_level(static_cast<syslog::severity>(s));
     }
 
     // Note: Old void facility() methods conflict with fluent API facility() that returns *this
     // They have been removed. Use the fluent API facility() method instead.
 
     [[deprecated("Use app_name() instead.")]]
-    void tag(std::string_view app) { (void)app_name(std::string(app)); }
+    void tag(std::string_view app) { app_name(std::string(app)); }
 
     // Streaming interface
     // Lock once at start of log entry (matches original syslogstream pattern)
@@ -468,54 +512,6 @@ public:
         return *this;
     }
 
-    // Intermediate operators don't lock (lock already held from start of entry)
-    template<typename T>
-    requires (not std::is_same_v<std::remove_cvref_t<T>, level_manip> and
-              not std::is_same_v<std::remove_cvref_t<T>, syslog::helper> and
-              not std::is_same_v<std::remove_cvref_t<T>, syslog::severity> and
-              not std::is_same_v<std::remove_cvref_t<T>, std::source_location>)
-    structured_log_stream& operator<<(T&& t) {
-        if (entry_enabled) human_message << std::forward<T>(t);
-        return *this;
-    }
-
-    // Helper to convert any type to the appropriate variant type
-    // Optimized with concepts for better compile-time dispatch
-    template<exact_value_type T>
-    static value convert_to_value(T&& v) {
-        return std::forward<T>(v);
-    }
-
-    template<c_string_type T>
-    static value convert_to_value(T v) {
-        return std::string(v);
-    }
-
-    template<string_view_convertible T>
-    static value convert_to_value(T&& v) {
-        return std::string(v);
-    }
-
-    template<integral_convertible T>
-    static value convert_to_value(T v) {
-        return static_cast<long long>(v);
-    }
-
-    template<floating_convertible T>
-    static value convert_to_value(T v) {
-        return static_cast<double>(v);
-    }
-
-    template<string_convertible T>
-    static value convert_to_value(T&& v) {
-        return std::string(v);
-    }
-
-    // Special handling for std::error_code - convert to string with value and message
-    static value convert_to_value(const std::error_code& ec) {
-        return std::to_string(ec.value()) + " (" + ec.message() + ")";
-    }
-
     // Structured fields: {"key", value} or std::pair{"key", value}
     // Optimized: uses emplace to avoid double conversion
     template<class K, class V>
@@ -565,6 +561,17 @@ public:
         return *this;
     }
 
+    // Intermediate operators don't lock (lock already held from start of entry)
+    template<typename T>
+    requires (not std::is_same_v<std::remove_cvref_t<T>, level_manip> and
+              not std::is_same_v<std::remove_cvref_t<T>, syslog::helper> and
+              not std::is_same_v<std::remove_cvref_t<T>, syslog::severity> and
+              not std::is_same_v<std::remove_cvref_t<T>, std::source_location>)
+    structured_log_stream& operator<<(T&& t) {
+        if (entry_enabled) human_message << std::forward<T>(t);
+        return *this;
+    }
+
     // flush / endl - calls flush() which unlocks (matches original syslogstream pattern)
     structured_log_stream& operator<<(std::ostream& (*)(std::ostream&)) {
         // For any manipulator (endl, flush), call flush() which handles unlock
@@ -572,18 +579,12 @@ public:
     }
 
     // Backward compatibility: flush() method - ONLY this unlocks (matches original syslogstream)
-    [[nodiscard]] structured_log_stream& flush() {
+    structured_log_stream& flush() {
         if (entry_enabled) {
             output();
         }
         m_log_mutex.unlock();  // Unlock at end (matches original syslogstream - only flush() unlocks)
         return *this;
-    }
-
-    // Query method to check if a severity level would be logged
-    [[nodiscard]] bool is_enabled(syslog::severity s) const {
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        return static_cast<int>(s) <= static_cast<int>(m_log_level);
     }
 };
 
@@ -625,7 +626,7 @@ inline structured_log_stream& operator<<(structured_log_stream& stream, const le
 
 [[nodiscard]] inline auto& flush(structured_log_stream& ss) { 
     [[maybe_unused]] auto& _ = ss.flush(); 
-    return ss; 
+    return ss;
 }
 
 } // namespace net
