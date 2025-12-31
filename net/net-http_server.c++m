@@ -4,6 +4,7 @@ import :syslogstream;
 import :http_headers;
 import :endpointstream;
 import :extension;
+import :uuid;
 import std;
 
 export namespace http {
@@ -358,6 +359,19 @@ private:
                            << "Content-Length: 0" << net::crlf
                            << net::crlf << net::flush;
                     break;
+                }
+
+                // Ensure X-Correlation-ID header exists for request correlation
+                if(!hs.contains("x-correlation-id"))
+                {
+                    const auto correlation_id = net::generate_uuid_v4();
+                    hs.set("x-correlation-id", correlation_id);
+                    net::slog << net::debug("CORRELATION_ID_GENERATED") << "generated X-Correlation-ID for request"
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << std::pair{"request_id", request_id}
+                              << std::pair{"correlation_id", correlation_id}
+                              << net::flush;
                 }
 
                 std::string origin = "*";

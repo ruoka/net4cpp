@@ -17,3 +17,4 @@ export import :sender;
 export import :socket;
 export import :syslogstream;
 export import :uri;
+export import :uuid;

@@ -482,6 +482,151 @@ void test_http_headers_logging_empty_values()
     check_true(output.find("\"msg_id\":\"HTTP_REQUEST_HEADERS\"") == std::string::npos);
 }
 
+void test_correlation_id_generation()
+{
+    if(!network_tests_enabled()) return;
+
+    auto captured_output = std::make_shared<std::stringstream>();
+    
+    slog.app_name("httptest")
+        .log_level(syslog::severity::debug)
+        .format(log_format::jsonl)
+        .sd_id("http")
+        .redirect(*captured_output);
+
+    http::server server{};
+    server.get("/test").text("OK");
+    server.timeout(std::chrono::seconds{1});
+
+    std::promise<void> started;
+    auto started_future = started.get_future();
+
+    std::thread server_thread{[&server, &started]{
+        try {
+            started.set_value();
+            server.listen("8087");
+        } catch(...) {}
+    }};
+
+    using namespace std::chrono_literals;
+    if (started_future.wait_for(2s) == std::future_status::ready) {
+        std::this_thread::sleep_for(200ms);
+
+        try {
+            // Make HTTP request WITHOUT X-Correlation-ID header
+            auto stream = connect("127.0.0.1", "8087");
+            stream << "GET /test HTTP/1.1" << net::crlf
+                   << "Host: 127.0.0.1:8087" << net::crlf
+                   << "Connection: close" << net::crlf
+                   << net::crlf
+                   << net::flush;
+
+            std::string response;
+            std::string line;
+            int line_count = 0;
+            while(line_count < 20 && stream && std::getline(stream, line)) {
+                response += line + "\n";
+                line_count++;
+                if(line.empty() || line == "\r") break;
+            }
+        } catch(...) {}
+
+        std::this_thread::sleep_for(200ms);
+        server.stop();
+    }
+
+    if (server_thread.joinable()) server_thread.join();
+    check_true(server.stopped());
+    slog.redirect(std::clog);
+
+    // Verify CORRELATION_ID_GENERATED is logged when X-Correlation-ID is missing
+    std::string output = captured_output->str();
+    check_contains(output, "\"msg_id\":\"CORRELATION_ID_GENERATED\"");
+    check_contains(output, "\"correlation_id\"");
+    
+    // Verify the correlation_id is a valid UUIDv4 format (36 characters with dashes)
+    auto pos = output.find("\"correlation_id\":\"");
+    if(pos != std::string::npos) {
+        pos += 18; // Length of "correlation_id":"
+        auto end_pos = output.find("\"", pos);
+        if(end_pos != std::string::npos) {
+            std::string correlation_id = output.substr(pos, end_pos - pos);
+            // Check UUIDv4 format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+            check_eq(correlation_id.size(), 36u);
+            check_eq(correlation_id[8], '-');
+            check_eq(correlation_id[13], '-');
+            check_eq(correlation_id[18], '-');
+            check_eq(correlation_id[23], '-');
+            check_eq(correlation_id[14], '4'); // Version 4 indicator
+        }
+    }
+}
+
+void test_correlation_id_preserved()
+{
+    if(!network_tests_enabled()) return;
+
+    auto captured_output = std::make_shared<std::stringstream>();
+    
+    slog.app_name("httptest")
+        .log_level(syslog::severity::debug)
+        .format(log_format::jsonl)
+        .sd_id("http")
+        .redirect(*captured_output);
+
+    http::server server{};
+    server.get("/test").text("OK");
+    server.timeout(std::chrono::seconds{1});
+
+    std::promise<void> started;
+    auto started_future = started.get_future();
+
+    std::thread server_thread{[&server, &started]{
+        try {
+            started.set_value();
+            server.listen("8088");
+        } catch(...) {}
+    }};
+
+    using namespace std::chrono_literals;
+    if (started_future.wait_for(2s) == std::future_status::ready) {
+        std::this_thread::sleep_for(200ms);
+
+        try {
+            // Make HTTP request WITH X-Correlation-ID header
+            const std::string provided_correlation_id = "550e8400-e29b-41d4-a716-446655440000";
+            auto stream = connect("127.0.0.1", "8088");
+            stream << "GET /test HTTP/1.1" << net::crlf
+                   << "Host: 127.0.0.1:8088" << net::crlf
+                   << "X-Correlation-ID: " << provided_correlation_id << net::crlf
+                   << "Connection: close" << net::crlf
+                   << net::crlf
+                   << net::flush;
+
+            std::string response;
+            std::string line;
+            int line_count = 0;
+            while(line_count < 20 && stream && std::getline(stream, line)) {
+                response += line + "\n";
+                line_count++;
+                if(line.empty() || line == "\r") break;
+            }
+        } catch(...) {}
+
+        std::this_thread::sleep_for(200ms);
+        server.stop();
+    }
+
+    if (server_thread.joinable()) server_thread.join();
+    check_true(server.stopped());
+    slog.redirect(std::clog);
+
+    // Verify CORRELATION_ID_GENERATED is NOT logged when X-Correlation-ID is provided
+    std::string output = captured_output->str();
+    check_contains(output, "\"msg_id\":\"HTTP_REQUEST\""); // Should still have HTTP_REQUEST
+    check_true(output.find("\"msg_id\":\"CORRELATION_ID_GENERATED\"") == std::string::npos);
+}
+
 } // namespace
 
 auto register_server_tests()
@@ -512,6 +657,14 @@ auto register_server_tests()
 
     tester::bdd::scenario("HTTP headers logging with empty header values, [net]") = [] {
         test_http_headers_logging_empty_values();
+    };
+
+    tester::bdd::scenario("X-Correlation-ID generation when missing, [net]") = [] {
+        test_correlation_id_generation();
+    };
+
+    tester::bdd::scenario("X-Correlation-ID preservation when provided, [net]") = [] {
+        test_correlation_id_preserved();
     };
 
     return true;
