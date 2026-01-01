@@ -208,7 +208,7 @@ public:
     {
         using namespace std::string_view_literals;
         m_stop.store(false);
-        net::slog << net::notice("SERVER_START") << "starting up at " << service_or_port
+        net::slog << net::notice("HTTP_SERVER_START") << "starting up at " << service_or_port
                   << std::pair{"port"sv, service_or_port}
                   << net::flush;
         try
@@ -216,7 +216,7 @@ public:
             auto endpoint = net::acceptor{"0.0.0.0", service_or_port};
             auto check_timeout = m_timeout.count() ? m_timeout : std::chrono::seconds{1};
             endpoint.timeout(std::chrono::milliseconds{check_timeout.count() * 1000});
-            net::slog << net::notice("SERVER_READY") << "started up at " << endpoint.host() << ":" << endpoint.service_or_port()
+            net::slog << net::notice("HTTP_SERVER_READY") << "started up at " << endpoint.host() << ":" << endpoint.service_or_port()
                       << std::pair{"addr", endpoint.host()}
                       << std::pair{"port", endpoint.service_or_port()}
                       << net::flush;
@@ -225,7 +225,10 @@ public:
             {
                 try
                 {
-                    net::slog << net::info("ACCEPT_WAIT") << "accepting connections" << net::flush;
+                    using namespace std::string_view_literals;
+                    net::slog << net::debug("HTTP_ACCEPT_WAIT") 
+                              << std::pair{"protocol"sv, "http"sv}
+                              << "waiting for HTTP connections" << net::flush;
                     auto client = endpoint.accept();
                     std::thread{[client_data = std::move(client), this]() mutable { handle(client_data); }}.detach();
                 }
@@ -235,22 +238,22 @@ public:
                     {
                         continue;
                     }
-                    net::slog << net::error("ACCEPT_ERROR") << "failed to accept connection: " << e.what() << " (code: " << e.code() << ")"
+                    net::slog << net::error("HTTP_ACCEPT_ERROR") << "failed to accept connection: " << e.what() << " (code: " << e.code() << ")"
                               << std::pair{"errno", e.code().value()}
                               << net::flush;
                     throw;
                 }
                 catch(const std::exception& e)
                 {
-                    net::slog << net::error("ACCEPT_EXCEPTION") << "exception while accepting connection: " << e.what() << net::flush;
+                    net::slog << net::error("HTTP_ACCEPT_EXCEPTION") << "exception while accepting connection: " << e.what() << net::flush;
                     throw;
                 }
             }
-            net::slog << net::notice("SERVER_STOP") << "server stopped" << net::flush;
+            net::slog << net::notice("HTTP_SERVER_STOP") << "server stopped" << net::flush;
         }
         catch(const std::system_error& e)
         {
-            net::slog << net::error("LISTEN_ERROR") << "failed to create acceptor on " << service_or_port << ": " << e.what() << " (code: " << e.code() << ")"
+            net::slog << net::error("HTTP_LISTEN_ERROR") << "failed to create acceptor on " << service_or_port << ": " << e.what() << " (code: " << e.code() << ")"
                       << std::pair{"port"sv, service_or_port}
                       << std::pair{"errno", e.code().value()}
                       << net::flush;
@@ -258,7 +261,7 @@ public:
         }
         catch(const std::exception& e)
         {
-            net::slog << net::error("LISTEN_EXCEPTION") << "exception during server startup on " << service_or_port << ": " << e.what()
+            net::slog << net::error("HTTP_LISTEN_EXCEPTION") << "exception during server startup on " << service_or_port << ": " << e.what()
                       << std::pair{"port"sv, service_or_port}
                       << net::flush;
             throw;
@@ -325,7 +328,7 @@ private:
         using namespace std::chrono;
         auto& [stream, endpoint, port] = client;
         const auto conn_start = system_clock::now();
-        net::slog << net::notice("CONN_ACCEPT") << "accepted connection from " << endpoint << ":" << port
+        net::slog << net::notice("HTTP_CONN_ACCEPT") << "accepted connection from " << endpoint << ":" << port
                   << std::pair{"ip"sv, endpoint}
                   << std::pair{"port", port}
                   << net::flush;
@@ -342,7 +345,7 @@ private:
                     if(stream.eof())
                     {
                         const auto conn_duration = duration_cast<milliseconds>(system_clock::now() - conn_start).count();
-                        net::slog << net::info("CONN_CLOSED") << "connection closed by client " << endpoint << ":" << port
+                        net::slog << net::info("HTTP_CONN_CLOSED") << "connection closed by client " << endpoint << ":" << port
                                   << std::pair{"ip"sv, endpoint}
                                   << std::pair{"port", port}
                                   << std::pair{"connection_duration_ms", conn_duration}
@@ -351,7 +354,7 @@ private:
                     else
                     {
                         const auto conn_duration = duration_cast<milliseconds>(system_clock::now() - conn_start).count();
-                        net::slog << net::warning("STREAM_ERROR") << "stream error reading request from " << endpoint << ":" << port << " (eof: " << stream.eof() << ", fail: " << stream.fail() << ", bad: " << stream.bad() << ")"
+                        net::slog << net::warning("HTTP_STREAM_ERROR") << "stream error reading request from " << endpoint << ":" << port << " (eof: " << stream.eof() << ", fail: " << stream.fail() << ", bad: " << stream.bad() << ")"
                                   << std::pair{"ip"sv, endpoint}
                                   << std::pair{"port", port}
                                   << std::pair{"eof", stream.eof()}
@@ -385,7 +388,7 @@ private:
                 catch(const std::exception& e)
                 {
                     const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
-                    net::slog << net::error("PARSE_HEADERS_ERROR") << "failed to parse headers from " << endpoint << ":" << port << ": " << e.what()
+                    net::slog << net::error("HTTP_PARSE_HEADERS_ERROR") << "failed to parse headers from " << endpoint << ":" << port << ": " << e.what()
                               << std::pair{"ip"sv, endpoint}
                               << std::pair{"port", port}
                               << std::pair{"status", status_bad_request}
@@ -435,7 +438,7 @@ private:
                         content_length = utils::stoll(hs["content-length"]);
                         if(content_length < 0)
                         {
-                            net::slog << net::warning("INVALID_CONTENT_LENGTH") << "negative content-length from " << endpoint << ":" << port
+                            net::slog << net::warning("HTTP_INVALID_CONTENT_LENGTH") << "negative content-length from " << endpoint << ":" << port
                                       << std::pair{"ip"sv, endpoint}
                                       << std::pair{"port", port}
                                       << std::pair{"content_length", content_length}
@@ -445,7 +448,7 @@ private:
                     }
                     catch(const std::invalid_argument&)
                     {
-                        net::slog << net::warning("INVALID_CONTENT_LENGTH") << "invalid content-length format \"" << hs["content-length"] << "\" from " << endpoint << ":" << port
+                        net::slog << net::warning("HTTP_INVALID_CONTENT_LENGTH") << "invalid content-length format \"" << hs["content-length"] << "\" from " << endpoint << ":" << port
                                   << std::pair{"ip"sv, endpoint}
                                   << std::pair{"port", port}
                                   << std::pair{"content_length_str", hs["content-length"]}
@@ -454,7 +457,7 @@ private:
                     }
                     catch(const std::out_of_range&)
                     {
-                        net::slog << net::warning("INVALID_CONTENT_LENGTH") << "content-length out of range \"" << hs["content-length"] << "\" from " << endpoint << ":" << port
+                        net::slog << net::warning("HTTP_INVALID_CONTENT_LENGTH") << "content-length out of range \"" << hs["content-length"] << "\" from " << endpoint << ":" << port
                                   << std::pair{"ip"sv, endpoint}
                                   << std::pair{"port", port}
                                   << std::pair{"content_length_str", hs["content-length"]}
@@ -463,7 +466,7 @@ private:
                     }
                     catch(const std::exception& e)
                     {
-                        net::slog << net::warning("INVALID_CONTENT_LENGTH") << "error parsing content-length \"" << hs["content-length"] << "\" from " << endpoint << ":" << port << ": " << e.what()
+                        net::slog << net::warning("HTTP_INVALID_CONTENT_LENGTH") << "error parsing content-length \"" << hs["content-length"] << "\" from " << endpoint << ":" << port << ": " << e.what()
                                   << std::pair{"ip"sv, endpoint}
                                   << std::pair{"port", port}
                                   << std::pair{"content_length_str", hs["content-length"]}
@@ -480,7 +483,7 @@ private:
                         auto ch = stream.get();
                         if(stream.eof() || stream.fail())
                         {
-                            net::slog << net::warning("INCOMPLETE_BODY") << "incomplete body read from " << endpoint << ":" << port << " (expected " << content_length << " bytes)"
+                            net::slog << net::warning("HTTP_INCOMPLETE_BODY") << "incomplete body read from " << endpoint << ":" << port << " (expected " << content_length << " bytes)"
                                       << std::pair{"ip"sv, endpoint}
                                       << std::pair{"port", port}
                                       << std::pair{"expected_bytes", static_cast<long long>(content_length)}
@@ -492,13 +495,13 @@ private:
                 }
                 catch(const std::exception& e)
                 {
-                    net::slog << net::error("BODY_READ_ERROR") << "error reading body from " << endpoint << ":" << port << ": " << e.what()
+                    net::slog << net::error("HTTP_BODY_READ_ERROR") << "error reading body from " << endpoint << ":" << port << ": " << e.what()
                               << std::pair{"ip"sv, endpoint}
                               << std::pair{"port", port}
                               << net::flush;
                 }
 
-                net::slog << net::debug("REQUEST_BODY") << "request body \"" << body << "\""
+                net::slog << net::debug("HTTP_REQUEST_BODY") << "request body \"" << body << "\""
                           << std::pair{"ip"sv, endpoint}
                           << std::pair{"port", port}
                           << std::pair{"body_size", static_cast<long long>(body.size())}
@@ -507,7 +510,7 @@ private:
                 if(version != "HTTP/1.1")
                 {
                     const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
-                    net::slog << net::warning("UNSUPPORTED_VERSION") << "unsupported HTTP version \"" << version << "\" from " << endpoint << ":" << port
+                    net::slog << net::warning("HTTP_UNSUPPORTED_VERSION") << "unsupported HTTP version \"" << version << "\" from " << endpoint << ":" << port
                               << std::pair{"ip"sv, endpoint}
                               << std::pair{"port", port}
                               << std::pair{"method", method}
@@ -527,7 +530,7 @@ private:
                 else if(!m_methods.contains(method))
                 {
                     const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
-                    net::slog << net::warning("UNSUPPORTED_METHOD") << "unsupported HTTP method \"" << method << "\" for \"" << uri << "\" from " << endpoint << ":" << port
+                    net::slog << net::warning("HTTP_UNSUPPORTED_METHOD") << "unsupported HTTP method \"" << method << "\" for \"" << uri << "\" from " << endpoint << ":" << port
                               << std::pair{"ip"sv, endpoint}
                               << std::pair{"port", port}
                               << std::pair{"method", method}
@@ -546,7 +549,7 @@ private:
                 else if(uri == "/favicon.ico")
                 {
                     const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
-                    net::slog << net::debug("FAVICON_REQUEST") << "favicon request from " << endpoint << ":" << port
+                    net::slog << net::debug("HTTP_FAVICON_REQUEST") << "favicon request from " << endpoint << ":" << port
                               << std::pair{"ip"sv, endpoint}
                               << std::pair{"port", port}
                               << std::pair{"method", method}
@@ -590,7 +593,7 @@ private:
                                 catch(const std::exception& e)
                                 {
                                     const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
-                                    net::slog << net::error("HANDLER_EXCEPTION") << "exception in handler for \"" << method << " " << uri << "\" (route: " << path << "): " << e.what()
+                                    net::slog << net::error("HTTP_HANDLER_EXCEPTION") << "exception in handler for \"" << method << " " << uri << "\" (route: " << path << "): " << e.what()
                                               << std::pair{"ip"sv, endpoint}
                                               << std::pair{"port", port}
                                               << std::pair{"method", method}
@@ -622,7 +625,7 @@ private:
                     else if(route_found && !method_allowed && res_type.empty())
                     {
                         const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
-                        net::slog << net::warning("METHOD_NOT_ALLOWED") << "method not allowed for \"" << method << " " << uri << "\" from " << endpoint << ":" << port
+                        net::slog << net::warning("HTTP_METHOD_NOT_ALLOWED") << "method not allowed for \"" << method << " " << uri << "\" from " << endpoint << ":" << port
                                   << std::pair{"ip"sv, endpoint}
                                   << std::pair{"port", port}
                                   << std::pair{"method", method}
@@ -679,7 +682,7 @@ private:
                             // Calculate request duration for 404
                         const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
                         
-                        net::slog << net::warning("ROUTE_NOT_FOUND") << "no route found for \"" << method << " " << uri << "\" from " << endpoint << ":" << port
+                        net::slog << net::warning("HTTP_ROUTE_NOT_FOUND") << "no route found for \"" << method << " " << uri << "\" from " << endpoint << ":" << port
                                   << std::pair{"ip"sv, endpoint}
                                   << std::pair{"port", port}
                                   << std::pair{"method", method}
@@ -699,7 +702,7 @@ private:
                 }
             }
             const auto conn_duration = duration_cast<milliseconds>(system_clock::now() - conn_start).count();
-            net::slog << net::info("CONN_CLOSED") << "connection closed"
+            net::slog << net::info("HTTP_CONN_CLOSED") << "connection closed"
                               << std::pair{"ip"sv, endpoint}
                       << std::pair{"port", port}
                       << std::pair{"connection_duration_ms", conn_duration}
@@ -707,7 +710,7 @@ private:
         }
         catch(const std::system_error& e)
         {
-            net::slog << net::error("SYSTEM_ERROR") << "system error handling connection from " << endpoint << ":" << port << ": " << e.what() << " (code: " << e.code() << ")"
+            net::slog << net::error("HTTP_SYSTEM_ERROR") << "system error handling connection from " << endpoint << ":" << port << ": " << e.what() << " (code: " << e.code() << ")"
                               << std::pair{"ip"sv, endpoint}
                       << std::pair{"port", port}
                       << std::pair{"errno", e.code().value()}
@@ -724,7 +727,7 @@ private:
             }
             catch(const std::exception& write_error)
             {
-                net::slog << net::error("WRITE_ERROR") << "failed to write error response to " << endpoint << ":" << port << ": " << write_error.what()
+                net::slog << net::error("HTTP_WRITE_ERROR") << "failed to write error response to " << endpoint << ":" << port << ": " << write_error.what()
                           << std::pair{"ip"sv, endpoint}
                           << std::pair{"port", port}
                           << net::flush;
@@ -732,7 +735,7 @@ private:
         }
         catch(const std::exception& e)
         {
-            net::slog << net::error("CONN_EXCEPTION") << "exception handling connection from " << endpoint << ":" << port << ": " << e.what()
+            net::slog << net::error("HTTP_CONN_EXCEPTION") << "exception handling connection from " << endpoint << ":" << port << ": " << e.what()
                               << std::pair{"ip"sv, endpoint}
                       << std::pair{"port", port}
                       << std::pair{"status", status_internal_server_error}
@@ -748,7 +751,7 @@ private:
             }
             catch(const std::exception& write_error)
             {
-                net::slog << net::error("WRITE_ERROR") << "failed to write error response to " << endpoint << ":" << port << ": " << write_error.what()
+                net::slog << net::error("HTTP_WRITE_ERROR") << "failed to write error response to " << endpoint << ":" << port << ": " << write_error.what()
                           << std::pair{"ip"sv, endpoint}
                           << std::pair{"port", port}
                           << net::flush;
@@ -756,7 +759,7 @@ private:
         }
         catch(...)
         {
-            net::slog << net::error("UNKNOWN_EXCEPTION") << "unknown exception (non-standard exception type) handling connection from " << endpoint << ":" << port
+            net::slog << net::error("HTTP_UNKNOWN_EXCEPTION") << "unknown exception (non-standard exception type) handling connection from " << endpoint << ":" << port
                               << std::pair{"ip"sv, endpoint}
                       << std::pair{"port", port}
                       << std::pair{"status", status_internal_server_error}
@@ -772,7 +775,7 @@ private:
             }
             catch(const std::exception& write_error)
             {
-                net::slog << net::error("WRITE_ERROR") << "failed to write error response to " << endpoint << ":" << port << ": " << write_error.what()
+                net::slog << net::error("HTTP_WRITE_ERROR") << "failed to write error response to " << endpoint << ":" << port << ": " << write_error.what()
                           << std::pair{"ip"sv, endpoint}
                           << std::pair{"port", port}
                           << net::flush;
