@@ -116,5 +116,40 @@ inline auto& operator << (std::ostream& os, const uri::property<T>& p)
     return os;
 }
 
+// URL decode a string (percent-encoding: %20 -> space, %25 -> %, etc.)
+inline auto url_decode(std::string_view encoded)
+{
+    auto decoded = std::string{};
+    decoded.reserve(encoded.size());
+    
+    for(std::size_t i = 0; i < encoded.size(); ++i)
+    {
+        if(encoded[i] == '%' && i + 2 < encoded.size())
+        {
+            // Try to decode hex pair
+            auto hex_str = encoded.substr(i + 1, 2);
+            auto value = 0;
+            auto [ptr, ec] = std::from_chars(hex_str.data(), hex_str.data() + hex_str.size(), value, 16);
+            if(ec == std::errc{} && ptr == hex_str.data() + hex_str.size())
+            {
+                decoded += static_cast<char>(value);
+                i += 2; // Skip the two hex digits
+                continue;
+            }
+        }
+        // Not a valid %XX sequence, or + (which should be space in query strings)
+        if(encoded[i] == '+')
+        {
+            decoded += ' ';
+        }
+        else
+        {
+            decoded += encoded[i];
+        }
+    }
+    
+    return decoded;
+}
+
 } // namespace net
 

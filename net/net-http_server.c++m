@@ -75,6 +75,13 @@ inline response_with_headers make_response(
     return {status_code, std::move(content), custom_headers};
 }
 
+// Backwards compatibility wrapper for rfc1123_legacy
+template<typename T>
+inline auto rfc1123_legacy(const std::chrono::time_point<T>& current_time) noexcept
+{
+    return utils::rfc1123_legacy(current_time);
+}
+
 class controller
 {
 public:

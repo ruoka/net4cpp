@@ -38,12 +38,6 @@ inline std::string gethostname()
     return buffer;
 }
 
-struct helper
-{
-    severity severity;
-    std::string_view msgid;
-};
-
 std::string format_timestamp(std::chrono::system_clock::time_point tp)
 {
     using namespace std::chrono;
@@ -129,7 +123,7 @@ concept string_convertible = !exact_value_type<T> &&
 
 struct level_manip {
     syslog::severity sev;
-    const char* msg_id = nullptr;
+    std::string_view msg_id;
 };
 
 class structured_log_stream {
@@ -154,8 +148,7 @@ private:
     // Per-entry state (instance members, like original syslogstream - mutex serializes access)
     bool                        entry_enabled    = false;
     syslog::severity            entry_severity   = syslog::severity::debug;
-    const char*                 entry_msg_id     = nullptr;
-    std::string                 entry_msg_id_storage;
+    std::string_view            entry_msg_id     = std::string_view{};
     std::map<std::string, value> structured_fields;
     std::stringstream           human_message;
 
@@ -173,7 +166,7 @@ private:
         }
     }
 
-    static std::string json_escape(const std::string& s) {
+    static std::string json_escape(std::string_view s) {
         std::string esc;
         esc.reserve(s.size());
         for (char c : s) {
@@ -301,7 +294,7 @@ private:
                       << "\"level\":\"" << get_severity_str() << "\","
                       << "\"source\":\"" << json_escape(m_sd_id) << "\"";
 
-            if (entry_msg_id) {
+            if (!entry_msg_id.empty()) {
                 full_line << ",\"msg_id\":\"" << json_escape(entry_msg_id) << "\"";
             }
 
@@ -317,7 +310,7 @@ private:
             int pri = m_facility_value * 8 + static_cast<int>(entry_severity);
             full_line << "<" << pri << ">1 " << timestamp << " " << m_hostname << " "
                       << m_app_name << " " << m_procid << " "
-                      << (entry_msg_id ? entry_msg_id : "-");  // MSGID
+                      << (entry_msg_id.empty() ? "-" : entry_msg_id);  // MSGID
 
             if (structured_fields.empty()) {
                 full_line << " - ";  // NILVALUE for SD
@@ -430,30 +423,6 @@ public:
         return *this;
     }
 
-    // Backward compatibility methods (deprecated - use fluent API instead)
-    // These void methods are kept for backward compatibility but delegate to fluent API
-    [[deprecated("Use app_name() fluent API instead (returns *this for chaining)")]]
-    void appname(std::string_view app) { 
-        app_name(std::string(app));
-    }
-
-    [[deprecated("Use log_level() fluent API instead (returns *this for chaining)")]]
-    void level(syslog::severity s) { 
-        log_level(s);
-    }
-
-    template<std::unsigned_integral T>
-    [[deprecated("Use log_level() fluent API instead (returns *this for chaining)")]]
-    void level(T s) { 
-        log_level(static_cast<syslog::severity>(s));
-    }
-
-    // Note: Old void facility() methods conflict with fluent API facility() that returns *this
-    // They have been removed. Use the fluent API facility() method instead.
-
-    [[deprecated("Use app_name() instead.")]]
-    void tag(std::string_view app) { app_name(std::string(app)); }
-
     // Streaming interface
     // Lock once at start of log entry (matches original syslogstream pattern)
     // Note: Manual lock/unlock pattern required because flush() unlocks, not scope exit
@@ -462,43 +431,6 @@ public:
         entry_severity = manip.sev;
         entry_msg_id   = manip.msg_id;
         entry_enabled  = static_cast<int>(manip.sev) <= static_cast<int>(m_log_level);
-        
-        // Early exit: skip expensive buffer clearing if disabled
-        if (!entry_enabled) {
-            return *this;
-        }
-        
-        structured_fields.clear();
-        human_message.str("");
-        human_message.clear();
-
-        return *this;
-    }
-
-    structured_log_stream& operator<<(const syslog::helper& h) {
-        m_log_mutex.lock();  // Lock at start (unlocked by flush())
-        entry_severity = h.severity;
-        entry_msg_id_storage = std::string(h.msgid);
-        entry_msg_id   = entry_msg_id_storage.c_str();
-        entry_enabled  = static_cast<int>(h.severity) <= static_cast<int>(m_log_level);
-        
-        // Early exit: skip expensive buffer clearing if disabled
-        if (!entry_enabled) {
-            return *this;
-        }
-        
-        structured_fields.clear();
-        human_message.str("");
-        human_message.clear();
-
-        return *this;
-    }
-
-    structured_log_stream& operator<<(syslog::severity s) {
-        m_log_mutex.lock();  // Lock at start (unlocked by flush())
-        entry_severity = s;
-        entry_msg_id   = nullptr;
-        entry_enabled  = static_cast<int>(s) <= static_cast<int>(m_log_level);
         
         // Early exit: skip expensive buffer clearing if disabled
         if (!entry_enabled) {
@@ -535,15 +467,6 @@ public:
         return *this;
     }
 
-    // Convenience method for structured fields with string_view key
-    template<typename V>
-    structured_log_stream& field(std::string_view key, V&& value) {
-        if (entry_enabled) {
-            structured_fields[std::string(key)] = convert_to_value(std::forward<V>(value));
-        }
-        return *this;
-    }
-
     // Source location support (C++20)
     structured_log_stream& operator<<(const std::source_location& loc) {
         if (entry_enabled) {
@@ -564,7 +487,6 @@ public:
     // Intermediate operators don't lock (lock already held from start of entry)
     template<typename T>
     requires (not std::is_same_v<std::remove_cvref_t<T>, level_manip> and
-              not std::is_same_v<std::remove_cvref_t<T>, syslog::helper> and
               not std::is_same_v<std::remove_cvref_t<T>, syslog::severity> and
               not std::is_same_v<std::remove_cvref_t<T>, std::source_location>)
     structured_log_stream& operator<<(T&& t) {
@@ -599,13 +521,13 @@ struct level_manip_functor {
     syslog::severity sev;
     
     // Implicit conversion to level_manip (for slog << error)
-    operator level_manip() const { return {sev, nullptr}; }
+    operator level_manip() const { return {sev, std::string_view{}}; }
     
     // Function call operator with no args (for slog << error()) - internal/test use only
-    level_manip operator()() const { return {sev, nullptr}; }
+    level_manip operator()() const { return {sev, std::string_view{}}; }
     
     // Function call operator with msgid (for slog << error("msgid"))
-    level_manip operator()(const char* id) const { return {sev, id}; }
+    level_manip operator()(std::string_view id) const { return {sev, id}; }
 };
 
 // Backward compatibility: Global manipulator objects (can be used without parentheses)

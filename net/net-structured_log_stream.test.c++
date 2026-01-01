@@ -62,18 +62,18 @@ auto register_syslogstream_tests()
         };
     };
 
-    tester::bdd::scenario("Backward compatibility with syslog::helper, [net]") = [] {
+    tester::bdd::scenario("Direct level_manip usage, [net]") = [] {
         tester::bdd::given("A syslog stream setup") = [] {
             slog.app_name("tester")
                 .log_level(syslog::severity::debug)
                 .redirect(std::clog);
 
-            tester::bdd::when("Using syslog::helper API") = [] {
+            tester::bdd::when("Using level_manip API directly") = [] {
                 using namespace std::string_literals;
                 check_nothrow([] {
-                    slog << syslog::helper{syslog::severity::debug, "test"} << "Debug message "s << 123 << net::flush;
-                    slog << syslog::helper{syslog::severity::info, "test"} << "Info message "s << 456 << net::flush;
-                    slog << syslog::severity::warning << "Warning message "s << 789 << net::flush;
+                    slog << level_manip{syslog::severity::debug, "test"sv} << "Debug message "s << 123 << net::flush;
+                    slog << level_manip{syslog::severity::info, "test"sv} << "Info message "s << 456 << net::flush;
+                    slog << warning << "Warning message "s << 789 << net::flush;
                 });
             };
         };
