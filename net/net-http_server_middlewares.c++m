@@ -1,0 +1,466 @@
+export module net:http_server_middlewares;
+import std;
+import :http_headers;
+import :http_server;
+import :uuid;
+
+export namespace http
+{
+
+using namespace std::string_literals;
+using namespace std::string_view_literals;
+
+// Middleware factory type for composing middleware chains
+using middleware_factory = std::function<callback_with_headers(callback_with_headers next)>;
+
+namespace middleware
+{
+
+using namespace std::string_literals;
+using namespace std::string_view_literals;
+
+// Concepts needed by middlewares
+template<typename F>
+concept PublicPathPredicate = std::predicate<F, std::string_view>;
+
+template<typename F>
+concept TokenValidator = std::predicate<F, std::string_view>;
+
+template<typename F>
+concept KeyExtractor = requires(F f, std::string_view req, const headers& hdr) {
+    { f(req, hdr) } -> std::convertible_to<std::string>;
+};
+
+template<typename F>
+concept OriginValidator = std::predicate<F, std::string_view>;
+
+// Rate limiting default constants
+inline constexpr std::size_t default_rate_limit_max_requests = 100;
+inline constexpr std::chrono::seconds default_rate_limit_window{60};
+
+// Default CORS allowed methods (constexpr for compile-time optimization)
+inline constexpr std::array<std::string_view, 7> default_cors_allowed_methods = {
+    "GET"sv, "POST"sv, "PUT"sv, "PATCH"sv, "DELETE"sv, "HEAD"sv, "OPTIONS"sv
+};
+
+// Default CORS allowed headers (constexpr for compile-time optimization)
+inline constexpr std::array<std::string_view, 2> default_cors_allowed_headers = {
+    "Content-Type"sv, "Authorization"sv
+};
+
+// Helper function to compose middlewares into a single handler
+inline callback_with_headers wrap(callback_with_headers endpoint, std::span<const middleware_factory> middlewares) noexcept
+{
+    auto chain = std::move(endpoint);
+    for (auto&& mw_factory : middlewares | std::views::reverse)
+    {
+        chain = mw_factory(std::move(chain));
+    }
+    return chain;
+}
+
+// Optional middleware factories for common HTTP server needs
+
+// Middleware: Authentication - validates requests based on path and authorization header
+// Returns 401 Unauthorized if authentication fails
+// Parameters:
+//   - is_public_path: function that returns true if the path should be publicly accessible
+//                     Note: receives the full request line (e.g., "GET /path HTTP/1.1"), not just the path.
+//                     Applications should parse the path from the request line if needed.
+//   - validate_token: function that validates the Authorization header value, returns true if valid
+//                     Note: receives std::string_view of the authorization header value
+//   - realm: optional realm string for WWW-Authenticate header (default: "User Visible Realm")
+// 
+// Uses concepts for better performance (no type erasure overhead)
+template<PublicPathPredicate IsPublicPath, TokenValidator ValidateToken>
+inline auto authentication_middleware(
+    IsPublicPath&& is_public_path,
+    ValidateToken&& validate_token,
+    std::string_view realm = "User Visible Realm"sv)
+{
+    return [is_public_path = std::forward<IsPublicPath>(is_public_path), 
+            validate_token = std::forward<ValidateToken>(validate_token),
+            realm = std::string{realm}](callback_with_headers next)
+    {
+        return [is_public_path, validate_token, realm, next = std::move(next)](auto req, auto body, auto hdr) mutable
+        {
+            using namespace std::string_literals;
+            
+            // Check if path is public (no authentication required)
+            if(is_public_path(req))
+            {
+                return next(req, body, hdr);
+            }
+            
+            // Extract Authorization header (use string_view to avoid unnecessary copy)
+            std::string_view authorization{};
+            if(hdr.contains("authorization"s))
+            {
+                authorization = hdr["authorization"s];
+            }
+            
+            // Validate token
+            if(authorization.empty() || !validate_token(authorization))
+            {
+                // Return 401 Unauthorized with WWW-Authenticate header
+                auto error_headers = headers{};
+                error_headers.set("www-authenticate"s, "Basic realm=\""s + realm + "\""s);
+                return make_error_response(status_unauthorized, "Unauthorized"sv, std::make_optional(error_headers));
+            }
+            
+            // Authentication passed, continue to next handler
+            return next(req, body, hdr);
+        };
+    };
+}
+
+// Middleware: Body size validation - prevents memory exhaustion from oversized requests
+// Returns 413 Payload Too Large if body exceeds max_size
+inline auto body_size_validation_middleware(std::size_t max_size)
+{
+    return [max_size](callback_with_headers next)
+    {
+        return [max_size, next = std::move(next)](auto req, auto body, auto hdr) mutable
+        {
+            if(body.size() > max_size)
+            {
+                // Return standardized error response
+                using namespace std::string_literals;
+                auto error_message = "Request body exceeds maximum size ("s + std::to_string(max_size) + " bytes)"s;
+                return make_error_response(status_payload_too_large, error_message, std::optional<headers>{});
+            }
+            return next(req, body, hdr);
+        };
+    };
+}
+
+// Middleware: Accept header validation - checks Accept header before processing
+// Returns 406 Not Acceptable if Accept header doesn't match required content type
+// Uses accepts_json() from net-http_headers to check for JSON acceptance
+inline auto accept_validation_middleware(std::string_view required_content_type = "application/json"sv)
+{
+    return [required_content_type = std::string{required_content_type}](callback_with_headers next)
+    {
+        return [required_content_type, next = std::move(next)](auto req, auto body, auto hdr) mutable
+        {
+            // For JSON, use the accepts_json helper; for other types, check Accept header directly
+            bool accepted = false;
+            if(required_content_type == "application/json"sv)
+            {
+                accepted = ::http::accepts_json(hdr);
+            }
+            else
+            {
+                // Check if Accept header contains the required content type
+                if(!hdr.contains("accept"s))
+                    accepted = true; // No Accept header means accept anything
+                else
+                {
+                    const auto accept_value = hdr["accept"s];
+                    accepted = accept_value.contains("*/*"sv) || 
+                               accept_value.contains(required_content_type);
+                }
+            }
+            
+            if(!accepted)
+            {
+                using namespace std::string_literals;
+                auto error_message = "Not Acceptable: This resource only supports "s + required_content_type + " content type"s;
+                return make_error_response(status_not_acceptable, error_message, std::optional<headers>{});
+            }
+            return next(req, body, hdr);
+        };
+    };
+}
+
+// Middleware: Correlation ID - ensures X-Correlation-ID header exists in requests
+// Generates UUIDv4 if header is missing, allowing request tracking across services
+inline auto correlation_id_middleware()
+{
+    return [](callback_with_headers next)
+    {
+        return [next = std::move(next)](auto req, auto body, auto& hdr) mutable
+        {
+            using namespace std::string_literals;
+            
+            // Ensure X-Correlation-ID header exists - modify headers in-place
+            if(!hdr.contains("x-correlation-id"s))
+            {
+                const auto correlation_id = net::generate_uuid_v4();
+                hdr.set("x-correlation-id"s, correlation_id);
+            }
+            
+            return next(req, body, hdr);
+        };
+    };
+}
+
+// Rate limiting configuration
+// Shared state for rate limiting (thread-safe tracker)
+struct request_tracker
+{
+    std::mutex mutex;
+    std::map<std::string, std::vector<std::chrono::system_clock::time_point>> requests;
+    std::size_t request_count = 0; // Counter for periodic cleanup
+    
+    bool check_limit(const std::string& key, std::size_t max_requests, std::chrono::seconds window)
+    {
+        std::lock_guard<std::mutex> lock{mutex};
+        const auto now = std::chrono::system_clock::now();
+        const auto window_start = now - window;
+        
+        // Remove old requests outside the window
+        auto& key_requests = requests[key];
+        key_requests.erase(
+            std::remove_if(key_requests.begin(), key_requests.end(),
+                [window_start](const auto& timestamp) { return timestamp < window_start; }),
+            key_requests.end()
+        );
+        
+        // Periodic cleanup: remove empty key entries to prevent memory leak
+        if(++request_count % 1000 == 0)
+        {
+            std::erase_if(requests, [](const auto& pair) { return pair.second.empty(); });
+        }
+        
+        // Check if limit exceeded
+        if(key_requests.size() >= max_requests)
+        {
+            return false; // Rate limit exceeded
+        }
+        
+        // Add current request
+        key_requests.push_back(now);
+        return true; // Within limit
+    }
+};
+
+inline auto& rate_limit_tracker()
+{
+    static request_tracker tracker;
+    return tracker;
+}
+
+// Default key extractor for rate limiting - extracts from common proxy headers
+inline auto default_rate_limit_key_extractor(std::string_view, const headers& hdr)
+{
+    using namespace std::string_literals;
+    // Try to extract from common headers (proxy headers, then fallback)
+    if(hdr.contains("x-forwarded-for"s))
+        return std::string{hdr["x-forwarded-for"s]};
+    if(hdr.contains("x-real-ip"s))
+        return std::string{hdr["x-real-ip"s]};
+    return "unknown"s; // Indicates missing client identification
+}
+
+// Middleware: Rate limiting - limits requests per key (e.g., IP address) within a time window
+// Returns 429 Too Many Requests if limit is exceeded
+// 
+// Template version using concepts for better performance (no type erasure overhead)
+template<KeyExtractor KeyExtractorFunc>
+inline auto rate_limiting_middleware(
+    std::size_t max_requests,
+    std::chrono::seconds window_seconds,
+    KeyExtractorFunc&& key_extractor)
+{
+    return [max_requests, window_seconds, key_extractor = std::forward<KeyExtractorFunc>(key_extractor)](callback_with_headers next)
+    {
+        return [max_requests, window_seconds, key_extractor, next = std::move(next)](auto req, auto body, auto hdr) mutable
+        {
+            using namespace std::string_literals;
+            
+            // Extract key for rate limiting (with error handling)
+            std::string key;
+            try
+            {
+                key = key_extractor(req, hdr);
+            }
+            catch(const std::exception&)
+            {
+                // If key extractor throws, use fallback key
+                key = "error"s;
+            }
+            
+            // Check rate limit
+            if(!rate_limit_tracker().check_limit(key, max_requests, window_seconds))
+            {
+                // Rate limit exceeded - use standardized error response
+                auto error_message = std::format(
+                    "Too Many Requests: Rate limit exceeded. Maximum {} requests per {} seconds.",
+                    max_requests,
+                    window_seconds.count()
+                );
+                auto error_headers = headers{};
+                error_headers.set("retry-after"s, std::to_string(window_seconds.count()));
+                return make_error_response(status_too_many_requests, error_message, std::make_optional(error_headers));
+            }
+            
+            return next(req, body, hdr);
+        };
+    };
+}
+
+// Middleware: CORS (Cross-Origin Resource Sharing) - adds CORS headers to responses
+// Handles CORS headers for all responses and OPTIONS preflight requests
+// Template version using concepts for better performance (no type erasure overhead)
+template<OriginValidator OriginValidatorFunc>
+inline auto cors_middleware(
+    OriginValidatorFunc&& allowed_origin,
+    std::vector<std::string> allowed_methods = {},
+    std::vector<std::string> allowed_headers = {},
+    bool allow_credentials = true,
+    std::optional<int> max_age = std::nullopt)
+{
+    // Use default methods/headers if not provided
+    if(allowed_methods.empty())
+    {
+        allowed_methods.reserve(default_cors_allowed_methods.size());
+        for(const auto& method : default_cors_allowed_methods)
+            allowed_methods.emplace_back(method);
+    }
+    if(allowed_headers.empty())
+    {
+        allowed_headers.reserve(default_cors_allowed_headers.size());
+        for(const auto& header : default_cors_allowed_headers)
+            allowed_headers.emplace_back(header);
+    }
+    
+    return [allowed_origin = std::forward<OriginValidatorFunc>(allowed_origin),
+            allowed_methods = std::move(allowed_methods),
+            allowed_headers = std::move(allowed_headers),
+            allow_credentials,
+            max_age](callback_with_headers next)
+    {
+        return [allowed_origin, allowed_methods, allowed_headers, allow_credentials, max_age, next = std::move(next)](auto req, auto body, auto hdr) mutable -> response_with_headers
+        {
+            using namespace std::string_literals;
+            
+            // Handle OPTIONS preflight requests
+            if(hdr.contains("access-control-request-method"s))
+            {
+                // This is a preflight request - return early with CORS headers
+                auto origin_value = "*"s;
+                if(hdr.contains("origin"s))
+                {
+                    const auto origin = hdr["origin"s];
+                    if(allowed_origin(origin))
+                        origin_value = std::string{origin};
+                }
+                
+                // CORS spec: cannot use wildcard with credentials
+                // If credentials enabled but origin is wildcard, disable credentials for this response
+                auto use_credentials = allow_credentials && origin_value != "*"s;
+                
+                auto preflight_headers = headers{};
+                preflight_headers.set("access-control-allow-origin"s, origin_value);
+                
+                // Build allowed methods using ranges - pre-calculate size for efficiency
+                if(!allowed_methods.empty())
+                {
+                    auto methods_view = allowed_methods | std::views::transform([](const auto& m) { return std::string_view{m}; });
+                    auto total_size = std::accumulate(methods_view.begin(), methods_view.end(), std::size_t{0},
+                        [](auto sum, auto m) { return sum + m.size() + 2; }) - 2; // -2 for last ", "
+                    auto methods_str = std::string{};
+                    methods_str.reserve(total_size);
+                    auto first = true;
+                    std::ranges::for_each(methods_view, [&](auto method) {
+                        if(!first) methods_str += ", "s;
+                        methods_str += method;
+                        first = false;
+                    });
+                    preflight_headers.set("access-control-allow-methods"s, methods_str);
+                }
+                
+                // Build allowed headers using ranges - pre-calculate size for efficiency
+                if(!allowed_headers.empty())
+                {
+                    auto headers_view = allowed_headers | std::views::transform([](const auto& h) { return std::string_view{h}; });
+                    auto total_size = std::accumulate(headers_view.begin(), headers_view.end(), std::size_t{0},
+                        [](auto sum, auto h) { return sum + h.size() + 2; }) - 2; // -2 for last ", "
+                    auto headers_str = std::string{};
+                    headers_str.reserve(total_size);
+                    auto first = true;
+                    std::ranges::for_each(headers_view, [&](auto header) {
+                        if(!first) headers_str += ", "s;
+                        headers_str += header;
+                        first = false;
+                    });
+                    preflight_headers.set("access-control-allow-headers"s, headers_str);
+                }
+                
+                if(use_credentials)
+                    preflight_headers.set("access-control-allow-credentials"s, "true"s);
+                
+                if(max_age.has_value())
+                    preflight_headers.set("access-control-max-age"s, std::to_string(max_age.value()));
+                
+                return {status_no_content, ""s, std::make_optional(preflight_headers)};
+            }
+            
+            // Normal request - add CORS headers to response
+            auto [status, content, headers_opt] = next(req, body, hdr);
+            
+            // Add CORS headers to response
+            auto cors_headers = headers_opt.has_value() ? headers_opt.value() : headers{};
+            
+            auto origin_value = "*"s;
+            if(hdr.contains("origin"s))
+            {
+                const auto origin = hdr["origin"s];
+                if(allowed_origin(origin))
+                    origin_value = std::string{origin};
+            }
+            
+            cors_headers.set("access-control-allow-origin"s, origin_value);
+            
+            // Build allowed methods using ranges - pre-calculate size for efficiency
+            if(!allowed_methods.empty())
+            {
+                auto methods_view = allowed_methods | std::views::transform([](const auto& m) { return std::string_view{m}; });
+                auto total_size = std::accumulate(methods_view.begin(), methods_view.end(), std::size_t{0},
+                    [](auto sum, auto m) { return sum + m.size() + 2; }) - 2; // -2 for last ", "
+                auto methods_str = std::string{};
+                methods_str.reserve(total_size);
+                auto first = true;
+                std::ranges::for_each(methods_view, [&](auto method) {
+                    if(!first) methods_str += ", "s;
+                    methods_str += method;
+                    first = false;
+                });
+                cors_headers.set("access-control-allow-methods"s, methods_str);
+            }
+            
+            // Build allowed headers using ranges - pre-calculate size for efficiency
+            if(!allowed_headers.empty())
+            {
+                auto headers_view = allowed_headers | std::views::transform([](const auto& h) { return std::string_view{h}; });
+                auto total_size = std::accumulate(headers_view.begin(), headers_view.end(), std::size_t{0},
+                    [](auto sum, auto h) { return sum + h.size() + 2; }) - 2; // -2 for last ", "
+                auto headers_str = std::string{};
+                headers_str.reserve(total_size);
+                auto first = true;
+                std::ranges::for_each(headers_view, [&](auto header) {
+                    if(!first) headers_str += ", "s;
+                    headers_str += header;
+                    first = false;
+                });
+                cors_headers.set("access-control-allow-headers"s, headers_str);
+            }
+            
+            // CORS spec: cannot use wildcard with credentials
+            // If credentials enabled but origin is wildcard, disable credentials for this response
+            if(allow_credentials && origin_value != "*"s)
+                cors_headers.set("access-control-allow-credentials"s, "true"s);
+            
+            if(max_age.has_value())
+                cors_headers.set("access-control-max-age"s, std::to_string(max_age.value()));
+            
+            return {status, content, std::make_optional(cors_headers)};
+        };
+    };
+}
+
+} // namespace middleware
+
+} // namespace http
+
