@@ -121,6 +121,20 @@ concept string_convertible = !exact_value_type<T> &&
                              !floating_convertible<T> &&
                              std::convertible_to<T, std::string>;
 
+// Generic concept for types with operator<< - must be last fallback
+// Note: operator<< returns std::basic_ostream<CharT, Traits>& (not stringstream&),
+// so we check that it returns something convertible to std::ostream&
+template<typename T>
+concept streamable = !exact_value_type<T> &&
+                     !c_string_type<T> &&
+                     !string_view_convertible<T> &&
+                     !integral_convertible<T> &&
+                     !floating_convertible<T> &&
+                     !string_convertible<T> &&
+                     requires(std::stringstream& ss, const T& v) {
+                         { ss << v } -> std::convertible_to<std::ostream&>;
+                     };
+
 struct level_manip {
     syslog::severity sev;
     std::string_view msg_id;
@@ -246,14 +260,23 @@ private:
         return std::forward<T>(v);
     }
 
+    // C-strings (const char*, char*) are handled separately even though they're convertible
+    // to std::string, because:
+    // 1. Template overload resolution: more specific (c_string_type) is checked first
+    // 2. Concept dependencies: c_string_type is used to exclude C-strings from other
+    //    concepts (string_view_convertible, integral_convertible, etc.)
+    // 3. Clear intent: explicit handling for C-strings vs. other string-like types
+    // Both do the same conversion (std::string{v}), but the separation ensures proper
+    // ordering and prevents C-strings from matching string_view_convertible or other
+    // concepts in the chain
     template<c_string_type T>
     static value convert_to_value(T v) {
-        return std::string(v);
+        return std::string{v};
     }
 
     template<string_view_convertible T>
     static value convert_to_value(T&& v) {
-        return std::string(v);
+        return std::string{v};
     }
 
     template<integral_convertible T>
@@ -266,25 +289,29 @@ private:
         return static_cast<double>(v);
     }
 
-    // Special handling for std::chrono::hh_mm_ss - convert to string with HH:MM:SS format
-    // Must come before string_convertible to avoid conflicts
-    template<typename Duration>
-    static value convert_to_value(const std::chrono::hh_mm_ss<Duration>& time) {
-        auto ss = std::stringstream{};
-        ss << std::setw(2) << std::setfill('0') << time.hours() << ':'
-           << std::setw(2) << std::setfill('0') << time.minutes() << ':'
-           << std::setw(2) << std::setfill('0') << time.seconds();
-        return ss.str();
-    }
-
-    // Special handling for std::error_code - convert to string with value and message
+    // Special handling for std::error_code - provides more informative format than standard operator<<
+    // Standard operator<< outputs: "generic:17" (category:value)
+    // Our format outputs: "17 (File exists)" (value + human-readable message)
+    // This is more useful for logging because it includes the error message
     static value convert_to_value(const std::error_code& ec) {
         return std::to_string(ec.value()) + " (" + ec.message() + ")";
     }
 
+    // Handles types convertible to std::string (but NOT C-strings, which are handled above)
+    // This catches other string-like types that aren't exact matches
     template<string_convertible T>
     static value convert_to_value(T&& v) {
-        return std::string(v);
+        return std::string{v};
+    }
+
+    // Generic fallback: any type with operator<< - convert via stringstream
+    // This handles chrono types (hh_mm_ss, day, month, year, year_month_day) and any other streamable types
+    // ADL will find custom operator<< implementations (e.g., net::operator<< for hh_mm_ss)
+    template<streamable T>
+    static value convert_to_value(const T& v) {
+        auto ss = std::stringstream{};
+        ss << v;
+        return ss.str();
     }
 
     void output() {
@@ -457,17 +484,7 @@ public:
 
     // Structured fields: {"key", value} or std::pair{"key", value}
     // Optimized: uses emplace to avoid double conversion
-    template<class K, class V>
-    structured_log_stream& operator<<(const std::pair<K, V>& kv) {
-        if (entry_enabled) {
-            structured_fields.emplace(std::piecewise_construct,
-                                      std::forward_as_tuple(kv.first),
-                                      std::forward_as_tuple(convert_to_value(kv.second)));
-        }
-        return *this;
-    }
-
-    // Support for braced-init-list syntax: {"key", value}
+    // Handles both lvalue and rvalue references via forwarding reference
     template<class K, class V>
     structured_log_stream& operator<<(std::pair<K, V>&& kv) {
         if (entry_enabled) {

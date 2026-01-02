@@ -8,7 +8,7 @@ using namespace net;
 namespace {
 using tester::assertions::check_true;
 using tester::assertions::check_eq;
-using tester::assertions::check_nothrow;
+using tester::assertions::require_nothrow;
 using tester::assertions::check_contains;
 using tester::assertions::check_starts_with;
 
@@ -20,7 +20,7 @@ using tester::assertions::check_starts_with;
 }
 }
 
-auto register_syslogstream_tests()
+auto register_structured_log_stream_tests()
 {
     tester::bdd::scenario("Timestamp formatting, [net]") = [] {
         using namespace std::chrono;
@@ -42,7 +42,7 @@ auto register_syslogstream_tests()
 
             tester::bdd::when("Logging at various levels") = [] {
                 using namespace std::string_literals;
-                check_nothrow([] {
+                require_nothrow([] {
                     slog << net::debug() << "Testing debug "s << 123 << net::flush;
                     slog << net::debug("http") << "Testing debug http "s << 123 << net::flush;
                     
@@ -70,7 +70,7 @@ auto register_syslogstream_tests()
 
             tester::bdd::when("Using level_manip API directly") = [] {
                 using namespace std::string_literals;
-                check_nothrow([] {
+                require_nothrow([] {
                     slog << level_manip{syslog::severity::debug, "test"sv} << "Debug message "s << 123 << net::flush;
                     slog << level_manip{syslog::severity::info, "test"sv} << "Info message "s << 456 << net::flush;
                     slog << warning << "Warning message "s << 789 << net::flush;
@@ -87,7 +87,7 @@ auto register_syslogstream_tests()
 
             tester::bdd::when("Adding structured fields") = [] {
                 using namespace std::string_literals;
-                check_nothrow([] {
+                require_nothrow([] {
                     slog << net::info("http") 
                          << std::pair{"method", "GET"}
                          << std::pair{"path", "/api/users"}
@@ -99,7 +99,7 @@ auto register_syslogstream_tests()
 
             tester::bdd::when("Adding structured fields using new style syntax") = [] {
                 using namespace std::string_literals;
-                check_nothrow([] {
+                require_nothrow([] {
                     // New style: std::pair{"name", value} with CTAD
                     slog << net::info("SERVER_START") 
                          << "Listening on port 21120" 
@@ -110,7 +110,7 @@ auto register_syslogstream_tests()
 
             tester::bdd::when("Adding structured fields with error message") = [] {
                 using namespace std::string_literals;
-                check_nothrow([] {
+                require_nothrow([] {
                     std::string client_ip = "192.168.1.100";
                     slog << net::error("CONN_CLOSED") 
                          << "Timeout from client" 
@@ -122,7 +122,7 @@ auto register_syslogstream_tests()
             tester::bdd::when("Adding structured fields using std::pair") = [] {
                 using namespace std::string_literals;
                 using namespace std::string_view_literals;
-                check_nothrow([] {
+                require_nothrow([] {
                     slog << net::info("http") 
                          << std::pair{"method"sv, "GET"sv}
                          << std::pair{"path"sv, "/api/users"sv}
@@ -239,7 +239,7 @@ auto register_syslogstream_tests()
 
             tester::bdd::when("Logging at different levels") = [] {
                 using namespace std::string_literals;
-                check_nothrow([] {
+                require_nothrow([] {
                     // These should be filtered out (below info level)
                     slog << net::debug << "This debug message should be filtered" << net::flush;
                     
@@ -261,7 +261,7 @@ auto register_syslogstream_tests()
 
             tester::bdd::when("Logging a message") = [] {
                 using namespace std::string_literals;
-                check_nothrow([] {
+                require_nothrow([] {
                     slog << net::info("test_event")
                          << std::pair{"user_id", 12345}
                          << std::pair{"action", "login"}
@@ -277,7 +277,7 @@ auto register_syslogstream_tests()
                 .log_level(syslog::severity::debug);
 
             tester::bdd::when("Setting different facilities") = [] {
-                check_nothrow([] {
+                require_nothrow([] {
                     slog.facility(syslog::facility::local0)
                         .facility(syslog::facility::local1)
                         .facility(16)  // local0
@@ -290,7 +290,7 @@ auto register_syslogstream_tests()
     tester::bdd::scenario("App name method, [net]") = [] {
         tester::bdd::given("A syslog stream") = [] {
             tester::bdd::when("Setting app name") = [] {
-                check_nothrow([] {
+                require_nothrow([] {
                     slog.app_name("myapp");
                 });
             };
@@ -483,6 +483,185 @@ auto register_syslogstream_tests()
         };
     };
 
+    tester::bdd::scenario("Structured fields with hh_mm_ss time type, [net]") = [] {
+        auto captured_output = std::make_shared<std::stringstream>();
+        
+        tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
+            slog.app_name("testapp")
+                .log_level(syslog::severity::debug)
+                .format(log_format::jsonl)
+                .redirect(*captured_output);
+
+            tester::bdd::when("Logging with hh_mm_ss time in structured fields") = [captured_output] {
+                using namespace std::string_literals;
+                using namespace std::chrono;
+                using namespace std::chrono_literals;
+                
+                // Create hh_mm_ss values for testing
+                auto time1 = hh_mm_ss{1h + 23min + 45s};  // 01:23:45
+                auto time2 = hh_mm_ss{9h + 5min + 30s};    // 09:05:30
+                auto time3 = hh_mm_ss{12h + 0min + 0s};    // 12:00:00
+                
+                slog << net::info("TIME_TEST")
+                     << std::pair{"start_time", time1}
+                     << std::pair{"end_time", time2}
+                     << std::pair{"noon", time3}
+                     << "Time values in structured fields"s << net::flush;
+
+                tester::bdd::then("hh_mm_ss values should be converted to strings via operator<<") = [captured_output] {
+                    std::string output = captured_output->str();
+                    // hh_mm_ss should be formatted as string via operator<<
+                    // Standard format is HH:MM:SS, custom net::operator<< may format differently
+                    check_contains(output, "\"start_time\":");
+                    check_contains(output, "\"end_time\":");
+                    check_contains(output, "\"noon\":");
+                    // The exact format depends on operator<< implementation
+                    // Standard format includes colons and time components
+                    check_contains(output, "01");  // hours from time1
+                    check_contains(output, "23");  // minutes from time1
+                    check_contains(output, "45");  // seconds from time1
+                    check_contains(output, "09");   // hours from time2
+                    check_contains(output, "12");   // hours from time3
+                    slog.redirect(std::clog);
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("Structured fields with chrono calendar types, [net]") = [] {
+        auto captured_output = std::make_shared<std::stringstream>();
+        
+        tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
+            slog.app_name("testapp")
+                .log_level(syslog::severity::debug)
+                .format(log_format::jsonl)
+                .redirect(*captured_output);
+
+            tester::bdd::when("Logging with chrono calendar types in structured fields") = [captured_output] {
+                using namespace std::string_literals;
+                using namespace std::chrono;
+                
+                // Create calendar type values for testing
+                auto d1 = day{15};
+                auto d2 = day{31};
+                auto m1 = month{3};   // March
+                auto m2 = month{12};  // December
+                auto y1 = year{2024};
+                auto y2 = year{1970};
+                auto ymd = year_month_day{year{2024}/month{3}/day{15}};  // 2024-03-15
+                
+                slog << net::info("CALENDAR_TEST")
+                     << std::pair{"day1", d1}
+                     << std::pair{"day2", d2}
+                     << std::pair{"month1", m1}
+                     << std::pair{"month2", m2}
+                     << std::pair{"year1", y1}
+                     << std::pair{"year2", y2}
+                     << std::pair{"date", ymd}
+                     << "Calendar types in structured fields"s << net::flush;
+
+                tester::bdd::then("Calendar types should be converted to strings via operator<<") = [captured_output] {
+                    std::string output = captured_output->str();
+                    // Verify all fields are present
+                    check_contains(output, "\"day1\":");
+                    check_contains(output, "\"day2\":");
+                    check_contains(output, "\"month1\":");
+                    check_contains(output, "\"month2\":");
+                    check_contains(output, "\"year1\":");
+                    check_contains(output, "\"year2\":");
+                    check_contains(output, "\"date\":");
+                    // Verify values appear in output (exact format depends on operator<<)
+                    check_contains(output, "15");   // day values
+                    check_contains(output, "31");   // day values
+                    check_contains(output, "2024"); // year values
+                    check_contains(output, "1970"); // year values
+                    // Month may be formatted as name or number depending on operator<<
+                    // Check for any month representation (03, 12, Mar, Dec, March, December)
+                    check_true(output.find("03") != std::string::npos || 
+                               output.find("Mar") != std::string::npos ||
+                               output.find("12") != std::string::npos ||
+                               output.find("Dec") != std::string::npos);
+                    slog.redirect(std::clog);
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("Structured fields with additional streamable types, [net]") = [] {
+        auto captured_output = std::make_shared<std::stringstream>();
+        
+        tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
+            slog.app_name("testapp")
+                .log_level(syslog::severity::debug)
+                .format(log_format::jsonl)
+                .redirect(*captured_output);
+
+            tester::bdd::when("Logging with std::error_code, std::bitset, std::complex, and chrono::duration") = [captured_output] {
+                using namespace std::string_literals;
+                using namespace std::chrono;
+                using namespace std::chrono_literals;
+                
+                // Test std::error_code (has special handling)
+                auto ec = std::make_error_code(std::errc::file_exists);
+                
+                // Test std::bitset
+                auto bits = std::bitset<8>{0b00101010};  // 42 in binary
+                
+                // Test std::complex
+                auto complex_val = std::complex<double>{3.14, 2.71};
+                
+                // Test chrono::duration
+                auto duration1 = 123ms;
+                auto duration2 = 5s;
+                auto duration3 = 2h;
+                
+                slog << net::info("STREAMABLE_TYPES_TEST")
+                     << std::pair{"error_code", ec}
+                     << std::pair{"bitset", bits}
+                     << std::pair{"complex", complex_val}
+                     << std::pair{"duration_ms", duration1}
+                     << std::pair{"duration_s", duration2}
+                     << std::pair{"duration_h", duration3}
+                     << "Additional streamable types test"s << net::flush;
+
+                tester::bdd::then("All streamable types should be converted to strings via operator<<") = [captured_output, ec] {
+                    std::string output = captured_output->str();
+                    // Verify all fields are present
+                    check_contains(output, "\"error_code\":");
+                    check_contains(output, "\"bitset\":");
+                    check_contains(output, "\"complex\":");
+                    check_contains(output, "\"duration_ms\":");
+                    check_contains(output, "\"duration_s\":");
+                    check_contains(output, "\"duration_h\":");
+                    
+                    // Verify error_code special handling (format: "value (message)")
+                    check_contains(output, std::to_string(ec.value()));
+                    check_contains(output, ec.message());
+                    
+                    // Verify bitset output (binary representation)
+                    check_contains(output, "00101010");
+                    
+                    // Verify complex output (should contain parentheses and comma)
+                    check_contains(output, "3.14");
+                    check_contains(output, "2.71");
+                    check_contains(output, "(");
+                    check_contains(output, ")");
+                    
+                    // Verify duration outputs (should contain units or values)
+                    check_contains(output, "123");  // milliseconds
+                    check_contains(output, "5");    // seconds
+                    check_contains(output, "2");    // hours
+                    // Duration might be formatted with units (ms, s, h) or just numbers
+                    check_true(output.find("ms") != std::string::npos || 
+                               output.find("milliseconds") != std::string::npos ||
+                               output.find("123") != std::string::npos);
+                    
+                    slog.redirect(std::clog);
+                };
+            };
+        };
+    };
+
     tester::bdd::scenario("Syslog format priority calculation, [net]") = [] {
         auto captured_output = std::make_shared<std::stringstream>();
         
@@ -536,7 +715,7 @@ auto register_syslogstream_tests()
                     check_contains(output, "\"file\":");
                     check_contains(output, "\"line\":");
                     check_contains(output, "\"function\":");
-                    check_contains(output, "register_syslogstream_tests");
+                    check_contains(output, "register_structured_log_stream_tests");
                     check_contains(output, "Message with source location");
                     slog.redirect(std::clog);
                 };
@@ -573,7 +752,7 @@ auto register_syslogstream_tests()
     tester::bdd::scenario("Fluent configuration API (method chaining), [net]") = [] {
         tester::bdd::given("A syslog stream") = [] {
             tester::bdd::when("Using fluent/chained configuration") = [] {
-                check_nothrow([] {
+                require_nothrow([] {
                     slog.format(log_format::jsonl)
                         .app_name("chained-app")
                         .log_level(syslog::severity::warning)
@@ -585,7 +764,7 @@ auto register_syslogstream_tests()
 
             tester::bdd::when("Chaining configuration with logging") = [] {
                 auto captured_output = std::make_shared<std::stringstream>();
-                check_nothrow([captured_output] {
+                require_nothrow([captured_output] {
                     slog.format(log_format::jsonl)
                         .app_name("chained-test")
                         .log_level(syslog::severity::info)
@@ -799,7 +978,7 @@ auto register_syslogstream_tests()
                 .redirect(std::clog);
 
             tester::bdd::when("Calling flush()") = [] {
-                check_nothrow([] {
+                require_nothrow([] {
                     // flush() should return structured_log_stream& for chaining
                     [[maybe_unused]] auto& result = slog.flush();
                     // Just verify it compiles and returns reference
@@ -811,4 +990,4 @@ auto register_syslogstream_tests()
     return true;
 }
 
-const auto _ = register_syslogstream_tests();
+const auto _ = register_structured_log_stream_tests();

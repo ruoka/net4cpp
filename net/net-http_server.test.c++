@@ -165,7 +165,7 @@ auto register_server_tests()
     check_contains(output, "\"user_agent\":\"TestAgent/1.0\"");
     check_contains(output, "\"content_type\":\"application/json\"");
     check_contains(output, "\"accept\":\"text/plain, application/json\"");
-    check_contains(output, "\"msg_id\":\"CONN_CLOSED\"");
+    check_contains(output, "\"msg_id\":\"HTTP_CONN_CLOSED\"");
     check_contains(output, "\"connection_duration_ms\"");
     
                     // Verify request_id correlation
