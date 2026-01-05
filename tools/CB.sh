@@ -81,6 +81,7 @@ if [[ ! -x "$BIN" ]] || [[ "$SRC" -nt "$BIN" ]]; then
         -I"$LLVM_PREFIX/include/c++/v1" \
         -L"$LLVM_PREFIX/lib" \
         -Wl,-rpath,"$LLVM_PREFIX/lib" \
+        -lc++abi \
         "$SRC" -o "$BIN"
 fi
 
