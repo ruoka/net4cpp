@@ -196,14 +196,17 @@ inline auto correlation_id_middleware()
 }
 
 // Rate limiting configuration
+// Type alias for rate limiting client identifier (e.g., IP address, user ID)
+using rate_limit_key_type = std::string;
+
 // Shared state for rate limiting (thread-safe tracker)
 struct request_tracker
 {
     std::mutex mutex;
-    std::map<std::string, std::vector<std::chrono::system_clock::time_point>> requests;
+    std::flat_map<rate_limit_key_type, std::vector<std::chrono::system_clock::time_point>> requests;
     std::size_t request_count = 0; // Counter for periodic cleanup
     
-    bool check_limit(const std::string& key, std::size_t max_requests, std::chrono::seconds window)
+    bool check_limit(const rate_limit_key_type& key, std::size_t max_requests, std::chrono::seconds window)
     {
         std::lock_guard<std::mutex> lock{mutex};
         const auto now = std::chrono::system_clock::now();

@@ -15,7 +15,7 @@ export import :posix;
 export import :receiver;
 export import :sender;
 export import :socket;
-export import :syslogstream;
+export import :structured_log_stream;
 export import :uri;
 export import :utils;
 export import :uuid;

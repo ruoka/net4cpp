@@ -1,6 +1,7 @@
 export module net:http_server;
 import :acceptor;
-import :syslogstream;
+import :posix;
+import :structured_log_stream;
 import :http_headers;
 import :endpointstream;
 import :utils;
@@ -73,13 +74,6 @@ inline response_with_headers make_response(
     std::optional<headers> custom_headers = std::nullopt)
 {
     return {status_code, std::move(content), custom_headers};
-}
-
-// Backwards compatibility wrapper for rfc1123_legacy
-template<typename T>
-inline auto rfc1123_legacy(const std::chrono::time_point<T>& current_time) noexcept
-{
-    return utils::rfc1123_legacy(current_time);
 }
 
 class controller
@@ -297,7 +291,7 @@ private:
         // clang-22 (macOS) is known to crash compiling chrono formatting via std::format/std::vformat in our modules setup.
         // Keep local dev stable while still enabling CI coverage on Linux.
 #if defined(__APPLE__) && defined(__clang__) && (__clang_major__ >= 22)
-        return ::http::rfc1123_legacy(std::chrono::system_clock::now());
+        return utils::rfc1123_legacy(std::chrono::system_clock::now());
 #else
         using namespace std::chrono;
         const auto tp = floor<seconds>(std::chrono::system_clock::now());
@@ -307,7 +301,13 @@ private:
 
     const auto& host() const
     {
-        static auto s_host = net::syslog::gethostname();
+        static auto s_host = []() {
+            char buffer[net::posix::ni_maxhost];
+            if (net::posix::gethostname(buffer, net::posix::ni_maxhost) == 0) {
+                return std::string{buffer};
+            }
+            return std::string{"localhost"};
+        }();
         return s_host;
     }
 
@@ -572,13 +572,13 @@ private:
                     bool route_found = false;
                     bool method_allowed = false;
 
-                    for(auto& [path, methods_map] : m_router)
+                    for(const auto& [path, methods_map] : m_router)
                         if(std::regex_match(std::string{uri}, std::regex(path)))
                         {
                             route_found = true;
-                            auto it = methods_map.find(std::string_view{method});
+                            auto it = methods_map.find(method);
                             // If HEAD method not found, try GET as fallback for HEAD requests
-                            if(it == methods_map.end() && method == std::string{method_head})
+                            if(it == methods_map.end() && method == method_head)
                                 it = methods_map.find(method_get);
 
                             if(it != methods_map.end())
@@ -614,7 +614,7 @@ private:
 
                     // Handle OPTIONS preflight requests - if no route found, return 204 with empty body
                     // CORS middleware will add CORS headers if configured
-                    if(method == std::string{method_options} && !route_found && res_type.empty())
+                    if(method == method_options && !route_found && res_type.empty())
                     {
                         res_status = status_no_content;
                         res_content = "";
@@ -790,10 +790,17 @@ private:
         }
     }
 
-    using router_type = std::map<std::string, std::map<std::string_view, controller>, std::less<>>;
+    // Router: path -> (method -> controller)
+    // Uses flat_map for better cache locality during iteration and method lookups
+    // Implementation details: type aliases for router internals
+    using path_type = std::string;           // Route path pattern (e.g., "/api/users/:id")
+    using method_type = std::string_view;    // HTTP method (e.g., "GET", "POST")
+    
+    using method_map_type = std::flat_map<method_type, controller>;
+    using router_type = std::flat_map<path_type, method_map_type>;
     router_type m_router = {};
     std::string m_content_type = "*/*";
-    std::set<std::string_view> m_methods = {method_head, method_options};
+    std::flat_set<method_type> m_methods = {method_head, method_options};
     std::chrono::seconds m_timeout = std::chrono::seconds{0};
     std::atomic<bool> m_stop{false};
 };

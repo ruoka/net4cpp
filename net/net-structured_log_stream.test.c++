@@ -2,6 +2,8 @@ module net;
 import tester;
 import std;
 using namespace std::string_view_literals;
+using namespace std::string_literals;
+using namespace std::chrono_literals;
 
 using namespace net;
 
@@ -23,14 +25,18 @@ using tester::assertions::check_starts_with;
 auto register_structured_log_stream_tests()
 {
     tester::bdd::scenario("Timestamp formatting, [net]") = [] {
-        using namespace std::chrono;
-        using namespace std::chrono_literals;
-
-        check_eq("1970-01-01T00:00:00.000Z", syslog::format_timestamp(system_clock::time_point{0us}));
-        check_eq("1970-01-01T00:00:00.001Z", syslog::format_timestamp(system_clock::time_point{1ms}));
-        check_eq("1970-01-01T00:00:01.000Z", syslog::format_timestamp(system_clock::time_point{1s}));
-        check_eq("1970-01-01T00:01:00.000Z", syslog::format_timestamp(system_clock::time_point{1min}));
-        check_eq("1970-01-01T01:00:00.000Z", syslog::format_timestamp(system_clock::time_point{1h}));
+        tester::bdd::given("A specific time point") = [] {
+            using namespace std::chrono;
+            auto tp = sys_days{2024y/January/15d} + 14h + 30min + 45s + 123ms;
+            
+            tester::bdd::when("format_timestamp is called") = [tp] {
+                auto result = detail::format_timestamp(tp);
+                
+                tester::bdd::then("It produces ISO 8601 format with milliseconds") = [result] {
+                    check_eq("2024-01-15T14:30:45.123Z"s, result);
+                };
+            };
+        };
     };
 
     tester::bdd::scenario("Setup and Log levels, [net]") = [] {

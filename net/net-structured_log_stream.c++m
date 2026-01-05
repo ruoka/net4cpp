@@ -1,11 +1,10 @@
-export module net:syslogstream;
-import :posix;
+export module net:structured_log_stream;
 import std;
+import :posix;
 
 export namespace net::syslog {
 
-const int version = 1;
-
+// Public API enums - used by external code (yardb, yarproxy, etc.)
 enum class facility : int
 {
     user   = 1,
@@ -31,41 +30,35 @@ enum class severity : int
      debug     = 7
 };
 
-inline std::string gethostname()
-{
-    char buffer[posix::ni_maxhost];
-    posix::gethostname(buffer, posix::ni_maxhost);
-    return buffer;
-}
-
-std::string format_timestamp(std::chrono::system_clock::time_point tp)
-{
-    using namespace std::chrono;
-    const auto midnight = floor<days>(tp);
-    const auto date = year_month_day{midnight};
-    const auto time = hh_mm_ss{tp - midnight};
-    const auto ms = duration_cast<milliseconds>(time.subseconds()).count();
-
-    return std::format(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-        static_cast<int>(date.year()),
-        static_cast<unsigned>(date.month()),
-        static_cast<unsigned>(date.day()),
-        static_cast<int>(time.hours().count()),
-        static_cast<int>(time.minutes().count()),
-        static_cast<int>(time.seconds().count()),
-        static_cast<int>(ms));
-}
-
 } // namespace net::syslog
 
-export namespace net {
+namespace detail {
+    // Implementation details (not exported - accessible to tests within the module)
+    std::string format_timestamp(std::chrono::system_clock::time_point tp)
+    {
+        using namespace std::chrono;
+        const auto midnight = floor<days>(tp);
+        const auto date = year_month_day{midnight};
+        const auto time = hh_mm_ss{tp - midnight};
+        const auto ms = duration_cast<milliseconds>(time.subseconds()).count();
 
-enum class log_format { syslog, jsonl };
+        return std::format(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+            static_cast<int>(date.year()),
+            static_cast<unsigned>(date.month()),
+            static_cast<unsigned>(date.day()),
+            static_cast<int>(time.hours().count()),
+            static_cast<int>(time.minutes().count()),
+            static_cast<int>(time.seconds().count()),
+            static_cast<int>(ms));
+    }
 
-// Support multiple integer types to avoid casts
-// Note: std::size_t may alias unsigned long or unsigned long long, so we handle it via template conversion
-using value = std::variant<
+    // Internal type aliases for structured logging (not exported - accessible to tests within the module)
+    using field_name_type = std::string;  // Structured log field name (e.g., "user_id", "ip", "file")
+
+    // Support multiple integer types to avoid casts
+    // Note: std::size_t may alias unsigned long or unsigned long long, so we handle it via template conversion
+    using value = std::variant<
     std::nullptr_t,
     bool,
     int,
@@ -77,6 +70,11 @@ using value = std::variant<
     double,
     std::string
 >;
+} // namespace detail
+
+export namespace net {
+
+enum class log_format { syslog, jsonl };
 
 // Concepts for type categorization in convert_to_value
 template<typename T>
@@ -163,7 +161,7 @@ private:
     bool                        entry_enabled    = false;
     syslog::severity            entry_severity   = syslog::severity::debug;
     std::string_view            entry_msg_id     = std::string_view{};
-    std::map<std::string, value> structured_fields;
+    std::flat_map<detail::field_name_type, detail::value> structured_fields;
     std::stringstream           human_message;
 
     std::string get_severity_str() const {
@@ -208,7 +206,7 @@ private:
         return esc;
     }
 
-    static std::string value_to_str(const value& v) {
+    static std::string value_to_str(const detail::value& v) {
         return std::visit([](auto&& arg) -> std::string {
             using T = std::decay_t<decltype(arg)>;
             if constexpr (std::is_same_v<T, std::nullptr_t>) return "null";
@@ -220,7 +218,7 @@ private:
         }, v);
     }
 
-    static void value_to_json(std::ostream& os, const value& v) {
+    static void value_to_json(std::ostream& os, const detail::value& v) {
         std::visit([&os](auto&& arg) {
             using T = std::decay_t<decltype(arg)>;
             if constexpr (std::is_same_v<T, std::string>) {
@@ -250,13 +248,13 @@ private:
 
     std::string generate_timestamp() const {
         auto now = std::chrono::system_clock::now();
-        return syslog::format_timestamp(now);
+        return detail::format_timestamp(now);
     }
 
     // Helper to convert any type to the appropriate variant type
     // Optimized with concepts for better compile-time dispatch
     template<exact_value_type T>
-    static value convert_to_value(T&& v) {
+    static detail::value convert_to_value(T&& v) {
         return std::forward<T>(v);
     }
 
@@ -270,22 +268,22 @@ private:
     // ordering and prevents C-strings from matching string_view_convertible or other
     // concepts in the chain
     template<c_string_type T>
-    static value convert_to_value(T v) {
+    static detail::value convert_to_value(T v) {
         return std::string{v};
     }
 
     template<string_view_convertible T>
-    static value convert_to_value(T&& v) {
+    static detail::value convert_to_value(T&& v) {
         return std::string{v};
     }
 
     template<integral_convertible T>
-    static value convert_to_value(T v) {
+    static detail::value convert_to_value(T v) {
         return static_cast<long long>(v);
     }
 
     template<floating_convertible T>
-    static value convert_to_value(T v) {
+    static detail::value convert_to_value(T v) {
         return static_cast<double>(v);
     }
 
@@ -293,14 +291,14 @@ private:
     // Standard operator<< outputs: "generic:17" (category:value)
     // Our format outputs: "17 (File exists)" (value + human-readable message)
     // This is more useful for logging because it includes the error message
-    static value convert_to_value(const std::error_code& ec) {
+    static detail::value convert_to_value(const std::error_code& ec) {
         return std::to_string(ec.value()) + " (" + ec.message() + ")";
     }
 
     // Handles types convertible to std::string (but NOT C-strings, which are handled above)
     // This catches other string-like types that aren't exact matches
     template<string_convertible T>
-    static value convert_to_value(T&& v) {
+    static detail::value convert_to_value(T&& v) {
         return std::string{v};
     }
 
@@ -308,7 +306,7 @@ private:
     // This handles chrono types (hh_mm_ss, day, month, year, year_month_day) and any other streamable types
     // ADL will find custom operator<< implementations (e.g., net::operator<< for hh_mm_ss)
     template<streamable T>
-    static value convert_to_value(const T& v) {
+    static detail::value convert_to_value(const T& v) {
         auto ss = std::stringstream{};
         ss << v;
         return ss.str();
@@ -537,9 +535,6 @@ public:
         return *this;
     }
 };
-
-// Backward compatibility: syslogstream is an alias
-using syslogstream = structured_log_stream;
 
 // Global instance
 inline structured_log_stream slog;

@@ -37,7 +37,7 @@ public:
 
 private:
 
-    std::map<name,value> m_values;
+    std::flat_map<name,value> m_values;
 };
 
 inline std::istream& operator >> (std::istream &is,  headers &hdrs)
