@@ -36,11 +36,11 @@ jobs:
 
       - name: Verify std.cppm location
         run: |
-          if [ -f /usr/lib/llvm-20/share/libc++/v1/std.cppm ]; then
-            echo "std.cppm found at /usr/lib/llvm-20/share/libc++/v1/std.cppm"
+          if [ -f /usr/lib/llvm-21/share/libc++/v1/std.cppm ]; then
+            echo "std.cppm found at /usr/lib/llvm-21/share/libc++/v1/std.cppm"
           else
             echo "Warning: std.cppm not found at expected location"
-            find /usr/lib/llvm-20 -name "std.cppm" 2>/dev/null || echo "std.cppm not found anywhere"
+            find /usr/lib/llvm-21 -name "std.cppm" 2>/dev/null || echo "std.cppm not found anywhere"
           fi
 
       - name: Show compiler version
@@ -87,14 +87,14 @@ jobs:
       - name: Setup LLVM + analysis tools
         uses: ./.github/actions/setup-llvm
         with:
-          packages: "libc++-20-dev libc++abi-20-dev clang-20 lld-20 lldb-20 jq clang-tools-20 clang-tidy-20 cppcheck libssl-dev"
+          packages: "libc++-21-dev libc++abi-21-dev clang-21 lld-21 lldb-21 jq clang-tools-21 clang-tidy-21 cppcheck libssl-dev"
 
       - name: Run clang-tidy (non-blocking)
         run: |
           set -euo pipefail
           find net -name "*.c++m" -o -name "*.c++" | head -20 | while read -r f; do
             echo "Analyzing $f"
-            clang-tidy-20 "$f" -- -std=c++23 -I/usr/lib/llvm-20/include/c++/v1 2>/dev/null || true
+            clang-tidy-21 "$f" -- -std=c++23 -I/usr/lib/llvm-21/include/c++/v1 2>/dev/null || true
           done
 
       - name: Run cppcheck (non-blocking)
