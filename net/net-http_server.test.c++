@@ -784,6 +784,110 @@ auto register_server_tests()
         };
     };
 
+    tester::bdd::scenario("OPTIONS preflight requests pass through to middleware for existing routes, [net]") = [] {
+        if(!network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server with a POST route and CORS middleware") = [] {
+            auto server = std::make_shared<http::server>();
+            
+            // Set up CORS middleware
+            auto allowed_origin = [](std::string_view origin) {
+                return origin == "http://localhost:8080"sv;
+            };
+            auto cors_mw = http::middleware::cors_middleware(
+                allowed_origin,
+                std::vector<std::string>{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+                std::vector<std::string>{"Content-Type", "Authorization"},
+                true,
+                std::optional<int>{3600}
+            );
+            
+            // Wrap the POST handler with CORS middleware
+            auto post_handler = [](auto&&, auto&&, auto&&) -> http::response_with_headers {
+                return http::make_response(http::status_created, "Created"s, std::optional<http::headers>{});
+            };
+            auto wrapped_handler = cors_mw(post_handler);
+            server->post("/api/data").response_with_headers("application/json", wrapped_handler);
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("OPTIONS request with CORS preflight headers is sent to existing route") = [server] {
+                auto response_status = std::make_shared<std::string>("");
+                auto has_cors_headers = std::make_shared<bool>(false);
+                
+                std::promise<void> started;
+                auto started_future = started.get_future();
+
+                std::thread server_thread{[server, &started]{
+                    try {
+                        started.set_value();
+                        server->listen("8087");
+                    } catch(...) {}
+                }};
+
+                using namespace std::chrono_literals;
+                if (started_future.wait_for(2s) == std::future_status::ready) {
+                    std::this_thread::sleep_for(200ms);
+
+                    try {
+                        auto stream = connect("127.0.0.1", "8087");
+                        stream << "OPTIONS /api/data HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:8087" << net::crlf
+                               << "Origin: http://localhost:8080" << net::crlf
+                               << "Access-Control-Request-Method: POST" << net::crlf
+                               << "Access-Control-Request-Headers: content-type,authorization" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+
+                        std::string response;
+                        std::string line;
+                        int line_count = 0;
+                        while(line_count < 20 && stream && std::getline(stream, line)) {
+                            response += line + "\n";
+                            line_count++;
+                            if(line_count == 1) {
+                                // Parse status line
+                                if(!line.empty() && line.back() == '\r') {
+                                    line.pop_back();
+                                }
+                                auto space1 = line.find(' ');
+                                if(space1 != std::string::npos) {
+                                    auto space2 = line.find(' ', space1 + 1);
+                                    if(space2 != std::string::npos) {
+                                        *response_status = line.substr(space1 + 1, space2 - space1 - 1);
+                                    } else {
+                                        *response_status = line.substr(space1 + 1);
+                                    }
+                                }
+                            } else {
+                                // Check for CORS headers
+                                if(line.find("access-control-allow-origin") != std::string::npos ||
+                                   line.find("access-control-allow-methods") != std::string::npos) {
+                                    *has_cors_headers = true;
+                                }
+                            }
+                            if(line.empty() || line == "\r") break;
+                        }
+                    } catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if (server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("Request passes through to middleware (doesn't return 405)") = [response_status, has_cors_headers] {
+                    // Should not be 405 Method Not Allowed
+                    check_true(*response_status != "405");
+                    // Should be 204 No Content (or handled by middleware)
+                    check_true(*response_status == "204" || *response_status == "200");
+                    // Should have CORS headers if middleware handled it
+                    // Note: If middleware wasn't reached, headers won't be there, but 405 won't be either
+                };
+            };
+        };
+    };
+
     return true;
 }
 

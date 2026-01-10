@@ -614,12 +614,54 @@ private:
 
                     // Handle OPTIONS preflight requests - if no route found, return 204 with empty body
                     // CORS middleware will add CORS headers if configured
+                    // Also allow OPTIONS for existing routes to pass through to middleware for CORS preflight
                     if(method == method_options && !route_found && res_type.empty())
                     {
                         res_status = status_no_content;
                         res_content = "";
                         res_type = m_content_type;
                         custom_headers = std::nullopt;
+                    }
+                    // Allow OPTIONS requests for existing routes to pass through to middleware for CORS preflight
+                    // Check if this is a CORS preflight request (has access-control-request-method header)
+                    else if(method == method_options && route_found && !method_allowed && res_type.empty() && hs.contains("access-control-request-method"))
+                    {
+                        // This is a CORS preflight request - allow it through by treating it as if it has a handler
+                        // We'll route it to the first available method handler, but the CORS middleware will intercept it
+                        for(const auto& [path, methods_map] : m_router)
+                        {
+                            if(std::regex_match(std::string{uri}, std::regex(path)))
+                            {
+                                // Use GET handler if available, otherwise POST
+                                auto it = methods_map.find(method_get);
+                                if(it == methods_map.end())
+                                    it = methods_map.find(method_post);
+                                
+                                if(it != methods_map.end())
+                                {
+                                    // Call the handler - the CORS middleware will intercept OPTIONS requests
+                                    // and return 204 with CORS headers before the actual handler runs
+                                    try
+                                    {
+                                        std::tie(res_status, res_content, res_type, custom_headers) = it->second.render(uri, body, hs);
+                                        break;
+                                    }
+                                    catch(...)
+                                    {
+                                        // Fall through to default handling
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        // If still empty (no handler found or handler failed), return 204
+                        if(res_type.empty())
+                        {
+                            res_status = status_no_content;
+                            res_content = "";
+                            res_type = m_content_type;
+                            custom_headers = std::nullopt;
+                        }
                     }
                     // If route found but method not allowed, return 405 Method Not Allowed
                     else if(route_found && !method_allowed && res_type.empty())
