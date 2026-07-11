@@ -90,6 +90,33 @@ catch(const exception& e)
 }
 ```
 
+# HTTP Escape Example
+
+When building HTML responses by hand, escape untrusted data at the point of output.
+`http::html_escaped` and `http::url_encoded` are stream adaptors — they write directly
+into an `ostringstream` without per-field `std::string` temporaries.
+
+```cpp
+import net;
+import std;
+
+using namespace std::string_literals;
+
+auto symbol = "NOKIA"s;
+auto reference = R"(ACC+"<x>)"s;
+
+auto contents = std::ostringstream{};
+contents << "<td>" << http::html_escaped{symbol} << "</td>";
+contents << "<a href=\"/cancel?ref=" << http::url_encoded{reference} << "\">Cancel</a>";
+
+// Decode URL-encoded values with net::url_decode (net:uri module).
+auto decoded = net::url_decode("ACC%2B%22%3Cx%3E");
+```
+
+Use `html_escaped` for text nodes and attribute values. Use `url_encoded` for query
+parameter values in `href` and `action` URLs. The HTTP server does not escape
+response bodies automatically.
+
 # Syslog Stream Example
 
 ## Basic Usage

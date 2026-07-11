@@ -194,7 +194,24 @@ auto register_readme_examples_tests()
         succeed("Custom Authentication Strategies example compiles successfully");
     };
 
-    // Test: Syslog Stream Basic Usage Example (README.md lines 97-119)
+    // Test: HTTP Escape Example (README.md lines 99-113)
+    test_case("README: HTTP Escape example compiles, [readme]") = [] {
+        using namespace tester::assertions;
+
+        auto symbol = "NOKIA"s;
+        auto reference = R"(ACC+"<x>)"s;
+
+        auto contents = std::ostringstream{};
+        contents << "<td>" << http::html_escaped{symbol} << "</td>";
+        contents << "<a href=\"/cancel?ref=" << http::url_encoded{reference} << "\">Cancel</a>";
+
+        auto decoded = net::url_decode("ACC%2B%22%3Cx%3E");
+        check_eq(decoded, reference);
+
+        succeed("HTTP Escape example compiles successfully");
+    };
+
+    // Test: Syslog Stream Basic Usage Example (README.md lines 124-146)
     test_case("README: Syslog Stream Basic Usage example compiles, [readme]") = [] {
         using namespace net;
         using namespace std;
@@ -225,7 +242,7 @@ auto register_readme_examples_tests()
         succeed("Syslog Stream Basic Usage example compiles successfully");
     };
 
-    // Test: Syslog Fluent Configuration API Example (README.md lines 125-131)
+    // Test: Syslog Fluent Configuration API Example (README.md lines 152-158)
     test_case("README: Syslog Fluent Configuration API example compiles, [readme]") = [] {
         using namespace net;
         using namespace tester::assertions;
@@ -239,7 +256,7 @@ auto register_readme_examples_tests()
         succeed("Syslog Fluent Configuration API example compiles successfully");
     };
 
-    // Test: Syslog Structured Logging with Fields Example (README.md lines 137-143)
+    // Test: Syslog Structured Logging with Fields Example (README.md lines 164-170)
     test_case("README: Syslog Structured Logging with Fields example compiles, [readme]") = [] {
         using namespace net;
         using namespace tester::assertions;
@@ -250,7 +267,7 @@ auto register_readme_examples_tests()
         succeed("Syslog Structured Logging with Fields example compiles successfully");
     };
 
-    // Test: Syslog Source Location Support Example (README.md lines 149-158)
+    // Test: Syslog Source Location Support Example (README.md lines 176-185)
     test_case("README: Syslog Source Location Support example compiles, [readme]") = [] {
         using namespace net;
         using namespace tester::assertions;
@@ -267,7 +284,7 @@ auto register_readme_examples_tests()
         succeed("Syslog Source Location Support example compiles successfully");
     };
 
-    // Test: Syslog Check Log Level Before Logging Example (README.md lines 162-168)
+    // Test: Syslog Check Log Level Before Logging Example (README.md lines 189-195)
     test_case("README: Syslog Check Log Level Before Logging example compiles, [readme]") = [] {
         using namespace net;
         using namespace tester::assertions;
