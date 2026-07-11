@@ -1,24 +1,36 @@
-// For format details, see https://aka.ms/devcontainer.json. For config options, see the
-// README at: https://github.com/devcontainers/templates/tree/main/src/cpp
 {
-	"name": "clang++-18",
-
+	"name": "net (clang++-21)",
 	"build": {
 		"dockerfile": "Dockerfile"
 	},
-
-	// Features to add to the dev container. More info: https://containers.dev/features.
-	// "features": {},
-
-	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	"forwardPorts": [514,2112,50001,54321],
-
-	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "/usr/lib/llvm-18/bin/clang++ -v",
-
-	// Configure tool-specific properties.
-	// "customizations": {},
-
-	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
-	// "remoteUser": "root"
+	"containerEnv": {
+		"CC": "clang-21",
+		"CXX": "clang++-21",
+		"LDFLAGS": "-Wl,--push-state,--no-as-needed -lc++ -lc++abi -lc++experimental -Wl,--pop-state -pthread -ldl"
+	},
+	"forwardPorts": [514, 2112, 50001, 54321],
+	"postCreateCommand": "bash .devcontainer/post-create.sh",
+	"customizations": {
+		"vscode": {
+			"settings": {
+				"terminal.integrated.defaultProfile.linux": "bash",
+				"C_Cpp.default.compilerPath": "/usr/bin/clang++-21",
+				"C_Cpp.default.cppStandard": "c++23",
+				"C_Cpp.default.intelliSenseMode": "linux-clang-x64"
+			},
+			"extensions": [
+				"ms-vscode.cpptools"
+			]
+		},
+		"codespaces": {
+			"repositories": {
+				"ruoka/std": {
+					"permissions": "write-all"
+				},
+				"ruoka/tester": {
+					"permissions": "write-all"
+				}
+			}
+		}
+	}
 }
