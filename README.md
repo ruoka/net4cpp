@@ -1,6 +1,12 @@
 # net4cpp
 Network library based on **C++23 modules**.
 
+## Requirements
+
+- **Clang 21+** on Linux (`clang++-21`; CB and CI default to LLVM 21)
+- **macOS**: locally built LLVM at `/usr/local/llvm` (see `deps/tester` README)
+- Open in a dev container (`.devcontainer/`) for a reproducible Linux toolchain
+
 This subproject is designed to work both:
 - **Standalone** (as its own repo, with `deps/tester` available), and
 - **As a dependency inside YarDB** (reusing YarDB’s `deps/tester`).
