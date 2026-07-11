@@ -1,3 +1,4 @@
 [submodule "deps/tester"]
 	path = deps/tester
 	url = https://github.com/ruoka/tester.git
+	branch = grok
