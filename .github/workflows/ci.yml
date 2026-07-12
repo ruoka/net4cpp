@@ -52,7 +52,9 @@ jobs:
       - name: Run tests with JSONL output (${{ matrix.config }})
         run: |
           set -euo pipefail
-          ./tools/CB.sh ${{ matrix.config }} test -- --output=jsonl > test_results_${{ matrix.config }}.jsonl
+          # Scope to net tests only — full suite includes nested deps/tester
+          # [jsonl-probe] intentional-failure probes.
+          ./tools/CB.sh ${{ matrix.config }} test --jsonl --tags='\[net\]' > test_results_${{ matrix.config }}.jsonl
 
       - name: Validate JSONL output
         run: |
@@ -65,6 +67,8 @@ jobs:
           if command -v jq >/dev/null 2>&1; then
             last_line="$(tail -1 "test_results_${{ matrix.config }}.jsonl")"
             echo "$last_line" | jq -e '.type == "eof"' >/dev/null
+            summary_line="$(grep '"type":"summary"' "test_results_${{ matrix.config }}.jsonl" | tail -1)"
+            echo "$summary_line" | jq -e '.passed == true' >/dev/null
           fi
 
       - name: Upload test results
