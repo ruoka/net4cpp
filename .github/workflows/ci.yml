@@ -53,8 +53,8 @@ jobs:
         run: |
           set -euo pipefail
           # Scope to net tests only — full suite includes nested deps/tester
-          # [jsonl-probe] intentional-failure probes.
-          ./tools/CB.sh ${{ matrix.config }} test --jsonl --tags='\[net\]' > test_results_${{ matrix.config }}.jsonl
+          # [.jsonl-probe] intentional-failure probes (hidden unless selected).
+          ./tools/CB.sh ${{ matrix.config }} test --jsonl --tags='\[net\]' > "test_results_${{ matrix.config }}.jsonl"
 
       - name: Validate JSONL output
         run: |
