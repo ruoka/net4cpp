@@ -1,0 +1,809 @@
+export module net:http_server;
+import :acceptor;
+import :posix;
+import :structured_log_stream;
+import :http_headers;
+import :endpointstream;
+import :utils;
+import :uuid;
+import std;
+
+export namespace http {
+
+using namespace std::string_literals;
+using namespace std::string_view_literals;
+
+// HTTP method constants
+constexpr auto method_get = "GET"sv;
+constexpr auto method_head = "HEAD"sv;
+constexpr auto method_post = "POST"sv;
+constexpr auto method_put = "PUT"sv;
+constexpr auto method_patch = "PATCH"sv;
+constexpr auto method_delete = "DELETE"sv;
+constexpr auto method_options = "OPTIONS"sv;
+
+// HTTP status constants
+const auto status_ok = "200 OK"s;
+const auto status_created = "201 Created"s;
+const auto status_no_content = "204 No Content"s;
+const auto status_not_modified = "304 Not Modified"s;
+const auto status_bad_request = "400 Bad Request"s;
+const auto status_unauthorized = "401 Unauthorized"s;
+const auto status_forbidden = "403 Forbidden"s;
+const auto status_not_found = "404 Not Found"s;
+const auto status_method_not_allowed = "405 Method Not Allowed"s;
+const auto status_not_acceptable = "406 Not Acceptable"s;
+const auto status_conflict = "409 Conflict"s;
+const auto status_precondition_failed = "412 Precondition Failed"s;
+const auto status_payload_too_large = "413 Payload Too Large"s;
+const auto status_unprocessable_entity = "422 Unprocessable Entity"s;
+const auto status_too_many_requests = "429 Too Many Requests"s;
+const auto status_internal_server_error = "500 Internal Server Error"s;
+
+using status = std::string;
+using content = std::string;
+using content_type = std::string;
+using response_with_headers = std::tuple<status, content, std::optional<headers>>;
+// Legacy alias for backwards compatibility - now just an alias to response_with_headers
+using response = response_with_headers;
+using response_with_content_type = std::tuple<status, content, content_type, std::optional<headers>>;
+using request_view = std::string_view;
+using body_view = std::string_view;
+
+// Unified callback type - all handlers return response_with_headers (with optional headers)
+// Note: headers is non-const to allow middlewares to modify headers in-place without copying
+using callback = std::function<response_with_headers(request_view, body_view, headers&)>;
+// Legacy alias for backwards compatibility
+using callback_with_headers = callback;
+
+// Helper function for standardized error responses
+// Returns a consistent error response format across all middlewares
+inline response_with_headers make_error_response(
+    const status& status_code,
+    std::string_view error_message,
+    std::optional<headers> custom_headers = std::nullopt)
+{
+    return {status_code, std::string{error_message}, custom_headers};
+}
+
+// Helper function for responses with optional headers
+// Uses default argument following C++ Core Guidelines (prefer default arguments over overloads)
+inline response_with_headers make_response(
+    const status& status_code,
+    std::string content,
+    std::optional<headers> custom_headers = std::nullopt)
+{
+    return {status_code, std::move(content), custom_headers};
+}
+
+class controller
+{
+public:
+
+    using callback = std::function<::http::response_with_headers(request_view, body_view, headers&)>;
+
+    void text(const content& c)
+    {
+        m_content_type = "text/plain";
+        m_callback = [c](auto&&...) -> ::http::response_with_headers { return make_response(status_ok, c); };
+    }
+
+    void html(const content& c)
+    {
+        m_content_type = "text/html";
+        m_callback = [c](auto&&...) -> ::http::response_with_headers { return make_response(status_ok, c); };
+    }
+
+    void css(const content& c)
+    {
+        m_content_type = "text/css";
+        m_callback = [c](auto&&...) -> ::http::response_with_headers { return make_response(status_ok, c); };
+    }
+
+    void script(const content& c)
+    {
+        m_content_type = "application/javascript";
+        m_callback = [c](auto&&...) -> ::http::response_with_headers { return make_response(status_ok, c); };
+    }
+
+    void json(const content& c)
+    {
+        m_content_type = "application/json";
+        m_callback = [c](auto&&...) -> ::http::response_with_headers { return make_response(status_ok, c); };
+    }
+
+    void xml(const content& c)
+    {
+        m_content_type = "application/xml";
+        m_callback = [c](auto&&...) -> ::http::response_with_headers { return make_response(status_ok, c); };
+    }
+
+    void response_handler(std::string_view ct, callback cb)
+    {
+        m_content_type = std::string{ct};
+        m_callback = std::move(cb);
+    }
+
+    // Backwards compatible fluent API (used by YarDB)
+    controller& response(std::string_view ct, callback cb)
+    {
+        response_handler(ct, std::move(cb));
+        return *this;
+    }
+
+    // Legacy alias for backwards compatibility
+    using callback_with_headers = callback;
+
+    void response_with_headers_handler(std::string_view ct, callback_with_headers cb)
+    {
+        response_handler(ct, std::move(cb));
+    }
+
+    // Backwards compatible fluent API (used by YarDB)
+    controller& response_with_headers(std::string_view ct, callback_with_headers cb)
+    {
+        response_with_headers_handler(ct, std::move(cb));
+        return *this;
+    }
+
+    response_with_content_type render(request_view request, body_view body, headers& h)
+    {
+        auto [s, c, custom_h] = m_callback(request, body, h);
+        return {std::move(s), std::move(c), m_content_type, std::move(custom_h)};
+    }
+
+private:
+
+    content_type m_content_type = "*/*";
+    callback m_callback = [](request_view, body_view, headers&) -> ::http::response_with_headers { return make_response(status_ok, "Not Found"s); };
+};
+
+class server
+{
+public:
+
+    controller& get(std::string_view path)
+    {
+        m_methods.insert(method_get);
+        return m_router[std::string{path}][method_get];
+    }
+
+    controller& head(std::string_view path)
+    {
+        m_methods.insert(method_head);
+        return m_router[std::string{path}][method_head];
+    }
+
+    controller& post(std::string_view path)
+    {
+        m_methods.insert(method_post);
+        return m_router[std::string{path}][method_post];
+    }
+
+    controller& put(std::string_view path)
+    {
+        m_methods.insert(method_put);
+        return m_router[std::string{path}][method_put];
+    }
+
+    controller& patch(std::string_view path)
+    {
+        m_methods.insert(method_patch);
+        return m_router[std::string{path}][method_patch];
+    }
+
+    controller& destroy(std::string_view path)
+    {
+        m_methods.insert(method_delete);
+        return m_router[std::string{path}][method_delete];
+    }
+
+    void listen(std::string_view service_or_port = "http")
+    {
+        using namespace std::string_view_literals;
+        m_stop.store(false);
+        net::slog << net::notice("HTTP_SERVER_START") << "starting up at " << service_or_port
+                  << std::pair{"port"sv, service_or_port}
+                  << net::flush;
+        try
+        {
+            auto endpoint = net::acceptor{"0.0.0.0", service_or_port};
+            auto check_timeout = m_timeout.count() ? m_timeout : std::chrono::seconds{1};
+            endpoint.timeout(std::chrono::milliseconds{check_timeout.count() * 1000});
+            net::slog << net::notice("HTTP_SERVER_READY") << "started up at " << endpoint.host() << ":" << endpoint.service_or_port()
+                      << std::pair{"addr", endpoint.host()}
+                      << std::pair{"port", endpoint.service_or_port()}
+                      << net::flush;
+            
+            while(!m_stop.load())
+            {
+                try
+                {
+                    using namespace std::string_view_literals;
+                    net::slog << net::debug("HTTP_ACCEPT_WAIT") 
+                              << std::pair{"protocol"sv, "http"sv}
+                              << "waiting for HTTP connections" << net::flush;
+                    auto client = endpoint.accept();
+                    std::thread{[client_data = std::move(client), this]() mutable { handle(client_data); }}.detach();
+                }
+                catch(const std::system_error& e)
+                {
+                    if(std::string_view{e.what()}.contains("timeout"))
+                    {
+                        continue;
+                    }
+                    net::slog << net::error("HTTP_ACCEPT_ERROR") << "failed to accept connection: " << e.what() << " (code: " << e.code() << ")"
+                              << std::pair{"errno", e.code().value()}
+                              << net::flush;
+                    throw;
+                }
+                catch(const std::exception& e)
+                {
+                    net::slog << net::error("HTTP_ACCEPT_EXCEPTION") << "exception while accepting connection: " << e.what() << net::flush;
+                    throw;
+                }
+            }
+            net::slog << net::notice("HTTP_SERVER_STOP") << "server stopped" << net::flush;
+        }
+        catch(const std::system_error& e)
+        {
+            net::slog << net::error("HTTP_LISTEN_ERROR") << "failed to create acceptor on " << service_or_port << ": " << e.what() << " (code: " << e.code() << ")"
+                      << std::pair{"port"sv, service_or_port}
+                      << std::pair{"errno", e.code().value()}
+                      << net::flush;
+            throw;
+        }
+        catch(const std::exception& e)
+        {
+            net::slog << net::error("HTTP_LISTEN_EXCEPTION") << "exception during server startup on " << service_or_port << ": " << e.what()
+                      << std::pair{"port"sv, service_or_port}
+                      << net::flush;
+            throw;
+        }
+    }
+
+
+    const auto& timeout() const
+    {
+        return m_timeout;
+    }
+
+    void timeout(const std::chrono::seconds& t)
+    {
+        m_timeout = t;
+    }
+
+    void stop()
+    {
+        m_stop.store(true);
+    }
+
+    bool stopped() const
+    {
+        return m_stop.load();
+    }
+
+private:
+
+    auto date() const
+    {
+        // Prefer C++23 chrono formatting where it is stable.
+        // clang-22 (macOS) is known to crash compiling chrono formatting via std::format/std::vformat in our modules setup.
+        // Keep local dev stable while still enabling CI coverage on Linux.
+#if defined(__APPLE__) && defined(__clang__) && (__clang_major__ >= 22)
+        return utils::rfc1123_legacy(std::chrono::system_clock::now());
+#else
+        using namespace std::chrono;
+        const auto tp = floor<seconds>(std::chrono::system_clock::now());
+        return std::vformat("{:%a, %d %b %Y %H:%M:%S GMT}", std::make_format_args(tp));
+#endif
+    }
+
+    const auto& host() const
+    {
+        static auto s_host = []() {
+            char buffer[net::posix::ni_maxhost];
+            if (net::posix::gethostname(buffer, net::posix::ni_maxhost) == 0) {
+                return std::string{buffer};
+            }
+            return std::string{"localhost"};
+        }();
+        return s_host;
+    }
+
+    auto methods() const
+    {
+        auto tmp = ""s;
+        for(const auto&  m : m_methods)
+        {
+            if(!tmp.empty()) tmp += ", ";
+            tmp += m;
+        }
+        return tmp;
+    }
+
+    void handle(auto& client)
+    {
+        using namespace std::string_view_literals;
+        using namespace std::chrono;
+        auto& [stream, endpoint, port] = client;
+        const auto conn_start = system_clock::now();
+        net::slog << net::notice("HTTP_CONN_ACCEPT") << "accepted connection from " << endpoint << ":" << port
+                  << std::pair{"ip"sv, endpoint}
+                  << std::pair{"port", port}
+                  << net::flush;
+
+        try
+        {
+            while(stream)
+            {
+                std::string method, uri, version;
+                stream >> method >> uri >> version >> net::crlf;
+
+                if(!stream.good())
+                {
+                    if(stream.eof())
+                    {
+                        const auto conn_duration = duration_cast<milliseconds>(system_clock::now() - conn_start).count();
+                        net::slog << net::info("HTTP_CONN_CLOSED") << "connection closed by client " << endpoint << ":" << port
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"connection_duration_ms", conn_duration}
+                                  << net::flush;
+                    }
+                    else
+                    {
+                        const auto conn_duration = duration_cast<milliseconds>(system_clock::now() - conn_start).count();
+                        net::slog << net::warning("HTTP_STREAM_ERROR") << "stream error reading request from " << endpoint << ":" << port << " (eof: " << stream.eof() << ", fail: " << stream.fail() << ", bad: " << stream.bad() << ")"
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"eof", stream.eof()}
+                                  << std::pair{"fail", stream.fail()}
+                                  << std::pair{"bad", stream.bad()}
+                                  << std::pair{"connection_duration_ms", conn_duration}
+                                  << net::flush;
+                    }
+                    break;
+                }
+
+                // Generate request ID for logging (internal tracking)
+                static std::atomic<std::uint64_t> request_counter{0};
+                const auto request_id = std::to_string(++request_counter);
+                const auto request_start = system_clock::now();
+
+                net::slog << net::notice("HTTP_REQUEST") << "request \"" << method << ' ' << uri << ' ' << version << "\""
+                          << std::pair{"ip"sv, endpoint}
+                          << std::pair{"port", port}
+                          << std::pair{"method", method}
+                          << std::pair{"uri", std::string{uri}}
+                          << std::pair{"version", version}
+                          << std::pair{"request_id", request_id}
+                          << net::flush;
+
+                headers hs{};
+                try
+                {
+                    stream >> hs >> net::crlf;
+                }
+                catch(const std::exception& e)
+                {
+                    const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                    net::slog << net::error("HTTP_PARSE_HEADERS_ERROR") << "failed to parse headers from " << endpoint << ":" << port << ": " << e.what()
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << std::pair{"status", status_bad_request}
+                              << std::pair{"request_id", request_id}
+                              << std::pair{"duration_ms", request_duration}
+                              << net::flush;
+                    stream << "HTTP/1.0 " << status_bad_request << net::crlf
+                           << "Date: " << date() << net::crlf
+                           << "Server: " << host() << net::crlf
+                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Content-Length: 0" << net::crlf
+                           << net::crlf << net::flush;
+                    break;
+                }
+
+                // Extract additional headers for logging
+                auto user_agent = ""s;
+                if(hs.contains("user-agent"))
+                    user_agent = hs["user-agent"];
+
+                auto content_type = ""s;
+                if(hs.contains("content-type"))
+                    content_type = hs["content-type"];
+
+                auto accept = ""s;
+                if(hs.contains("accept"))
+                    accept = hs["accept"];
+
+                // Log additional headers if present
+                if(!user_agent.empty() || !content_type.empty() || !accept.empty())
+                {
+                    net::slog << net::debug("HTTP_REQUEST_HEADERS") << "request headers"
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << std::pair{"request_id", request_id}
+                              << std::pair{"user_agent", user_agent}
+                              << std::pair{"content_type", content_type}
+                              << std::pair{"accept", accept}
+                              << net::flush;
+                }
+
+                long long content_length = 0;
+                if(hs.contains("content-length"))
+                {
+                    try
+                    {
+                        content_length = utils::stoll(hs["content-length"]);
+                        if(content_length < 0)
+                        {
+                            net::slog << net::warning("HTTP_INVALID_CONTENT_LENGTH") << "negative content-length from " << endpoint << ":" << port
+                                      << std::pair{"ip"sv, endpoint}
+                                      << std::pair{"port", port}
+                                      << std::pair{"content_length", content_length}
+                                      << net::flush;
+                            content_length = 0;
+                        }
+                    }
+                    catch(const std::invalid_argument&)
+                    {
+                        net::slog << net::warning("HTTP_INVALID_CONTENT_LENGTH") << "invalid content-length format \"" << hs["content-length"] << "\" from " << endpoint << ":" << port
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"content_length_str", hs["content-length"]}
+                                  << net::flush;
+                        content_length = 0;
+                    }
+                    catch(const std::out_of_range&)
+                    {
+                        net::slog << net::warning("HTTP_INVALID_CONTENT_LENGTH") << "content-length out of range \"" << hs["content-length"] << "\" from " << endpoint << ":" << port
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"content_length_str", hs["content-length"]}
+                                  << net::flush;
+                        content_length = 0;
+                    }
+                    catch(const std::exception& e)
+                    {
+                        net::slog << net::warning("HTTP_INVALID_CONTENT_LENGTH") << "error parsing content-length \"" << hs["content-length"] << "\" from " << endpoint << ":" << port << ": " << e.what()
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"content_length_str", hs["content-length"]}
+                                  << net::flush;
+                        content_length = 0;
+                    }
+                }
+
+                std::string body(static_cast<std::size_t>(content_length), ' ');
+                try
+                {
+                    for(auto& c : body)
+                    {
+                        auto ch = stream.get();
+                        if(stream.eof() || stream.fail())
+                        {
+                            net::slog << net::warning("HTTP_INCOMPLETE_BODY") << "incomplete body read from " << endpoint << ":" << port << " (expected " << content_length << " bytes)"
+                                      << std::pair{"ip"sv, endpoint}
+                                      << std::pair{"port", port}
+                                      << std::pair{"expected_bytes", static_cast<long long>(content_length)}
+                                      << net::flush;
+                            break;
+                        }
+                        c = static_cast<char>(ch);
+                    }
+                }
+                catch(const std::exception& e)
+                {
+                    net::slog << net::error("HTTP_BODY_READ_ERROR") << "error reading body from " << endpoint << ":" << port << ": " << e.what()
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << net::flush;
+                }
+
+                net::slog << net::debug("HTTP_REQUEST_BODY") << "request body \"" << body << "\""
+                          << std::pair{"ip"sv, endpoint}
+                          << std::pair{"port", port}
+                          << std::pair{"body_size", static_cast<long long>(body.size())}
+                          << net::flush;
+
+                if(version != "HTTP/1.1")
+                {
+                    const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                    net::slog << net::warning("HTTP_UNSUPPORTED_VERSION") << "unsupported HTTP version \"" << version << "\" from " << endpoint << ":" << port
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << std::pair{"method", method}
+                              << std::pair{"uri", std::string{uri}}
+                              << std::pair{"version", version}
+                              << std::pair{"status", 505}
+                              << std::pair{"request_id", request_id}
+                              << std::pair{"duration_ms", request_duration}
+                              << net::flush;
+                    stream << "HTTP/1.1 505 HTTP Version Not Supported" << net::crlf
+                           << "Date: "         << date()                << net::crlf
+                           << "Server: "       << host()                << net::crlf
+                           << "Content-Type: " << m_content_type        << net::crlf
+                           << "Content-Length: 0"                       << net::crlf
+                           << net::crlf << net::flush;
+                }
+                else if(!m_methods.contains(method))
+                {
+                    const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                    net::slog << net::warning("HTTP_UNSUPPORTED_METHOD") << "unsupported HTTP method \"" << method << "\" for \"" << uri << "\" from " << endpoint << ":" << port
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << std::pair{"method", method}
+                              << std::pair{"uri", std::string{uri}}
+                              << std::pair{"status", status_bad_request}
+                              << std::pair{"request_id", request_id}
+                              << std::pair{"duration_ms", request_duration}
+                              << net::flush;
+                    stream << "HTTP/1.1 " << status_bad_request << net::crlf
+                           << "Date: "         << date()                    << net::crlf
+                           << "Server: "       << host()                    << net::crlf
+                           << "Content-Type: " << m_content_type            << net::crlf
+                           << "Content-Length: 0"                           << net::crlf
+                           << net::crlf << net::flush;
+                }
+                else if(uri == "/favicon.ico")
+                {
+                    const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                    net::slog << net::debug("HTTP_FAVICON_REQUEST") << "favicon request from " << endpoint << ":" << port
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << std::pair{"method", method}
+                              << std::pair{"uri", std::string{uri}}
+                              << std::pair{"status", status_not_found}
+                              << std::pair{"request_id", request_id}
+                              << std::pair{"duration_ms", request_duration}
+                              << net::flush;
+                    stream << "HTTP/1.1 " << status_not_found << net::crlf
+                           << "Date: "         << date()         << net::crlf
+                           << "Server: "       << host()         << net::crlf
+                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Content-Length: 0"                << net::crlf
+                           << net::crlf << net::flush;
+                }
+                else
+                {
+                    std::string res_status, res_type, res_content;
+                    std::optional<headers> custom_headers;
+                    bool route_found = false;
+                    bool method_allowed = false;
+
+                    for(const auto& [path, methods_map] : m_router)
+                        if(std::regex_match(std::string{uri}, std::regex(path)))
+                        {
+                            route_found = true;
+                            auto it = methods_map.find(method);
+                            // If HEAD method not found, try GET as fallback for HEAD requests
+                            if(it == methods_map.end() && method == method_head)
+                                it = methods_map.find(method_get);
+
+                            if(it != methods_map.end())
+                            {
+                                method_allowed = true;
+                                try
+                                {
+                                    std::tie(res_status, res_content, res_type, custom_headers) = it->second.render(uri, body, hs);
+                                    if(!res_type.empty())
+                                        break;
+                                }
+                                catch(const std::exception& e)
+                                {
+                                    const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                                    net::slog << net::error("HTTP_HANDLER_EXCEPTION") << "exception in handler for \"" << method << " " << uri << "\" (route: " << path << "): " << e.what()
+                                              << std::pair{"ip"sv, endpoint}
+                                              << std::pair{"port", port}
+                                              << std::pair{"method", method}
+                                              << std::pair{"uri", std::string{uri}}
+                                              << std::pair{"route", path}
+                                              << std::pair{"status", status_internal_server_error}
+                                              << std::pair{"request_id", request_id}
+                                              << std::pair{"duration_ms", request_duration}
+                                              << net::flush;
+                                    res_status = status_internal_server_error;
+                                    res_content = "";
+                                    res_type = m_content_type;
+                                    custom_headers = std::nullopt;
+                                    break;
+                                }
+                            }
+                        }
+
+                    // Handle OPTIONS preflight requests - if no route found, return 204 with empty body
+                    // CORS middleware will add CORS headers if configured
+                    if(method == method_options && !route_found && res_type.empty())
+                    {
+                        res_status = status_no_content;
+                        res_content = "";
+                        res_type = m_content_type;
+                        custom_headers = std::nullopt;
+                    }
+                    // If route found but method not allowed, return 405 Method Not Allowed
+                    else if(route_found && !method_allowed && res_type.empty())
+                    {
+                        const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                        net::slog << net::warning("HTTP_METHOD_NOT_ALLOWED") << "method not allowed for \"" << method << " " << uri << "\" from " << endpoint << ":" << port
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"method", method}
+                                  << std::pair{"uri", std::string{uri}}
+                                  << std::pair{"status", status_method_not_allowed}
+                                  << std::pair{"request_id", request_id}
+                                  << std::pair{"duration_ms", request_duration}
+                                  << net::flush;
+                        res_status = status_method_not_allowed;
+                        res_content = "";
+                        res_type = m_content_type;
+                        custom_headers = std::nullopt;
+                    }
+
+                    if(!res_type.empty())
+                    {
+                        // Extract status code from status string (e.g., "200 OK" -> 200)
+                        auto status_code = 200ll;
+                        try {
+                            if(auto space_pos = res_status.find(' '); space_pos != std::string::npos) {
+                                status_code = utils::stoll(res_status.substr(0, space_pos));
+                            }
+                        } catch(...) {}
+                        
+                        // Calculate request duration
+                        const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                        
+                        net::slog << net::info("HTTP_RESPONSE") << "response " << res_status
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"method", method}
+                                  << std::pair{"uri", std::string{uri}}
+                                  << std::pair{"status", status_code}
+                                  << std::pair{"content_length", static_cast<long long>(res_content.length())}
+                                  << std::pair{"request_id", request_id}
+                                  << std::pair{"duration_ms", request_duration}
+                                  << net::flush;
+                        
+                        stream << "HTTP/1.1 " << res_status                                   << net::crlf
+                               << "Date: " << date()                                          << net::crlf
+                               << "Server: " << host()                                        << net::crlf
+                               << "Content-Type: " << res_type                                << net::crlf
+                               << "Content-Length: " << res_content.length()                  << net::crlf;
+                        
+                        if(custom_headers.has_value())
+                            stream << custom_headers.value();
+                        
+                        stream << "Cache-Control: private"                                    << net::crlf
+                               << net::crlf
+                               << (method != "HEAD" ? res_content : "") << net::flush;
+                    }
+                    else
+                    {
+                            // Calculate request duration for 404
+                        const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                        
+                        net::slog << net::warning("HTTP_ROUTE_NOT_FOUND") << "no route found for \"" << method << " " << uri << "\" from " << endpoint << ":" << port
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"method", method}
+                                  << std::pair{"uri", std::string{uri}}
+                                  << std::pair{"status", status_not_found}
+                                  << std::pair{"request_id", request_id}
+                                  << std::pair{"duration_ms", request_duration}
+                                  << net::flush;
+                        stream << "HTTP/1.0 " << status_not_found << net::crlf
+                               << "Date: " << date()                                          << net::crlf
+                               << "Server: " << host()                                        << net::crlf
+                               << "Content-Type: " << m_content_type                          << net::crlf
+                               << "Content-Length: 0"                                         << net::crlf
+                               << "Cache-Control: private"                                    << net::crlf
+                               << net::crlf << net::flush;
+                    }
+                }
+            }
+            const auto conn_duration = duration_cast<milliseconds>(system_clock::now() - conn_start).count();
+            net::slog << net::info("HTTP_CONN_CLOSED") << "connection closed"
+                              << std::pair{"ip"sv, endpoint}
+                      << std::pair{"port", port}
+                      << std::pair{"connection_duration_ms", conn_duration}
+                      << net::flush;
+        }
+        catch(const std::system_error& e)
+        {
+            net::slog << net::error("HTTP_SYSTEM_ERROR") << "system error handling connection from " << endpoint << ":" << port << ": " << e.what() << " (code: " << e.code() << ")"
+                              << std::pair{"ip"sv, endpoint}
+                      << std::pair{"port", port}
+                      << std::pair{"errno", e.code().value()}
+                      << std::pair{"status", status_internal_server_error}
+                      << net::flush;
+            try
+            {
+                stream << "HTTP/1.0 " << status_internal_server_error << net::crlf
+                       << "Date: " << date()                   << net::crlf
+                       << "Server: " << host()                 << net::crlf
+                       << "Content-Type: " << m_content_type   << net::crlf
+                       << "Content-Length: 0"                  << net::crlf
+                       << net::crlf << net::flush;
+            }
+            catch(const std::exception& write_error)
+            {
+                net::slog << net::error("HTTP_WRITE_ERROR") << "failed to write error response to " << endpoint << ":" << port << ": " << write_error.what()
+                          << std::pair{"ip"sv, endpoint}
+                          << std::pair{"port", port}
+                          << net::flush;
+            }
+        }
+        catch(const std::exception& e)
+        {
+            net::slog << net::error("HTTP_CONN_EXCEPTION") << "exception handling connection from " << endpoint << ":" << port << ": " << e.what()
+                              << std::pair{"ip"sv, endpoint}
+                      << std::pair{"port", port}
+                      << std::pair{"status", status_internal_server_error}
+                      << net::flush;
+            try
+            {
+                stream << "HTTP/1.0 " << status_internal_server_error << net::crlf
+                       << "Date: " << date()                   << net::crlf
+                       << "Server: " << host()                 << net::crlf
+                       << "Content-Type: " << m_content_type   << net::crlf
+                       << "Content-Length: 0"                  << net::crlf
+                       << net::crlf << net::flush;
+            }
+            catch(const std::exception& write_error)
+            {
+                net::slog << net::error("HTTP_WRITE_ERROR") << "failed to write error response to " << endpoint << ":" << port << ": " << write_error.what()
+                          << std::pair{"ip"sv, endpoint}
+                          << std::pair{"port", port}
+                          << net::flush;
+            }
+        }
+        catch(...)
+        {
+            net::slog << net::error("HTTP_UNKNOWN_EXCEPTION") << "unknown exception (non-standard exception type) handling connection from " << endpoint << ":" << port
+                              << std::pair{"ip"sv, endpoint}
+                      << std::pair{"port", port}
+                      << std::pair{"status", status_internal_server_error}
+                      << net::flush;
+            try
+            {
+                stream << "HTTP/1.0 " << status_internal_server_error << net::crlf
+                       << "Date: " << date()                   << net::crlf
+                       << "Server: " << host()                 << net::crlf
+                       << "Content-Type: " << m_content_type   << net::crlf
+                       << "Content-Length: 0"                  << net::crlf
+                       << net::crlf << net::flush;
+            }
+            catch(const std::exception& write_error)
+            {
+                net::slog << net::error("HTTP_WRITE_ERROR") << "failed to write error response to " << endpoint << ":" << port << ": " << write_error.what()
+                          << std::pair{"ip"sv, endpoint}
+                          << std::pair{"port", port}
+                          << net::flush;
+            }
+            catch(...)
+            {
+                net::slog << net::error("WRITE_ERROR") << "failed to write error response to " << endpoint << ":" << port << " (unknown exception in write)"
+                          << std::pair{"ip"sv, endpoint}
+                          << std::pair{"port", port}
+                          << net::flush;
+            }
+        }
+    }
+
+    // Router: path -> (method -> controller)
+    // Uses flat_map for better cache locality during iteration and method lookups
+    // Implementation details: type aliases for router internals
+    using path_type = std::string;           // Route path pattern (e.g., "/api/users/:id")
+    using method_type = std::string_view;    // HTTP method (e.g., "GET", "POST")
+    
+    using method_map_type = std::flat_map<method_type, controller>;
+    using router_type = std::flat_map<path_type, method_map_type>;
+    router_type m_router = {};
+    std::string m_content_type = "*/*";
+    std::flat_set<method_type> m_methods = {method_head, method_options};
+    std::chrono::seconds m_timeout = std::chrono::seconds{0};
+    std::atomic<bool> m_stop{false};
+};
+
+} // namespace http
+

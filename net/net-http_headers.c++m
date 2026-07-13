@@ -1,0 +1,85 @@
+export module net:http_headers;
+import :utils;
+import :endpointstream;
+import std;
+
+export namespace http
+{
+
+class headers
+{
+public:
+
+    using name = std::string;
+    using value = std::string;
+
+    bool contains(const name& n) const { return m_values.contains(n); }
+
+    const value& operator[](const name& n) const { return m_values.at(n); }
+    
+    value& operator[](const name& n) { return m_values[n]; }
+    
+    void set(const name& n, const value& v)
+    {
+        auto lower_name = n;
+        utils::ascii_to_lower(lower_name);
+        m_values[lower_name] = v;
+    }
+
+    // Iterator support for range-based for loops
+    auto begin() { return m_values.begin(); }
+    auto end() { return m_values.end(); }
+    auto begin() const { return m_values.begin(); }
+    auto end() const { return m_values.end(); }
+
+    friend std::istream& operator >> (std::istream&, headers&);
+    friend std::ostream& operator << (std::ostream&, const headers&);
+
+private:
+
+    std::flat_map<name,value> m_values;
+};
+
+inline std::istream& operator >> (std::istream &is,  headers &hdrs)
+{
+    while(is.good() and is.peek() != '\r' and is.peek() != '\n')
+    {
+        std::string line;
+        if (!std::getline(is, line) || line == "\r" || line.empty()) break;
+        
+        auto sv = std::string_view{line};
+        auto pos = sv.find(':');
+        if (pos != std::string_view::npos) {
+            const auto name_sv = utils::trim_view(sv.substr(0, pos));
+            const auto value_sv = utils::trim_view(sv.substr(pos + 1));
+
+            auto name = std::string{name_sv};
+            utils::ascii_to_lower(name);
+            hdrs.m_values[std::move(name)] = std::string{value_sv};
+        }
+    }
+    return is;
+}
+
+inline std::ostream& operator << (std::ostream &os, const headers &hdrs)
+{
+    for(const auto &[name,value] : hdrs.m_values)
+        os << name << ": " << value << net::crlf;
+    return os;
+}
+
+// Helper function to check if Accept header accepts JSON
+inline bool accepts_json(const headers& hdr)
+{
+    using namespace std::string_literals;
+    using namespace std::string_view_literals;
+    if(!hdr.contains("accept"s))
+        return true; // No Accept header means accept anything
+    const auto accept_value = hdr["accept"s];
+    return accept_value.contains("*/*"sv) || 
+           accept_value.contains("application/json"sv) ||
+           accept_value.contains("application/*"sv);
+}
+
+} // namespace http
+

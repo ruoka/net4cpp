@@ -1,0 +1,148 @@
+export module net:endpointbuf;
+
+import :posix;
+import :socket;
+import std;
+
+export namespace net {
+
+class endpointbuf_base : public std::streambuf {
+public:
+    explicit endpointbuf_base(socket&& s) noexcept : m_socket{std::move(s)} {}
+    ~endpointbuf_base() override = default;
+
+    bool wait_for(const std::chrono::milliseconds& timeout) const noexcept {
+        return m_socket.wait_for(timeout);
+    }
+
+protected:
+    socket m_socket;
+};
+
+constexpr std::size_t tcp_buffer_size = 4096;
+
+constexpr std::size_t udp_buffer_size = 65507;  // Realistic max UDP payload
+
+template<std::size_t N>
+class endpointbuf : public endpointbuf_base {
+public:
+    explicit endpointbuf(socket&& s)
+        : endpointbuf_base{std::move(s)}
+    {
+        setg(m_input.data(), m_input.data() + N, m_input.data() + N);
+        setp(m_output.data(), m_output.data() + N - 1);  // Leave room for overflow()
+    }
+
+protected:
+    std::streamsize xsgetn(char_type* dest, std::streamsize count) override {
+        std::streamsize total = 0;
+
+        // 1. Consume buffered data
+        auto available = egptr() - gptr();
+        if (available > 0) {
+            auto chunk = std::min(count, available);
+            std::copy_n(gptr(), chunk, dest);
+            gbump(static_cast<int>(chunk));
+            dest += chunk;
+            count -= chunk;
+            total += chunk;
+        }
+
+        // 2. Large read: bypass buffer
+        if (count >= static_cast<std::streamsize>(N)) {
+            auto received = posix::recv(m_socket, dest, static_cast<std::size_t>(count), 0);
+            if (received > 0) return total + received;
+            if (received == 0) return total;  // EOF
+            // Fall through on error/EWOULDBLOCK
+        }
+
+        // 3. Fill buffer via underflow
+        while (count > 0) {
+            if (underflow() == traits_type::eof()) break;
+            available = egptr() - gptr();
+            auto chunk = std::min(count, available);
+            std::copy_n(gptr(), chunk, dest);
+            gbump(static_cast<int>(chunk));
+            dest += chunk;
+            count -= chunk;
+            total += chunk;
+        }
+        return total;
+    }
+
+    std::streamsize xsputn(const char_type* src, std::streamsize count) override {
+        auto space = epptr() - pptr();
+        if (count <= space) {
+            std::copy_n(src, count, pptr());
+            pbump(static_cast<int>(count));
+            return count;
+        }
+
+        if (sync() == -1) return 0;
+
+        if (count >= static_cast<std::streamsize>(N)) {
+            return send_all(src, static_cast<std::size_t>(count)) ? count : 0;
+        }
+
+        std::copy_n(src, count, pptr());
+        pbump(static_cast<int>(count));
+        return count;
+    }
+
+    int_type underflow() override {
+        if (gptr() < egptr()) return traits_type::to_int_type(*gptr());
+
+        auto received = posix::recv(m_socket, m_input.data(), N, 0);
+        if (received <= 0) return traits_type::eof();
+
+        setg(m_input.data(), m_input.data(), m_input.data() + received);
+        return traits_type::to_int_type(m_input[0]);
+    }
+
+    int_type overflow(int_type ch = traits_type::eof()) override {
+        if (sync() == -1) return traits_type::eof();
+        if (!traits_type::eq_int_type(ch, traits_type::eof())) {
+            *pptr() = traits_type::to_char_type(ch);
+            pbump(1);
+            return ch;
+        }
+        return traits_type::not_eof(ch);
+    }
+
+    int sync() override {
+        auto pending = pptr() - pbase();
+        if (pending > 0) {
+            if (!send_all(pbase(), static_cast<std::size_t>(pending))) return -1;
+            setp(m_output.data(), m_output.data() + N - 1);
+        }
+        return 0;
+    }
+
+private:
+    bool send_all(const char* data, std::size_t len) const {
+        std::size_t sent = 0;
+        while (sent < len) {
+            auto res = posix::send(m_socket, data + sent, len - sent, posix::msg_nosignal);
+            if (res <= 0) {
+                auto err = posix::get_errno();
+                if (err == posix::eintr) continue;
+                if (err == posix::ewouldblock || err == posix::eagain) {
+                    if (!const_cast<socket&>(m_socket).wait()) return false;
+                    continue;
+                }
+                return false;
+            }
+            sent += static_cast<std::size_t>(res);
+        }
+        return true;
+    }
+
+    std::array<char, N>         m_input{};
+    std::array<char, N>         m_output{};  // No +1 needed if overflow() uses sync() first
+};
+
+using tcp_endpointbuf = endpointbuf<tcp_buffer_size>;
+
+using udp_endpointbuf = endpointbuf<udp_buffer_size>;
+
+} // namespace net

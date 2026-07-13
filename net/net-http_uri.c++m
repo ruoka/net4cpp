@@ -1,0 +1,8 @@
+export module net:http_uri;
+import :uri;
+
+export namespace http
+{
+    using uri = net::uri;
+}
+

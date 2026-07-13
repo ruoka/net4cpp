@@ -1,0 +1,38 @@
+// UUIDv4 (Version 4 UUID) generation module
+// UUIDv4 is a 128-bit universally unique identifier defined in RFC 4122 (now updated by RFC 9562).
+// It generates identifiers almost entirely from random or pseudo-random numbers, making them
+// suitable for distributed systems without central coordination.
+
+export module net:uuid;
+import std;
+
+export namespace net {
+
+// Generate a UUIDv4 string
+// Returns a formatted UUID string in the standard format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+// Uses thread-local random number generators for performance.
+// @return Formatted UUIDv4 string (e.g., "550e8400-e29b-41d4-a716-446655440000")
+[[nodiscard]] inline std::string generate_uuid_v4() {
+    thread_local std::mt19937_64 gen{std::random_device{}()};
+    thread_local std::uniform_int_distribution<std::uint16_t> dis{0, 255};
+
+    std::array<std::uint8_t, 16> bytes{};
+    for (auto& b : bytes) b = static_cast<std::uint8_t>(dis(gen));
+
+    // Set version (4) : bits 12-15 of byte 6 => 0b0100 (RFC 4122/RFC 9562)
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;
+
+    // Set variant (RFC 4122/RFC 9562) : bits 0-1 of byte 8 => 0b10 (standard variant)
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
+
+    // Format as string: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+    return std::format("{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0], bytes[1], bytes[2], bytes[3],
+        bytes[4], bytes[5],
+        bytes[6], bytes[7],
+        bytes[8], bytes[9],
+        bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]);
+}
+
+}  // namespace net
+

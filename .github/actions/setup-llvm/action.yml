@@ -1,0 +1,59 @@
+name: "setup-llvm"
+description: "Install LLVM 21 + related tools (with caching). Accepts a space-separated list of apt packages."
+inputs:
+  packages:
+    description: "Space-separated apt packages to install (default includes libc++, clang, lld, lldb, jq)"
+    required: false
+    default: "libc++-21-dev libc++abi-21-dev clang-21 lld-21 lldb-21 jq libssl-dev clang-tools-21"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Cache LLVM 21 + libc++
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          /usr/lib/llvm-21
+          /usr/bin/clang-21
+          /usr/bin/clang++-21
+          /usr/bin/lld-21
+          /usr/bin/lldb-21
+          /usr/bin/clang-tidy-21
+        key: llvm-21-ubuntu-${{ runner.arch }}-2025-v1
+        restore-keys: |
+          llvm-21-ubuntu-${{ runner.arch }}-
+          llvm-21-ubuntu-
+          llvm-21-
+
+    - name: Ensure LLVM toolchain installed (install if missing)
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # If clang++-21 is present, skip install; otherwise install requested packages.
+        if command -v clang++-21 >/dev/null 2>&1; then
+          echo "clang++-21 found; skipping apt install."
+        else
+          echo "clang++-21 not found — installing LLVM 21 toolchain..."
+          sudo apt-get update -y
+          sudo apt-get install -y wget gnupg ca-certificates lsb-release software-properties-common
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/apt-llvm.gpg
+          echo "deb [signed-by=/usr/share/keyrings/apt-llvm.gpg] https://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-21 main" | sudo tee /etc/apt/sources.list.d/apt-llvm.org.list > /dev/null
+          sudo apt-get update -y
+          sudo apt-get install -y ${{ inputs.packages }}
+        fi
+
+        # Ensure clang/clang++/lld alternatives point to the clang-21 binaries if present
+        if [ -x /usr/bin/clang-21 ]; then
+          sudo update-alternatives --install /usr/bin/clang   clang   /usr/bin/clang-21   100 || true
+        fi
+        if [ -x /usr/bin/clang++-21 ]; then
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-21 100 || true
+        fi
+        if [ -x /usr/bin/lld-21 ]; then
+          sudo update-alternatives --install /usr/bin/lld     lld     /usr/bin/lld-21     100 || true
+        fi
+
+        echo "LLVM setup complete."
+

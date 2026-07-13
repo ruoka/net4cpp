@@ -1,0 +1,136 @@
+name: C/C++ CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # CI environments frequently lack privileges / networking setup needed for integration tests.
+  # net defaults to running network tests locally; in CI we disable them for determinism.
+  NET_DISABLE_NETWORK_TESTS: "1"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [ debug, release ]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Setup LLVM (shared)
+        uses: ./.github/actions/setup-llvm
+
+      - name: Verify std.cppm location
+        run: |
+          if [ -f /usr/lib/llvm-21/share/libc++/v1/std.cppm ]; then
+            echo "std.cppm found at /usr/lib/llvm-21/share/libc++/v1/std.cppm"
+          else
+            echo "Warning: std.cppm not found at expected location"
+            find /usr/lib/llvm-21 -name "std.cppm" 2>/dev/null || echo "std.cppm not found anywhere"
+          fi
+
+      - name: Show compiler version
+        run: clang++ --version
+
+      - name: Build project (${{ matrix.config }})
+        run: ./tools/CB.sh ${{ matrix.config }} build
+
+      - name: Run tests with JSONL output (${{ matrix.config }})
+        run: |
+          set -euo pipefail
+          # Scope to net tests only — full suite includes nested deps/tester
+          # [.jsonl-probe] intentional-failure probes (hidden unless selected).
+          ./tools/CB.sh ${{ matrix.config }} test --jsonl --tags='\[net\]' > "test_results_${{ matrix.config }}.jsonl"
+
+      - name: Validate JSONL output
+        run: |
+          set -euo pipefail
+          if [ ! -f "test_results_${{ matrix.config }}.jsonl" ]; then
+            echo "ERROR: JSONL output file not found!"
+            exit 1
+          fi
+          echo "JSONL lines: $(wc -l < "test_results_${{ matrix.config }}.jsonl")"
+          if command -v jq >/dev/null 2>&1; then
+            last_line="$(tail -1 "test_results_${{ matrix.config }}.jsonl")"
+            echo "$last_line" | jq -e '.type == "eof"' >/dev/null
+            summary_line="$(grep '"type":"summary"' "test_results_${{ matrix.config }}.jsonl" | tail -1)"
+            echo "$summary_line" | jq -e '.passed == true' >/dev/null
+          fi
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-${{ matrix.config }}
+          path: test_results_${{ matrix.config }}.jsonl
+
+  static-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Setup LLVM + analysis tools
+        uses: ./.github/actions/setup-llvm
+        with:
+          packages: "libc++-21-dev libc++abi-21-dev clang-21 lld-21 lldb-21 jq clang-tools-21 clang-tidy-21 cppcheck libssl-dev"
+
+      - name: Run clang-tidy (non-blocking)
+        run: |
+          set -euo pipefail
+          find net -name "*.c++m" -o -name "*.c++" | head -20 | while read -r f; do
+            echo "Analyzing $f"
+            clang-tidy-21 "$f" -- -std=c++23 -I/usr/lib/llvm-21/include/c++/v1 2>/dev/null || true
+          done
+
+      - name: Run cppcheck (non-blocking)
+        run: |
+          cppcheck --enable=all --std=c++23 --language=c++ \
+            --suppress=missingIncludeSystem \
+            --suppress=unusedFunction \
+            --inline-suppr \
+            --quiet \
+            net/ tools/ 2>/dev/null || true
+
+  submodule-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Check submodule status + clean tree
+        run: |
+          set -euo pipefail
+          echo "=== Submodule Status ==="
+          git submodule status || echo "No submodules"
+          echo ""
+          echo "=== Checking for uncommitted changes ==="
+          if git status --porcelain | grep -q .; then
+            echo "✗ Uncommitted changes found"
+            git status --porcelain
+            exit 1
+          else
+            echo "✓ Repo is clean"
+          fi
