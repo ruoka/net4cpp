@@ -200,14 +200,20 @@ public:
 
     void listen(std::string_view service_or_port = "http")
     {
+        listen("0.0.0.0"sv, service_or_port);
+    }
+
+    void listen(std::string_view host, std::string_view service_or_port)
+    {
         using namespace std::string_view_literals;
         m_stop.store(false);
-        net::slog << net::notice("HTTP_SERVER_START") << "starting up at " << service_or_port
+        net::slog << net::notice("HTTP_SERVER_START") << "starting up at " << host << ":" << service_or_port
+                  << std::pair{"addr"sv, host}
                   << std::pair{"port"sv, service_or_port}
                   << net::flush;
         try
         {
-            auto endpoint = net::acceptor{"0.0.0.0", service_or_port};
+            auto endpoint = net::acceptor{host, service_or_port};
             auto check_timeout = m_timeout.count() ? m_timeout : std::chrono::seconds{1};
             endpoint.timeout(std::chrono::milliseconds{check_timeout.count() * 1000});
             net::slog << net::notice("HTTP_SERVER_READY") << "started up at " << endpoint.host() << ":" << endpoint.service_or_port()
