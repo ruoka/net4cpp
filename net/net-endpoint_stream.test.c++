@@ -20,7 +20,7 @@ inline bool network_tests_enabled()
 
 auto register_endpointstream_tests()
 {
-    if(!network_tests_enabled()) return false;
+    if(not network_tests_enabled()) return false;
 
     tester::bdd::scenario("Join and Distribute (Dgram), [net]") = [] {
         tester::bdd::given("A multicast join and distribute") = [] {

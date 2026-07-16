@@ -37,7 +37,7 @@ oendpointstream distribute(std::string_view group, std::string_view service_or_p
     for(const auto& address : distribution_address)
     {
         net::socket s{address.ai_family, address.ai_socktype, address.ai_protocol};
-        if(!s) continue;
+        if(not s) continue;
 
         auto t2l = ttl;
         if(posix::setsockopt(s, posix::ipproto_ip, posix::ip_multicast_ttl, &t2l, sizeof t2l) < 0) continue;

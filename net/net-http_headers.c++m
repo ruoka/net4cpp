@@ -45,7 +45,7 @@ inline std::istream& operator >> (std::istream &is,  headers &hdrs)
     while(is.good() and is.peek() != '\r' and is.peek() != '\n')
     {
         std::string line;
-        if (!std::getline(is, line) || line == "\r" || line.empty()) break;
+        if (not std::getline(is, line) or line == "\r" or line.empty()) break;
         
         auto sv = std::string_view{line};
         auto pos = sv.find(':');
@@ -73,11 +73,11 @@ inline bool accepts_json(const headers& hdr)
 {
     using namespace std::string_literals;
     using namespace std::string_view_literals;
-    if(!hdr.contains("accept"s))
+    if(not hdr.contains("accept"s))
         return true; // No Accept header means accept anything
     const auto accept_value = hdr["accept"s];
-    return accept_value.contains("*/*"sv) || 
-           accept_value.contains("application/json"sv) ||
+    return accept_value.contains("*/*"sv) or 
+           accept_value.contains("application/json"sv) or
            accept_value.contains("application/*"sv);
 }
 

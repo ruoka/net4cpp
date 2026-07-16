@@ -19,7 +19,7 @@ inline bool network_tests_enabled()
 
 auto register_acceptor_connector_tests()
 {
-    if(!network_tests_enabled()) return false;
+    if(not network_tests_enabled()) return false;
     std::array<int, 100> data;
     for (int i = 0; i < 100; ++i) data[i] = i + 1;
 

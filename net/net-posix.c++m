@@ -225,7 +225,7 @@ int connect_with_timeout(int fd, const sockaddr* address, socklen_t address_len,
         return -1;
     }
 
-    if (!fd_isset(fd, &writefds)) {
+    if (not fd_isset(fd, &writefds)) {
         errno = ETIMEDOUT;
         return -1;
     }

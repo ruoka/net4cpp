@@ -63,7 +63,7 @@ auto register_server_tests()
     };
 
     tester::bdd::scenario("Server start and stop sequence, [net]") = [] {
-    if(!network_tests_enabled()) return;
+    if(not network_tests_enabled()) return;
 
         tester::bdd::given("An HTTP server with a route") = [] {
             auto server = std::make_shared<http::server>();
@@ -96,7 +96,7 @@ auto register_server_tests()
     };
 
     tester::bdd::scenario("Structured logging fields in HTTP requests, [net]") = [] {
-    if(!network_tests_enabled()) return;
+    if(not network_tests_enabled()) return;
 
         tester::bdd::given("An HTTP server with logging configured") = [] {
     auto captured_output = std::make_shared<std::stringstream>();
@@ -140,10 +140,10 @@ auto register_server_tests()
             std::string response;
             std::string line;
             int line_count = 0;
-            while(line_count < 20 && stream && std::getline(stream, line)) {
+            while(line_count < 20 and stream and std::getline(stream, line)) {
                 response += line + "\n";
                 line_count++;
-                if(line.empty() || line == "\r") break;
+                if(line.empty() or line == "\r") break;
             }
         } catch(...) {}
 
@@ -186,7 +186,7 @@ auto register_server_tests()
         }
     }
     
-    if(!request_id_value.empty()) {
+    if(not request_id_value.empty()) {
         check_contains(output, "\"request_id\":\"" + request_id_value + "\"");
     }
                 };
@@ -195,7 +195,7 @@ auto register_server_tests()
     };
 
     tester::bdd::scenario("Request duration tracking in HTTP responses, [net]") = [] {
-    if(!network_tests_enabled()) return;
+    if(not network_tests_enabled()) return;
 
         tester::bdd::given("An HTTP server with a slow endpoint") = [] {
     auto captured_output = std::make_shared<std::stringstream>();
@@ -239,10 +239,10 @@ auto register_server_tests()
             std::string response;
             std::string line;
             int line_count = 0;
-            while(line_count < 20 && stream && std::getline(stream, line)) {
+            while(line_count < 20 and stream and std::getline(stream, line)) {
                 response += line + "\n";
                 line_count++;
-                if(line.empty() || line == "\r") break;
+                if(line.empty() or line == "\r") break;
             }
         } catch(...) {}
 
@@ -282,7 +282,7 @@ auto register_server_tests()
     };
 
     tester::bdd::scenario("HTTP headers logging when no headers present, [net]") = [] {
-    if(!network_tests_enabled()) return;
+    if(not network_tests_enabled()) return;
 
         tester::bdd::given("An HTTP server with logging configured") = [] {
     auto captured_output = std::make_shared<std::stringstream>();
@@ -323,10 +323,10 @@ auto register_server_tests()
             std::string response;
             std::string line;
             int line_count = 0;
-            while(line_count < 20 && stream && std::getline(stream, line)) {
+            while(line_count < 20 and stream and std::getline(stream, line)) {
                 response += line + "\n";
                 line_count++;
-                if(line.empty() || line == "\r") break;
+                if(line.empty() or line == "\r") break;
             }
         } catch(...) {}
 
@@ -348,7 +348,7 @@ auto register_server_tests()
     };
 
     tester::bdd::scenario("HTTP headers logging with partial headers, [net]") = [] {
-    if(!network_tests_enabled()) return;
+    if(not network_tests_enabled()) return;
 
         tester::bdd::given("An HTTP server with logging configured") = [] {
     auto captured_output = std::make_shared<std::stringstream>();
@@ -390,10 +390,10 @@ auto register_server_tests()
             std::string response;
             std::string line;
             int line_count = 0;
-            while(line_count < 20 && stream && std::getline(stream, line)) {
+            while(line_count < 20 and stream and std::getline(stream, line)) {
                 response += line + "\n";
                 line_count++;
-                if(line.empty() || line == "\r") break;
+                if(line.empty() or line == "\r") break;
             }
         } catch(...) {}
 
@@ -416,7 +416,7 @@ auto register_server_tests()
     };
 
     tester::bdd::scenario("HTTP headers logging with empty header values, [net]") = [] {
-    if(!network_tests_enabled()) return;
+    if(not network_tests_enabled()) return;
 
         tester::bdd::given("An HTTP server with logging configured") = [] {
     auto captured_output = std::make_shared<std::stringstream>();
@@ -460,10 +460,10 @@ auto register_server_tests()
             std::string response;
             std::string line;
             int line_count = 0;
-            while(line_count < 20 && stream && std::getline(stream, line)) {
+            while(line_count < 20 and stream and std::getline(stream, line)) {
                 response += line + "\n";
                 line_count++;
-                if(line.empty() || line == "\r") break;
+                if(line.empty() or line == "\r") break;
             }
         } catch(...) {}
 
@@ -484,7 +484,7 @@ auto register_server_tests()
     };
 
     tester::bdd::scenario("X-Correlation-ID generation when missing, [net]") = [] {
-        if(!network_tests_enabled()) return;
+        if(not network_tests_enabled()) return;
 
         tester::bdd::given("An HTTP server with logging configured") = [] {
             auto captured_output = std::make_shared<std::stringstream>();
@@ -525,10 +525,10 @@ auto register_server_tests()
                         std::string response;
                         std::string line;
                         int line_count = 0;
-                        while(line_count < 20 && stream && std::getline(stream, line)) {
+                        while(line_count < 20 and stream and std::getline(stream, line)) {
                             response += line + "\n";
                             line_count++;
-                            if(line.empty() || line == "\r") break;
+                            if(line.empty() or line == "\r") break;
                         }
                     } catch(...) {}
 
@@ -567,7 +567,7 @@ auto register_server_tests()
     };
 
     tester::bdd::scenario("X-Correlation-ID preservation when provided, [net]") = [] {
-        if(!network_tests_enabled()) return;
+        if(not network_tests_enabled()) return;
 
         tester::bdd::given("An HTTP server with logging configured") = [] {
             auto captured_output = std::make_shared<std::stringstream>();
@@ -610,10 +610,10 @@ auto register_server_tests()
                         std::string response;
                         std::string line;
                         int line_count = 0;
-                        while(line_count < 20 && stream && std::getline(stream, line)) {
+                        while(line_count < 20 and stream and std::getline(stream, line)) {
                             response += line + "\n";
                             line_count++;
-                            if(line.empty() || line == "\r") break;
+                            if(line.empty() or line == "\r") break;
                         }
                     } catch(...) {}
 
@@ -634,7 +634,7 @@ auto register_server_tests()
     };
 
     tester::bdd::scenario("405 Method Not Allowed when route exists but method doesn't, [net]") = [] {
-        if(!network_tests_enabled()) return;
+        if(not network_tests_enabled()) return;
 
         tester::bdd::given("An HTTP server with a GET route registered") = [] {
             auto server = std::make_shared<http::server>();
@@ -673,13 +673,13 @@ auto register_server_tests()
                         std::string response;
                         std::string line;
                         int line_count = 0;
-                        while(line_count < 5 && stream && std::getline(stream, line)) {
+                        while(line_count < 5 and stream and std::getline(stream, line)) {
                             response += line + "\n";
                             line_count++;
                             if(line_count == 1) {
                                 // First line is status line: "HTTP/1.1 405 Method Not Allowed"
                                 // Remove trailing \r if present
-                                if(!line.empty() && line.back() == '\r') {
+                                if(not line.empty() and line.back() == '\r') {
                                     line.pop_back();
                                 }
                                 auto space1 = line.find(' ');
@@ -693,7 +693,7 @@ auto register_server_tests()
                                     }
                                 }
                             }
-                            if(line.empty() || line == "\r") break;
+                            if(line.empty() or line == "\r") break;
                         }
                     } catch(...) {}
 
@@ -711,7 +711,7 @@ auto register_server_tests()
     };
 
     tester::bdd::scenario("404 Not Found when route doesn't exist, [net]") = [] {
-        if(!network_tests_enabled()) return;
+        if(not network_tests_enabled()) return;
 
         tester::bdd::given("An HTTP server with a route registered") = [] {
             auto server = std::make_shared<http::server>();
@@ -747,13 +747,13 @@ auto register_server_tests()
                         std::string response;
                         std::string line;
                         int line_count = 0;
-                        while(line_count < 5 && stream && std::getline(stream, line)) {
+                        while(line_count < 5 and stream and std::getline(stream, line)) {
                             response += line + "\n";
                             line_count++;
                             if(line_count == 1) {
                                 // First line is status line: "HTTP/1.0 404 Not Found" or "HTTP/1.1 404 Not Found"
                                 // Remove trailing \r if present
-                                if(!line.empty() && line.back() == '\r') {
+                                if(not line.empty() and line.back() == '\r') {
                                     line.pop_back();
                                 }
                                 auto space1 = line.find(' ');
@@ -767,7 +767,7 @@ auto register_server_tests()
                                     }
                                 }
                             }
-                            if(line.empty() || line == "\r") break;
+                            if(line.empty() or line == "\r") break;
                         }
                     } catch(...) {}
 
@@ -779,6 +779,181 @@ auto register_server_tests()
 
                 tester::bdd::then("Response status is 404 Not Found") = [response_status] {
                     check_eq(*response_status, "404");
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("400 Bad Request when Host header is missing, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server with a route registered") = [] {
+            auto server = std::make_shared<http::server>();
+            server->get("/test").text("OK");
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A GET request is made without a Host header") = [server] {
+                auto response_status = std::make_shared<std::string>("");
+
+                std::promise<void> started;
+                auto started_future = started.get_future();
+
+                std::thread server_thread{[server, &started]{
+                    try {
+                        started.set_value();
+                        server->listen("8089");
+                    } catch(...) {}
+                }};
+
+                using namespace std::chrono_literals;
+                if (started_future.wait_for(2s) == std::future_status::ready) {
+                    std::this_thread::sleep_for(200ms);
+
+                    try {
+                        auto stream = connect("127.0.0.1", "8089");
+                        stream << "GET /test HTTP/1.1" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+
+                        std::string line;
+                        if(stream and std::getline(stream, line)) {
+                            if(not line.empty() and line.back() == '\r')
+                                line.pop_back();
+                            auto space1 = line.find(' ');
+                            if(space1 != std::string::npos) {
+                                auto space2 = line.find(' ', space1 + 1);
+                                *response_status = space2 != std::string::npos
+                                    ? line.substr(space1 + 1, space2 - space1 - 1)
+                                    : line.substr(space1 + 1);
+                            }
+                        }
+                    } catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if (server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("Response status is 400 Bad Request") = [response_status] {
+                    check_eq(*response_status, "400");
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("400 Bad Request when Content-Length is invalid, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server with a route registered") = [] {
+            auto server = std::make_shared<http::server>();
+            server->post("/test").text("OK");
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A POST request has a non-numeric Content-Length") = [server] {
+                auto response_status = std::make_shared<std::string>("");
+
+                std::promise<void> started;
+                auto started_future = started.get_future();
+
+                std::thread server_thread{[server, &started]{
+                    try {
+                        started.set_value();
+                        server->listen("8090");
+                    } catch(...) {}
+                }};
+
+                using namespace std::chrono_literals;
+                if (started_future.wait_for(2s) == std::future_status::ready) {
+                    std::this_thread::sleep_for(200ms);
+
+                    try {
+                        auto stream = connect("127.0.0.1", "8090");
+                        stream << "POST /test HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:8090" << net::crlf
+                               << "Content-Length: not-a-number" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+
+                        std::string line;
+                        if(stream and std::getline(stream, line)) {
+                            if(not line.empty() and line.back() == '\r')
+                                line.pop_back();
+                            auto space1 = line.find(' ');
+                            if(space1 != std::string::npos) {
+                                auto space2 = line.find(' ', space1 + 1);
+                                *response_status = space2 != std::string::npos
+                                    ? line.substr(space1 + 1, space2 - space1 - 1)
+                                    : line.substr(space1 + 1);
+                            }
+                        }
+                    } catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if (server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("Response status is 400 Bad Request") = [response_status] {
+                    check_eq(*response_status, "400");
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("Connection header is echoed on successful responses, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server with a route registered") = [] {
+            auto server = std::make_shared<http::server>();
+            server->get("/test").text("OK");
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A GET request asks to close the connection") = [server] {
+                auto response_headers = std::make_shared<std::string>("");
+
+                std::promise<void> started;
+                auto started_future = started.get_future();
+
+                std::thread server_thread{[server, &started]{
+                    try {
+                        started.set_value();
+                        server->listen("8091");
+                    } catch(...) {}
+                }};
+
+                using namespace std::chrono_literals;
+                if (started_future.wait_for(2s) == std::future_status::ready) {
+                    std::this_thread::sleep_for(200ms);
+
+                    try {
+                        auto stream = connect("127.0.0.1", "8091");
+                        stream << "GET /test HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:8091" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+
+                        std::string line;
+                        int line_count = 0;
+                        while(line_count < 20 and stream and std::getline(stream, line)) {
+                            *response_headers += line + "\n";
+                            line_count++;
+                            if(line.empty() or line == "\r") break;
+                        }
+                    } catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if (server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("Response includes Connection: close") = [response_headers] {
+                    check_contains(*response_headers, "Connection: close");
                 };
             };
         };
