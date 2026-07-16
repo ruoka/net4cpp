@@ -463,6 +463,197 @@ inline auto cors_middleware(
     };
 }
 
+// Prometheus HTTP metrics (minimum): request counters + duration histogram.
+// Labels: method + status only. GET /metrics is served by the middleware (not counted).
+
+inline constexpr std::array<double, 11> http_metrics_histogram_bounds = {
+    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0
+};
+
+struct metrics_label_key
+{
+    std::string method;
+    std::string status;
+
+    friend auto operator<=>(const metrics_label_key&, const metrics_label_key&) = default;
+};
+
+struct histogram_series
+{
+    std::array<std::uint64_t, http_metrics_histogram_bounds.size()> buckets{};
+    double sum = 0.0;
+    std::uint64_t count = 0;
+};
+
+struct metrics_registry
+{
+    std::mutex mutex;
+    std::flat_map<metrics_label_key, std::uint64_t> request_totals;
+    std::flat_map<metrics_label_key, histogram_series> durations;
+
+    void reset()
+    {
+        std::lock_guard lock{mutex};
+        request_totals.clear();
+        durations.clear();
+    }
+
+    void observe(std::string_view method, std::string_view status, double duration_seconds)
+    {
+        auto key = metrics_label_key{std::string{method}, std::string{status}};
+
+        std::lock_guard lock{mutex};
+        ++request_totals[key];
+
+        auto& series = durations[key];
+        for(auto i = std::size_t{0}; i < http_metrics_histogram_bounds.size(); ++i)
+        {
+            if(duration_seconds <= http_metrics_histogram_bounds[i])
+                ++series.buckets[i];
+        }
+        series.sum += duration_seconds;
+        ++series.count;
+    }
+
+    std::string render_prometheus_text()
+    {
+        std::lock_guard lock{mutex};
+        auto out = std::string{};
+        out.reserve(512 + request_totals.size() * 64);
+
+        out += "# HELP http_requests_total Total HTTP requests\n"s;
+        out += "# TYPE http_requests_total counter\n"s;
+        for(const auto& [key, total] : request_totals)
+        {
+            std::format_to(
+                std::back_inserter(out),
+                "http_requests_total{{method=\"{}\",status=\"{}\"}} {}\n",
+                key.method,
+                key.status,
+                total);
+        }
+
+        out += "# HELP http_request_duration_seconds HTTP request duration\n"s;
+        out += "# TYPE http_request_duration_seconds histogram\n"s;
+        for(const auto& [key, series] : durations)
+        {
+            for(auto i = std::size_t{0}; i < http_metrics_histogram_bounds.size(); ++i)
+            {
+                std::format_to(
+                    std::back_inserter(out),
+                    "http_request_duration_seconds_bucket{{method=\"{}\",status=\"{}\",le=\"{}\"}} {}\n",
+                    key.method,
+                    key.status,
+                    http_metrics_histogram_bounds[i],
+                    series.buckets[i]);
+            }
+            std::format_to(
+                std::back_inserter(out),
+                "http_request_duration_seconds_bucket{{method=\"{}\",status=\"{}\",le=\"+Inf\"}} {}\n",
+                key.method,
+                key.status,
+                series.count);
+            std::format_to(
+                std::back_inserter(out),
+                "http_request_duration_seconds_sum{{method=\"{}\",status=\"{}\"}} {}\n",
+                key.method,
+                key.status,
+                series.sum);
+            std::format_to(
+                std::back_inserter(out),
+                "http_request_duration_seconds_count{{method=\"{}\",status=\"{}\"}} {}\n",
+                key.method,
+                key.status,
+                series.count);
+        }
+
+        return out;
+    }
+};
+
+inline metrics_registry& http_metrics()
+{
+    static metrics_registry registry;
+    return registry;
+}
+
+inline std::string_view metrics_status_code(std::string_view status_line)
+{
+    const auto space = status_line.find(' ');
+    if(space == std::string_view::npos)
+        return status_line.empty() ? "000"sv : status_line;
+    return status_line.substr(0, space);
+}
+
+inline std::pair<std::string_view, std::string_view> metrics_method_and_target(std::string_view request_line)
+{
+    auto rest = request_line;
+    while(not rest.empty() && rest.front() == ' ')
+        rest.remove_prefix(1);
+
+    if(rest.empty())
+        return {"UNKNOWN"sv, "/"sv};
+
+    if(rest.front() == '/')
+    {
+        const auto sp = rest.find(' ');
+        return {"GET"sv, sp == std::string_view::npos ? rest : rest.substr(0, sp)};
+    }
+
+    const auto method_end = rest.find(' ');
+    if(method_end == std::string_view::npos)
+        return {rest, "/"sv};
+
+    const auto method = rest.substr(0, method_end);
+    auto target = rest.substr(method_end + 1);
+    while(not target.empty() && target.front() == ' ')
+        target.remove_prefix(1);
+    const auto target_end = target.find(' ');
+    if(target_end != std::string_view::npos)
+        target = target.substr(0, target_end);
+    return {method, target.empty() ? "/"sv : target};
+}
+
+inline bool is_metrics_scrape_request(std::string_view method, std::string_view target)
+{
+    if(method != "GET"sv && method != "get"sv)
+        return false;
+
+    auto path = target;
+    const auto q = path.find('?');
+    if(q != std::string_view::npos)
+        path = path.substr(0, q);
+
+    return path == "/metrics"sv;
+}
+
+// Middleware: Prometheus metrics — records method/status counters and latency histogram;
+// short-circuits GET /metrics with Prometheus text exposition (scrapes are not counted).
+inline auto metrics_middleware()
+{
+    return [](callback_with_headers next)
+    {
+        return [next = std::move(next)](auto req, auto body, auto hdr) mutable
+        {
+            const auto [method, target] = metrics_method_and_target(req);
+
+            if(is_metrics_scrape_request(method, target))
+            {
+                auto response_headers = headers{};
+                response_headers.set("content-type"s, "text/plain; version=0.0.4; charset=utf-8"s);
+                return make_response(status_ok, http_metrics().render_prometheus_text(), std::make_optional(response_headers));
+            }
+
+            const auto started = std::chrono::steady_clock::now();
+            auto response = next(req, body, hdr);
+            const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+
+            http_metrics().observe(method, metrics_status_code(std::get<0>(response)), elapsed);
+            return response;
+        };
+    };
+}
+
 } // namespace middleware
 
 } // namespace http
