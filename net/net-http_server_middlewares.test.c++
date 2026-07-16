@@ -760,6 +760,83 @@ auto register_middleware_tests()
         };
     };
 
+    tester::bdd::scenario("metrics_middleware - records OK request and scrape body, [net]") = [] {
+        tester::bdd::given("A metrics middleware with a successful handler") = [] {
+            ::http::middleware::http_metrics().reset();
+            auto mw = ::http::middleware::metrics_middleware();
+            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+                return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
+            };
+            auto wrapped = mw(handler);
+
+            tester::bdd::when("Handling one GET and scraping /metrics") = [wrapped]() mutable {
+                auto headers = ::http::headers{};
+                auto [status, content, hdrs] = wrapped("GET /users HTTP/1.1"sv, ""sv, headers);
+                check_eq(status, ::http::status_ok);
+
+                auto scrape_headers = ::http::headers{};
+                auto [scrape_status, scrape_body, scrape_hdrs] = wrapped("GET /metrics HTTP/1.1"sv, ""sv, scrape_headers);
+
+                tester::bdd::then("Scrape shows counter and histogram for 200") = [scrape_status, scrape_body, scrape_hdrs] {
+                    check_eq(scrape_status, ::http::status_ok);
+                    check_contains(scrape_body, "http_requests_total{method=\"GET\",status=\"200\"} 1");
+                    check_contains(scrape_body, "http_request_duration_seconds_count{method=\"GET\",status=\"200\"} 1");
+                    check_true(scrape_hdrs.has_value());
+                    if(scrape_hdrs.has_value())
+                    {
+                        check_true(scrape_hdrs->contains("content-type"s));
+                        check_contains((*scrape_hdrs)["content-type"s], "text/plain");
+                    }
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("metrics_middleware - records error status, [net]") = [] {
+        tester::bdd::given("A metrics middleware with a 404 handler") = [] {
+            ::http::middleware::http_metrics().reset();
+            auto mw = ::http::middleware::metrics_middleware();
+            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+                return ::http::make_response(::http::status_not_found, "missing"s, std::optional<::http::headers>{});
+            };
+            auto wrapped = mw(handler);
+
+            tester::bdd::when("Handling one GET that returns 404") = [wrapped]() mutable {
+                auto headers = ::http::headers{};
+                (void)wrapped("GET /missing HTTP/1.1"sv, ""sv, headers);
+                auto scrape_headers = ::http::headers{};
+                auto [scrape_status, scrape_body, scrape_hdrs] = wrapped("GET /metrics HTTP/1.1"sv, ""sv, scrape_headers);
+
+                tester::bdd::then("Scrape shows the 404 series") = [scrape_status, scrape_body] {
+                    check_eq(scrape_status, ::http::status_ok);
+                    check_contains(scrape_body, "http_requests_total{method=\"GET\",status=\"404\"} 1");
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("metrics_middleware - scrape does not inflate request totals, [net]") = [] {
+        tester::bdd::given("A reset metrics registry") = [] {
+            ::http::middleware::http_metrics().reset();
+            auto mw = ::http::middleware::metrics_middleware();
+            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+                return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
+            };
+            auto wrapped = mw(handler);
+
+            tester::bdd::when("Only scraping /metrics") = [wrapped]() mutable {
+                auto headers = ::http::headers{};
+                auto [scrape_status, scrape_body, scrape_hdrs] = wrapped("GET /metrics HTTP/1.1"sv, ""sv, headers);
+
+                tester::bdd::then("Body has HELP lines but no request totals") = [scrape_status, scrape_body] {
+                    check_eq(scrape_status, ::http::status_ok);
+                    check_contains(scrape_body, "# TYPE http_requests_total counter");
+                    check_true(scrape_body.find("http_requests_total{") == std::string::npos);
+                };
+            };
+        };
+    };
+
     return true;
 }
 
