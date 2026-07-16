@@ -39,6 +39,7 @@ const auto status_payload_too_large = "413 Payload Too Large"s;
 const auto status_unprocessable_entity = "422 Unprocessable Entity"s;
 const auto status_too_many_requests = "429 Too Many Requests"s;
 const auto status_internal_server_error = "500 Internal Server Error"s;
+const auto status_service_unavailable = "503 Service Unavailable"s;
 
 using status = std::string;
 using content = std::string;
@@ -200,10 +201,13 @@ public:
 
     void listen(std::string_view service_or_port = "http")
     {
-        listen("0.0.0.0"sv, service_or_port);
+        listen("0.0.0.0"sv, service_or_port, nullptr);
     }
 
-    void listen(std::string_view host, std::string_view service_or_port)
+    void listen(
+        std::string_view host,
+        std::string_view service_or_port,
+        std::function<void()> on_bound = nullptr)
     {
         using namespace std::string_view_literals;
         m_stop.store(false);
@@ -220,6 +224,8 @@ public:
                       << std::pair{"addr", endpoint.host()}
                       << std::pair{"port", endpoint.service_or_port()}
                       << net::flush;
+            if(on_bound)
+                on_bound();
             
             while(!m_stop.load())
             {
