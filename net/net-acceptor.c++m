@@ -25,7 +25,7 @@ public:
         for(const auto& address : local_address)
         {
             socket s{address.ai_family, address.ai_socktype, address.ai_protocol};
-            if(!s) continue;
+            if(not s) continue;
             auto yes = 1;
             if(posix::setsockopt(s, posix::sol_socket, posix::so_reuseaddr, &yes, sizeof yes) < 0) continue;
             if(posix::bind(s, address.ai_addr, address.ai_addrlen) < 0) continue;
@@ -44,7 +44,7 @@ public:
         auto sas = posix::sockaddr_storage{};
         auto saslen = posix::socklen_t{sizeof sas};
         socket s = posix::accept(fd, reinterpret_cast<posix::sockaddr*>(&sas), &saslen);
-        if(!s) throw std::system_error{posix::get_errno(), std::system_category(),"accept failed"};
+        if(not s) throw std::system_error{posix::get_errno(), std::system_category(),"accept failed"};
 
         char hbuf[posix::ni_maxhost];
         char sbuf[posix::ni_maxserv];
@@ -88,7 +88,7 @@ private:
                 static_cast<decltype(tv.tv_sec)>(m_timeout.count() / 1000),
                 static_cast<decltype(tv.tv_usec)>(m_timeout.count() % 1000 * 1000)
             };
-            if(!posix::select(max_fd+1, &fds, nullptr, nullptr, &tv))
+            if(not posix::select(max_fd+1, &fds, nullptr, nullptr, &tv))
                 throw std::system_error{posix::get_errno(), std::system_category(), "accept timeouted"};
         }
         else

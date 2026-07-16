@@ -22,7 +22,7 @@ struct lockable : public Class, public std::mutex
 
     lockable(lockable<Class>&& lc) : Class{std::move(lc)}
     {
-        if(!lc.try_lock()) std::terminate(); // Do not move locked objects!
+        if(not lc.try_lock()) std::terminate(); // Do not move locked objects!
         lc.unlock();
     }
 
@@ -94,7 +94,7 @@ inline auto parse_rfc1123_date(std::string_view sv)
     
     // Skip weekday (e.g., "Tue, ")
     auto pos = sv.find(',');
-    if(pos == std::string_view::npos || pos + 2 >= sv.size())
+    if(pos == std::string_view::npos or pos + 2 >= sv.size())
         throw std::invalid_argument{"Invalid RFC 1123 date format"};
     sv.remove_prefix(pos + 2); // Skip ", "
     
@@ -110,7 +110,7 @@ inline auto parse_rfc1123_date(std::string_view sv)
     
     // Parse month abbreviation (Jan, Feb, etc.)
     auto month_end = sv.find(' ');
-    if(month_end == std::string_view::npos || month_end != 3)
+    if(month_end == std::string_view::npos or month_end != 3)
         throw std::invalid_argument{"Invalid RFC 1123 date format"};
     auto month_str = sv.substr(0, 3);
     unsigned MM = 0u;
@@ -131,7 +131,7 @@ inline auto parse_rfc1123_date(std::string_view sv)
     
     // Parse year (4 digits)
     auto year_end = sv.find(' ');
-    if(year_end == std::string_view::npos || year_end != 4)
+    if(year_end == std::string_view::npos or year_end != 4)
         throw std::invalid_argument{"Invalid RFC 1123 date format"};
     int YYYY = 0;
     res = std::from_chars(sv.data(), sv.data() + 4, YYYY);
@@ -142,10 +142,10 @@ inline auto parse_rfc1123_date(std::string_view sv)
     // Parse time (HH:MM:SS)
     unsigned hh = 0u, mm = 0u, ss = 0u;
     res = std::from_chars(sv.data(), sv.data() + 2, hh);
-    if(res.ec != std::errc{} || sv[2] != ':')
+    if(res.ec != std::errc{} or sv[2] != ':')
         throw std::invalid_argument{"Invalid time in RFC 1123 date"};
     res = std::from_chars(sv.data() + 3, sv.data() + 5, mm);
-    if(res.ec != std::errc{} || sv[5] != ':')
+    if(res.ec != std::errc{} or sv[5] != ':')
         throw std::invalid_argument{"Invalid time in RFC 1123 date"};
     res = std::from_chars(sv.data() + 6, sv.data() + 8, ss);
     if(res.ec != std::errc{})
@@ -176,7 +176,7 @@ inline void ascii_to_upper(std::string& str) noexcept
     for (auto& ch : str)
     {
         const auto c = static_cast<unsigned char>(ch);
-        if (c >= static_cast<unsigned char>('a') && c <= static_cast<unsigned char>('z'))
+        if (c >= static_cast<unsigned char>('a') and c <= static_cast<unsigned char>('z'))
             ch = static_cast<char>(c - static_cast<unsigned char>('a' - 'A'));
     }
 }
@@ -186,7 +186,7 @@ inline void ascii_to_lower(std::string& str) noexcept
     for (auto& ch : str)
     {
         const auto c = static_cast<unsigned char>(ch);
-        if (c >= static_cast<unsigned char>('A') && c <= static_cast<unsigned char>('Z'))
+        if (c >= static_cast<unsigned char>('A') and c <= static_cast<unsigned char>('Z'))
             ch = static_cast<char>(c + static_cast<unsigned char>('a' - 'A'));
     }
 }
@@ -226,7 +226,7 @@ inline auto stoll(std::string_view sv)
     auto [ptr, ec] = std::from_chars(sv.begin(), sv.end(), ll);
     if(ec == std::errc::result_out_of_range)
         throw std::invalid_argument{std::string{"Number out of range: "} + std::string{sv}};
-    if(ec != std::errc() || ptr != sv.end())
+    if(ec != std::errc() or ptr != sv.end())
         throw std::invalid_argument{std::string{"Invalid number format: "} + std::string{sv}};
     return ll;
 }

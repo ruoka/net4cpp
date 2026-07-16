@@ -20,7 +20,7 @@ inline bool network_tests_enabled()
 
 auto register_posix_tests()
 {
-    if(!network_tests_enabled()) return false;
+    if(not network_tests_enabled()) return false;
 
     tester::bdd::scenario("connect_with_timeout success, [net]") = [] {
         struct State {
@@ -68,7 +68,7 @@ auto register_posix_tests()
 
             auto status = posix::connect_with_timeout(client_fd, (posix::sockaddr*)addr.get(), sizeof(*addr), std::chrono::milliseconds{500});
             check_eq(status, -1);
-            check_true(posix::get_errno() == posix::econnrefused || posix::get_errno() == posix::etimedout);
+            check_true(posix::get_errno() == posix::econnrefused or posix::get_errno() == posix::etimedout);
 
             posix::close(client_fd);
         };

@@ -29,7 +29,7 @@ auto register_endpointbuf_tests()
 
     tester::bdd::scenario("endpointbuf_base construction, [net]") = [] {
         tester::bdd::given("A socket") = [] {
-            if(!network_tests_enabled()) return;
+            if(not network_tests_enabled()) return;
             
             auto s = socket{posix::af_inet, posix::sock_stream};
             check_nothrow([&s] {
@@ -41,7 +41,7 @@ auto register_endpointbuf_tests()
 
     tester::bdd::scenario("endpointbuf_base wait_for, [net]") = [] {
         tester::bdd::given("An endpointbuf_base with a new socket") = [] {
-            if(!network_tests_enabled()) return;
+            if(not network_tests_enabled()) return;
             
             auto s = socket{posix::af_inet, posix::sock_stream};
             endpointbuf_base buf{std::move(s)};
@@ -49,14 +49,14 @@ auto register_endpointbuf_tests()
             tester::bdd::when("Calling wait_for with a short timeout") = [&buf] {
                 using namespace std::chrono_literals;
                 auto result = buf.wait_for(1ms);
-                check_true(!result);
+                check_true(not result);
             };
         };
     };
 
     tester::bdd::scenario("endpointbuf template construction, [net]") = [] {
         tester::bdd::given("A socket") = [] {
-            if(!network_tests_enabled()) return;
+            if(not network_tests_enabled()) return;
             
             auto s = socket{posix::af_inet, posix::sock_stream};
             check_nothrow([&s] {
@@ -68,7 +68,7 @@ auto register_endpointbuf_tests()
 
     tester::bdd::scenario("Type aliases, [net]") = [] {
         tester::bdd::given("TCP and UDP endpointbuf type aliases") = [] {
-            if(!network_tests_enabled()) return;
+            if(not network_tests_enabled()) return;
             
             auto s1 = socket{posix::af_inet, posix::sock_stream};
             auto s2 = socket{posix::af_inet, posix::sock_dgram};
@@ -83,7 +83,7 @@ auto register_endpointbuf_tests()
 
     tester::bdd::scenario("endpointbuf buffer initialization, [net]") = [] {
         tester::bdd::given("An endpointbuf with a socket") = [] {
-            if(!network_tests_enabled()) return;
+            if(not network_tests_enabled()) return;
             
             auto s = socket{posix::af_inet, posix::sock_stream};
             endpointbuf<512> buf{std::move(s)};
@@ -99,7 +99,7 @@ auto register_endpointbuf_tests()
 
     tester::bdd::scenario("endpointbuf construction with different sizes, [net]") = [] {
         tester::bdd::given("Sockets for different buffer sizes") = [] {
-            if(!network_tests_enabled()) return;
+            if(not network_tests_enabled()) return;
             
             tester::bdd::when("Creating endpointbuf with different buffer sizes") = [] {
                 check_nothrow([] {

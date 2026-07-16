@@ -12,9 +12,9 @@ export namespace http::base64 {
     constexpr char to_index(char c)
     {
         if(c == '=') return 64;
-        if(c >= 'a' && c <= 'z') return ('Z'-'A') + 1 + (c - 'a');
-        if(c >= 'A' && c <= 'Z') return (c - 'A');
-        if(c >= '0' && c <= '9') return ('Z'-'A') + ('z'-'a') + 2 + (c - '0');
+        if(c >= 'a' and c <= 'z') return ('Z'-'A') + 1 + (c - 'a');
+        if(c >= 'A' and c <= 'Z') return (c - 'A');
+        if(c >= '0' and c <= '9') return ('Z'-'A') + ('z'-'a') + 2 + (c - '0');
         if(c == '+') return 62;
         if(c == '/') return 63;
         return 64;

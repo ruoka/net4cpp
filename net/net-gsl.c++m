@@ -59,7 +59,7 @@ public:
 
     bool operator==(const T& rhs) const {return m_ptr == rhs;}
 
-    bool operator!=(const T& rhs) const {return !(*this == rhs);}
+    bool operator!=(const T& rhs) const {return not(*this == rhs);}
 
 private:
 

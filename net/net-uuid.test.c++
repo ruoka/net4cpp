@@ -27,19 +27,19 @@ auto register_uuid_tests()
 
             // Check variant indicator: position 19 (index 18) should be 8, 9, a, or b
             auto variant_char = uuid[19];
-            check_true(variant_char == '8' || variant_char == '9' || 
-                      variant_char == 'a' || variant_char == 'b' ||
-                      variant_char == 'A' || variant_char == 'B');
+            check_true(variant_char == '8' or variant_char == '9' or 
+                      variant_char == 'a' or variant_char == 'b' or
+                      variant_char == 'A' or variant_char == 'B');
 
             // Check all characters are valid hex or dashes
             for (auto i = 0uz; i < uuid.size(); ++i) {
                 auto c = uuid[i];
-                if (i == 8 || i == 13 || i == 18 || i == 23) {
+                if (i == 8 or i == 13 or i == 18 or i == 23) {
                     check_eq(c, '-');
                 } else {
-                    check_true((c >= '0' && c <= '9') || 
-                              (c >= 'a' && c <= 'f') || 
-                              (c >= 'A' && c <= 'F'));
+                    check_true((c >= '0' and c <= '9') or 
+                              (c >= 'a' and c <= 'f') or 
+                              (c >= 'A' and c <= 'F'));
                 }
             }
         };

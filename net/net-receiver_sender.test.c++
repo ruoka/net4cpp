@@ -18,7 +18,7 @@ inline bool network_tests_enabled()
 
 auto register_receiver_sender_tests()
 {
-    if(!network_tests_enabled()) return false;
+    if(not network_tests_enabled()) return false;
     std::array<int, 100> data;
     for (int i = 0; i < 100; ++i) data[i] = i + 1;
 
@@ -60,7 +60,7 @@ auto register_receiver_sender_tests()
 
     // Wait for receiver to be ready
     auto start_ready = std::chrono::steady_clock::now();
-    while (!receiver_ready && (std::chrono::steady_clock::now() - start_ready) < 5s) {
+    while (not receiver_ready and (std::chrono::steady_clock::now() - start_ready) < 5s) {
         std::this_thread::sleep_for(10ms);
     }
 
@@ -81,11 +81,11 @@ auto register_receiver_sender_tests()
 
     // Join with timeout logic
     auto start = std::chrono::steady_clock::now();
-    while (!done && (std::chrono::steady_clock::now() - start) < 15s) {
+    while (not done and (std::chrono::steady_clock::now() - start) < 15s) {
         std::this_thread::sleep_for(100ms);
     }
 
-    if (!done) {
+    if (not done) {
         receiver_timed_out = true;
     }
 
