@@ -37,14 +37,14 @@ public:
         hints.ai_family = family;
         hints.ai_socktype = socktype;
 
-        const auto is_any = node.empty() || node == "0.0.0.0" || node == "::";
+        const auto is_any = node.empty() or node == "0.0.0.0" or node == "::";
         const auto node_str = std::string{node};
         const auto service_str = std::string{service_or_port};
 
-        if (!service_str.empty() && std::isdigit(static_cast<unsigned char>(service_str[0]))) {
+        if (not service_str.empty() and std::isdigit(static_cast<unsigned char>(service_str[0]))) {
             hints.ai_flags |= posix::ai_numericserv;
         }
-        if (!is_any && !node_str.empty() && std::isdigit(static_cast<unsigned char>(node_str[0]))) {
+        if (not is_any and not node_str.empty() and std::isdigit(static_cast<unsigned char>(node_str[0]))) {
             hints.ai_flags |= posix::ai_numericnode;
         }
 

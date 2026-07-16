@@ -43,7 +43,7 @@ iendpointstream join(std::string_view group, std::string_view service, bool loop
     for(const auto& address : local_address)
     {
         net::socket s{address.ai_family, address.ai_socktype, address.ai_protocol};
-        if(!s) continue;
+        if(not s) continue;
 
         auto reuse = 1;
         if(posix::setsockopt(s, posix::sol_socket, posix::so_reuseport, &reuse, sizeof reuse) < 0) continue;

@@ -583,9 +583,9 @@ auto register_structured_log_stream_tests()
                     check_contains(output, "1970"); // year values
                     // Month may be formatted as name or number depending on operator<<
                     // Check for any month representation (03, 12, Mar, Dec, March, December)
-                    check_true(output.find("03") != std::string::npos || 
-                               output.find("Mar") != std::string::npos ||
-                               output.find("12") != std::string::npos ||
+                    check_true(output.find("03") != std::string::npos or 
+                               output.find("Mar") != std::string::npos or
+                               output.find("12") != std::string::npos or
                                output.find("Dec") != std::string::npos);
                     slog.redirect(std::clog);
                 };
@@ -658,8 +658,8 @@ auto register_structured_log_stream_tests()
                     check_contains(output, "5");    // seconds
                     check_contains(output, "2");    // hours
                     // Duration might be formatted with units (ms, s, h) or just numbers
-                    check_true(output.find("ms") != std::string::npos || 
-                               output.find("milliseconds") != std::string::npos ||
+                    check_true(output.find("ms") != std::string::npos or 
+                               output.find("milliseconds") != std::string::npos or
                                output.find("123") != std::string::npos);
                     
                     slog.redirect(std::clog);

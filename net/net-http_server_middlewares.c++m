@@ -100,7 +100,7 @@ inline auto authentication_middleware(
             }
             
             // Validate token
-            if(authorization.empty() || !validate_token(authorization))
+            if(authorization.empty() or not validate_token(authorization))
             {
                 // Return 401 Unauthorized with WWW-Authenticate header
                 auto error_headers = headers{};
@@ -152,17 +152,17 @@ inline auto accept_validation_middleware(std::string_view required_content_type 
             else
             {
                 // Check if Accept header contains the required content type
-                if(!hdr.contains("accept"s))
+                if(not hdr.contains("accept"s))
                     accepted = true; // No Accept header means accept anything
                 else
                 {
                     const auto accept_value = hdr["accept"s];
-                    accepted = accept_value.contains("*/*"sv) || 
+                    accepted = accept_value.contains("*/*"sv) or 
                                accept_value.contains(required_content_type);
                 }
             }
             
-            if(!accepted)
+            if(not accepted)
             {
                 using namespace std::string_literals;
                 auto error_message = "Not Acceptable: This resource only supports "s + required_content_type + " content type"s;
@@ -184,7 +184,7 @@ inline auto correlation_id_middleware()
             using namespace std::string_literals;
             
             // Ensure X-Correlation-ID header exists - modify headers in-place
-            if(!hdr.contains("x-correlation-id"s))
+            if(not hdr.contains("x-correlation-id"s))
             {
                 const auto correlation_id = net::generate_uuid_v4();
                 hdr.set("x-correlation-id"s, correlation_id);
@@ -285,7 +285,7 @@ inline auto rate_limiting_middleware(
             }
             
             // Check rate limit
-            if(!rate_limit_tracker().check_limit(key, max_requests, window_seconds))
+            if(not rate_limit_tracker().check_limit(key, max_requests, window_seconds))
             {
                 // Rate limit exceeded - use standardized error response
                 auto error_message = std::format(
@@ -352,13 +352,13 @@ inline auto cors_middleware(
                 
                 // CORS spec: cannot use wildcard with credentials
                 // If credentials enabled but origin is wildcard, disable credentials for this response
-                auto use_credentials = allow_credentials && origin_value != "*"s;
+                auto use_credentials = allow_credentials and origin_value != "*"s;
                 
                 auto preflight_headers = headers{};
                 preflight_headers.set("access-control-allow-origin"s, origin_value);
                 
                 // Build allowed methods using ranges - pre-calculate size for efficiency
-                if(!allowed_methods.empty())
+                if(not allowed_methods.empty())
                 {
                     auto methods_view = allowed_methods | std::views::transform([](const auto& m) { return std::string_view{m}; });
                     auto total_size = std::accumulate(methods_view.begin(), methods_view.end(), std::size_t{0},
@@ -367,7 +367,7 @@ inline auto cors_middleware(
                     methods_str.reserve(total_size);
                     auto first = true;
                     std::ranges::for_each(methods_view, [&](auto method) {
-                        if(!first) methods_str += ", "s;
+                        if(not first) methods_str += ", "s;
                         methods_str += method;
                         first = false;
                     });
@@ -375,7 +375,7 @@ inline auto cors_middleware(
                 }
                 
                 // Build allowed headers using ranges - pre-calculate size for efficiency
-                if(!allowed_headers.empty())
+                if(not allowed_headers.empty())
                 {
                     auto headers_view = allowed_headers | std::views::transform([](const auto& h) { return std::string_view{h}; });
                     auto total_size = std::accumulate(headers_view.begin(), headers_view.end(), std::size_t{0},
@@ -384,7 +384,7 @@ inline auto cors_middleware(
                     headers_str.reserve(total_size);
                     auto first = true;
                     std::ranges::for_each(headers_view, [&](auto header) {
-                        if(!first) headers_str += ", "s;
+                        if(not first) headers_str += ", "s;
                         headers_str += header;
                         first = false;
                     });
@@ -417,7 +417,7 @@ inline auto cors_middleware(
             cors_headers.set("access-control-allow-origin"s, origin_value);
             
             // Build allowed methods using ranges - pre-calculate size for efficiency
-            if(!allowed_methods.empty())
+            if(not allowed_methods.empty())
             {
                 auto methods_view = allowed_methods | std::views::transform([](const auto& m) { return std::string_view{m}; });
                 auto total_size = std::accumulate(methods_view.begin(), methods_view.end(), std::size_t{0},
@@ -426,7 +426,7 @@ inline auto cors_middleware(
                 methods_str.reserve(total_size);
                 auto first = true;
                 std::ranges::for_each(methods_view, [&](auto method) {
-                    if(!first) methods_str += ", "s;
+                    if(not first) methods_str += ", "s;
                     methods_str += method;
                     first = false;
                 });
@@ -434,7 +434,7 @@ inline auto cors_middleware(
             }
             
             // Build allowed headers using ranges - pre-calculate size for efficiency
-            if(!allowed_headers.empty())
+            if(not allowed_headers.empty())
             {
                 auto headers_view = allowed_headers | std::views::transform([](const auto& h) { return std::string_view{h}; });
                 auto total_size = std::accumulate(headers_view.begin(), headers_view.end(), std::size_t{0},
@@ -443,7 +443,7 @@ inline auto cors_middleware(
                 headers_str.reserve(total_size);
                 auto first = true;
                 std::ranges::for_each(headers_view, [&](auto header) {
-                    if(!first) headers_str += ", "s;
+                    if(not first) headers_str += ", "s;
                     headers_str += header;
                     first = false;
                 });
@@ -452,7 +452,7 @@ inline auto cors_middleware(
             
             // CORS spec: cannot use wildcard with credentials
             // If credentials enabled but origin is wildcard, disable credentials for this response
-            if(allow_credentials && origin_value != "*"s)
+            if(allow_credentials and origin_value != "*"s)
                 cors_headers.set("access-control-allow-credentials"s, "true"s);
             
             if(max_age.has_value())
@@ -588,7 +588,7 @@ inline std::string_view metrics_status_code(std::string_view status_line)
 inline std::pair<std::string_view, std::string_view> metrics_method_and_target(std::string_view request_line)
 {
     auto rest = request_line;
-    while(not rest.empty() && rest.front() == ' ')
+    while(not rest.empty() and rest.front() == ' ')
         rest.remove_prefix(1);
 
     if(rest.empty())
@@ -606,7 +606,7 @@ inline std::pair<std::string_view, std::string_view> metrics_method_and_target(s
 
     const auto method = rest.substr(0, method_end);
     auto target = rest.substr(method_end + 1);
-    while(not target.empty() && target.front() == ' ')
+    while(not target.empty() and target.front() == ' ')
         target.remove_prefix(1);
     const auto target_end = target.find(' ');
     if(target_end != std::string_view::npos)
@@ -616,7 +616,7 @@ inline std::pair<std::string_view, std::string_view> metrics_method_and_target(s
 
 inline bool is_metrics_scrape_request(std::string_view method, std::string_view target)
 {
-    if(method != "GET"sv && method != "get"sv)
+    if(method != "GET"sv and method != "get"sv)
         return false;
 
     auto path = target;

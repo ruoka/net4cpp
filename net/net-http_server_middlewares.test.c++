@@ -241,7 +241,7 @@ auto register_middleware_tests()
     tester::bdd::scenario("authentication_middleware - allows public paths, [net]") = [] {
         tester::bdd::given("A middleware with public paths") = [] {
             auto is_public = [](std::string_view path) -> bool {
-                return path == "/public"sv || path == "/health"sv;
+                return path == "/public"sv or path == "/health"sv;
             };
             
             auto validate_token = [](std::string_view) -> bool { return false; };

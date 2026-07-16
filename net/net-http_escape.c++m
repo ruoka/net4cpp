@@ -17,7 +17,7 @@ namespace detail {
 
 inline constexpr bool url_unreserved(unsigned char c)
 {
-    return std::isalnum(c) != 0 || c == '-' || c == '_' || c == '.' || c == '~';
+    return std::isalnum(c) != 0 or c == '-' or c == '_' or c == '.' or c == '~';
 }
 
 inline void write_html_escaped(std::ostream& os, std::string_view value)

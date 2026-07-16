@@ -22,7 +22,7 @@ inline bool network_tests_enabled()
 
 auto register_connector_tests()
 {
-    if(!network_tests_enabled()) return false;
+    if(not network_tests_enabled()) return false;
 
     tester::bdd::scenario("Basic construction, [net]") = [] {
         tester::bdd::given("A connector to google.com:http") = [] {
@@ -37,7 +37,7 @@ auto register_connector_tests()
         tester::bdd::given("A connection to google.com:http") = [] {
             check_nothrow([] {
                 const auto s = net::connect("google.com","http");
-                check_true(!(!s));
+                check_true(not(not s));
             });
         };
     };
