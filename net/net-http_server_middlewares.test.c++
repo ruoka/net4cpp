@@ -837,6 +837,56 @@ auto register_middleware_tests()
         };
     };
 
+    tester::bdd::scenario("metrics_middleware - uses x-http-method with URI-only request, [net]") = [] {
+        tester::bdd::given("A metrics middleware mimicking http::server (URI + method header)") = [] {
+            ::http::middleware::http_metrics().reset();
+            auto mw = ::http::middleware::metrics_middleware();
+            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+                return ::http::make_response(::http::status_created, "created"s, std::optional<::http::headers>{});
+            };
+            auto wrapped = mw(handler);
+
+            tester::bdd::when("Handling POST /users with x-http-method and scraping") = [wrapped]() mutable {
+                auto headers = ::http::headers{};
+                headers.set("x-http-method"s, "POST"s);
+                (void)wrapped("/users"sv, "{}"sv, headers);
+
+                auto scrape_headers = ::http::headers{};
+                scrape_headers.set("x-http-method"s, "GET"s);
+                auto [scrape_status, scrape_body, scrape_hdrs] = wrapped("/metrics"sv, ""sv, scrape_headers);
+
+                tester::bdd::then("Scrape shows POST 201 not GET") = [scrape_status, scrape_body] {
+                    check_eq(scrape_status, ::http::status_ok);
+                    check_contains(scrape_body, "http_requests_total{method=\"POST\",status=\"201\"} 1");
+                    check_true(scrape_body.find("http_requests_total{method=\"GET\"") == std::string::npos);
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("metrics histogram buckets are cumulative, [net]") = [] {
+        tester::bdd::given("A reset metrics registry") = [] {
+            ::http::middleware::http_metrics().reset();
+
+            tester::bdd::when("Observing one 1.5ms request") = [] {
+                // Fine low-end bounds: 0.0015 first lands in le=0.0025.
+                ::http::middleware::http_metrics().observe("GET"sv, "200"sv, 0.0015);
+                const auto body = ::http::middleware::http_metrics().render_prometheus_text();
+
+                tester::bdd::then("Only buckets with le >= 0.0015 are incremented") = [body] {
+                    check_contains(body, R"(http_request_duration_seconds_bucket{method="GET",status="200",le="0.0001"} 0)");
+                    check_contains(body, R"(http_request_duration_seconds_bucket{method="GET",status="200",le="0.00025"} 0)");
+                    check_contains(body, R"(http_request_duration_seconds_bucket{method="GET",status="200",le="0.0005"} 0)");
+                    check_contains(body, R"(http_request_duration_seconds_bucket{method="GET",status="200",le="0.001"} 0)");
+                    check_contains(body, R"(http_request_duration_seconds_bucket{method="GET",status="200",le="0.0025"} 1)");
+                    check_contains(body, R"(http_request_duration_seconds_bucket{method="GET",status="200",le="0.005"} 1)");
+                    check_contains(body, R"(http_request_duration_seconds_bucket{method="GET",status="200",le="+Inf"} 1)");
+                    check_contains(body, R"(http_request_duration_seconds_count{method="GET",status="200"} 1)");
+                };
+            };
+        };
+    };
+
     return true;
 }
 
