@@ -78,57 +78,57 @@ enum class log_format { syslog, jsonl };
 
 // Concepts for type categorization in convert_to_value
 template<typename T>
-concept exact_value_type = std::same_as<std::remove_cvref_t<T>, std::nullptr_t> ||
-                           std::same_as<std::remove_cvref_t<T>, bool> ||
-                           std::same_as<std::remove_cvref_t<T>, int> ||
-                           std::same_as<std::remove_cvref_t<T>, unsigned int> ||
-                           std::same_as<std::remove_cvref_t<T>, long> ||
-                           std::same_as<std::remove_cvref_t<T>, unsigned long> ||
-                           std::same_as<std::remove_cvref_t<T>, long long> ||
-                           std::same_as<std::remove_cvref_t<T>, unsigned long long> ||
-                           std::same_as<std::remove_cvref_t<T>, double> ||
+concept exact_value_type = std::same_as<std::remove_cvref_t<T>, std::nullptr_t> or
+                           std::same_as<std::remove_cvref_t<T>, bool> or
+                           std::same_as<std::remove_cvref_t<T>, int> or
+                           std::same_as<std::remove_cvref_t<T>, unsigned int> or
+                           std::same_as<std::remove_cvref_t<T>, long> or
+                           std::same_as<std::remove_cvref_t<T>, unsigned long> or
+                           std::same_as<std::remove_cvref_t<T>, long long> or
+                           std::same_as<std::remove_cvref_t<T>, unsigned long long> or
+                           std::same_as<std::remove_cvref_t<T>, double> or
                            std::same_as<std::remove_cvref_t<T>, std::string>;
 
 template<typename T>
-concept c_string_type = std::same_as<std::remove_cvref_t<T>, const char*> ||
+concept c_string_type = std::same_as<std::remove_cvref_t<T>, const char*> or
                         std::same_as<std::remove_cvref_t<T>, char*>;
 
 template<typename T>
-concept string_view_convertible = !exact_value_type<T> && 
-                                  !c_string_type<T> &&
+concept string_view_convertible = not exact_value_type<T> and 
+                                  not c_string_type<T> and
                                   std::convertible_to<T, std::string_view>;
 
 template<typename T>
-concept integral_convertible = !exact_value_type<T> &&
-                               !c_string_type<T> &&
-                               !string_view_convertible<T> &&
+concept integral_convertible = not exact_value_type<T> and
+                               not c_string_type<T> and
+                               not string_view_convertible<T> and
                                std::integral<std::remove_cvref_t<T>>;
 
 template<typename T>
-concept floating_convertible = !exact_value_type<T> &&
-                               !c_string_type<T> &&
-                               !string_view_convertible<T> &&
-                               !integral_convertible<T> &&
+concept floating_convertible = not exact_value_type<T> and
+                               not c_string_type<T> and
+                               not string_view_convertible<T> and
+                               not integral_convertible<T> and
                                std::floating_point<std::remove_cvref_t<T>>;
 
 template<typename T>
-concept string_convertible = !exact_value_type<T> &&
-                             !c_string_type<T> &&
-                             !string_view_convertible<T> &&
-                             !integral_convertible<T> &&
-                             !floating_convertible<T> &&
+concept string_convertible = not exact_value_type<T> and
+                             not c_string_type<T> and
+                             not string_view_convertible<T> and
+                             not integral_convertible<T> and
+                             not floating_convertible<T> and
                              std::convertible_to<T, std::string>;
 
 // Generic concept for types with operator<< - must be last fallback
 // Note: operator<< returns std::basic_ostream<CharT, Traits>& (not stringstream&),
 // so we check that it returns something convertible to std::ostream&
 template<typename T>
-concept streamable = !exact_value_type<T> &&
-                     !c_string_type<T> &&
-                     !string_view_convertible<T> &&
-                     !integral_convertible<T> &&
-                     !floating_convertible<T> &&
-                     !string_convertible<T> &&
+concept streamable = not exact_value_type<T> and
+                     not c_string_type<T> and
+                     not string_view_convertible<T> and
+                     not integral_convertible<T> and
+                     not floating_convertible<T> and
+                     not string_convertible<T> and
                      requires(std::stringstream& ss, const T& v) {
                          { ss << v } -> std::convertible_to<std::ostream&>;
                      };
@@ -200,7 +200,7 @@ private:
         std::string esc;
         esc.reserve(s.size());
         for (char c : s) {
-            if (c == '"' || c == '\\' || c == ']') esc += '\\';
+            if (c == '"' or c == '\\' or c == ']') esc += '\\';
             esc += c;
         }
         return esc;
@@ -227,14 +227,14 @@ private:
                 os << "null";
             } else if constexpr (std::is_same_v<T, bool>) {
                 os << (arg ? "true" : "false");
-            } else if constexpr (std::is_integral_v<T> || std::is_floating_point_v<T>) {
+            } else if constexpr (std::is_integral_v<T> or std::is_floating_point_v<T>) {
                 os << arg;
             }
         }, v);
     }
 
     void ensure_metadata_cached() {
-        if (!m_metadata_cached) {
+        if (not m_metadata_cached) {
             char host[posix::ni_maxhost];
             if (posix::gethostname(host, posix::ni_maxhost) == 0) {
                 m_hostname = host;
@@ -313,7 +313,7 @@ private:
     }
 
     void output() {
-        if (!entry_enabled) return;
+        if (not entry_enabled) return;
 
         // Note: m_log_mutex must be held by caller (already locked in operator<<)
         ensure_metadata_cached();
@@ -330,7 +330,7 @@ private:
                       << "\"level\":\"" << get_severity_str() << "\","
                       << "\"source\":\"" << json_escape(m_sd_id) << "\"";
 
-            if (!entry_msg_id.empty()) {
+            if (not entry_msg_id.empty()) {
                 full_line << ",\"msg_id\":\"" << json_escape(entry_msg_id) << "\"";
             }
 
@@ -469,7 +469,7 @@ public:
         entry_enabled  = static_cast<int>(manip.sev) <= static_cast<int>(m_log_level);
         
         // Early exit: skip expensive buffer clearing if disabled
-        if (!entry_enabled) {
+        if (not entry_enabled) {
             return *this;
         }
         

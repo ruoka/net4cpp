@@ -20,7 +20,7 @@ inline bool network_tests_enabled()
 
 auto register_acceptor_tests()
 {
-    if(!network_tests_enabled()) return false;
+    if(not network_tests_enabled()) return false;
 
     tester::bdd::scenario("Basic construction, [net]") = [] {
         tester::bdd::given("An acceptor for localhost:54321") = [] {
@@ -72,25 +72,25 @@ auto register_acceptor_tests()
                 }};
 
             auto start = std::chrono::steady_clock::now();
-            while (!accepted && (std::chrono::steady_clock::now() - start) < 5s) {
+            while (not accepted and (std::chrono::steady_clock::now() - start) < 5s) {
                 std::this_thread::sleep_for(100ms);
             }
 
-            if (!accepted) {
+            if (not accepted) {
                 failed("Accept test timed out");
             }
 
             t1.join();
             t2.join();
 
-            check_true(!accept_threw);
-            check_true(!connect_threw);
+            check_true(not accept_threw);
+            check_true(not connect_threw);
             check_true(connect_ok);
             check_true(stream_ok);
             {
                 auto lock = std::lock_guard<std::mutex>{host_mutex};
                 // host might be ::1 on some systems or 127.0.0.1
-                check_true(host_value == "localhost" || host_value == "::1" || host_value == "127.0.0.1");
+                check_true(host_value == "localhost" or host_value == "::1" or host_value == "127.0.0.1");
             }
         };
     };

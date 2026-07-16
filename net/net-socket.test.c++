@@ -20,12 +20,12 @@ inline bool network_tests_enabled()
 
 auto register_socket_tests()
 {
-    if(!network_tests_enabled()) return false;
+    if(not network_tests_enabled()) return false;
 
     tester::bdd::scenario("Basic construction, [net]") = [] {
         tester::bdd::given("An IPv4 TCP socket") = [] {
             const net::socket s{posix::af_inet, posix::sock_stream};
-            check_true(!(!s));
+            check_true(not(not s));
             int fd = s;
             check_true(fd > 0);
 
@@ -36,7 +36,7 @@ auto register_socket_tests()
 
         tester::bdd::given("A socket constructed from a file descriptor") = [] {
             const auto s = net::socket{2112};
-            check_true(!(!s));
+            check_true(not(not s));
             int fd = s;
             check_eq(fd, 2112);
 
@@ -48,13 +48,13 @@ auto register_socket_tests()
 
         tester::bdd::given("A socket being moved") = [] {
             auto s1 = net::socket{posix::af_inet, posix::sock_dgram};
-            check_true(!(!s1));
+            check_true(not(not s1));
             int fd1 = s1;
             check_true(fd1 > 0);
 
             const auto s2 = net::socket{std::move(s1)};
-            check_true(!s1);
-            check_true(!(!s2));
+            check_true(not s1);
+            check_true(not(not s2));
             int fd2 = s2;
             check_eq(fd2, fd1);
 
@@ -68,7 +68,7 @@ auto register_socket_tests()
             const auto s = net::socket{posix::af_inet, posix::sock_stream};
             using namespace std::chrono_literals;
             auto b = s.wait_for(1ms);
-            check_true(!b);
+            check_true(not b);
         };
     };
 

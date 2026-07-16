@@ -19,7 +19,7 @@ inline bool network_tests_enabled()
 
 auto register_receiver_tests()
 {
-    if(!network_tests_enabled()) return false;
+    if(not network_tests_enabled()) return false;
 
     tester::bdd::scenario("Basic construction, [net]") = [] {
         tester::bdd::given("A receiver for group 228.0.0.4 and service test") = [] {
@@ -33,7 +33,7 @@ tester::bdd::scenario("Join multicast group, [net]") = [] {
         tester::bdd::given("Joining group 228.0.0.4 on port 54321") = [] {
             check_nothrow([] {
                 auto s = net::join("228.0.0.4", "54321");
-                check_true(!(!s));
+                check_true(not(not s));
             });
         };
     };

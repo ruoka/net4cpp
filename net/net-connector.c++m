@@ -57,7 +57,7 @@ endpointstream connect(std::string_view host,
     for(const auto& address : remote_address)
     {
         socket s{address.ai_family, address.ai_socktype, address.ai_protocol};
-        if(!s) continue;
+        if(not s) continue;
 
         if (posix::so_nosigpipe > 0) {
             // macOS: prevent SIGPIPE on broken pipe writes.

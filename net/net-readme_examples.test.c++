@@ -39,7 +39,7 @@ auto register_readme_examples_tests()
         
         // Define public paths (no authentication required)
         auto is_public = [](std::string_view path) {
-            return path == "/"sv || path == "/health"sv || path.starts_with("/public/"sv);
+            return path == "/"sv or path == "/health"sv or path.starts_with("/public/"sv);
         };
         
         // Define token validation
@@ -150,7 +150,7 @@ auto register_readme_examples_tests()
         // JWT token validation example
         auto validate_jwt = [](std::string_view token) {
             // Extract Bearer token
-            if(!token.starts_with("Bearer "sv))
+            if(not token.starts_with("Bearer "sv))
                 return false;
             
             auto jwt_token = token.substr(7); // Skip "Bearer "

@@ -48,7 +48,7 @@ public:
     {
         absolute = false;
         auto position = string.find_first_of(":@[]/?#");
-        if(position != std::string_view::npos && string.at(position) == ':')
+        if(position != std::string_view::npos and string.at(position) == ':')
         {
             absolute = true;
             scheme = string.substr(0, position);
@@ -84,7 +84,7 @@ public:
         path = string.substr(0, position);
         string.remove_prefix(position);
 
-        if(!string.empty() && string.front() == '?')
+        if(not string.empty() and string.front() == '?')
         {
             string.remove_prefix(1);
             position = string.find_first_of("#");
@@ -92,7 +92,7 @@ public:
             string.remove_prefix(position);
         }
 
-        if(!string.empty() && string.front() == '#')
+        if(not string.empty() and string.front() == '#')
         {
             string.remove_prefix(1);
             fragment = string.substr();
@@ -124,13 +124,13 @@ inline auto url_decode(std::string_view encoded)
     
     for(std::size_t i = 0; i < encoded.size(); ++i)
     {
-        if(encoded[i] == '%' && i + 2 < encoded.size())
+        if(encoded[i] == '%' and i + 2 < encoded.size())
         {
             // Try to decode hex pair
             auto hex_str = encoded.substr(i + 1, 2);
             auto value = 0;
             auto [ptr, ec] = std::from_chars(hex_str.data(), hex_str.data() + hex_str.size(), value, 16);
-            if(ec == std::errc{} && ptr == hex_str.data() + hex_str.size())
+            if(ec == std::errc{} and ptr == hex_str.data() + hex_str.size())
             {
                 decoded += static_cast<char>(value);
                 i += 2; // Skip the two hex digits
