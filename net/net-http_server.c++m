@@ -637,6 +637,8 @@ private:
                                 method_allowed = true;
                                 try
                                 {
+                                    // Handlers receive URI only; expose method for metrics middleware.
+                                    hs.set("x-http-method"s, method);
                                     std::tie(res_status, res_content, res_type, custom_headers) = it->second.render(uri, body, hs);
                                     if(not res_type.empty())
                                         break;

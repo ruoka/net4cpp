@@ -65,8 +65,7 @@ inline callback_with_headers wrap(callback_with_headers endpoint, std::span<cons
 // Returns 401 Unauthorized if authentication fails
 // Parameters:
 //   - is_public_path: function that returns true if the path should be publicly accessible
-//                     Note: receives the full request line (e.g., "GET /path HTTP/1.1"), not just the path.
-//                     Applications should parse the path from the request line if needed.
+//                     Note: receives the request URI (path + optional query), as passed by http::server.
 //   - validate_token: function that validates the Authorization header value, returns true if valid
 //                     Note: receives std::string_view of the authorization header value
 //   - realm: optional realm string for WWW-Authenticate header (default: "User Visible Realm")
@@ -465,10 +464,24 @@ inline auto cors_middleware(
 
 // Prometheus HTTP metrics (minimum): request counters + duration histogram.
 // Labels: method + status only. GET /metrics is served by the middleware (not counted).
+// Bounds favour sub-50ms latencies typical of this stack (100µs … 50ms), plus coarser
+// upper buckets for slow outliers.
 
-inline constexpr std::array<double, 11> http_metrics_histogram_bounds = {
-    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0
+inline constexpr std::array<double, 16> http_metrics_histogram_bounds = {
+    0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025,
+    0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0
 };
+
+// Stable decimal le labels (avoid std::format scientific notation like 1e-04).
+inline std::string format_histogram_le(double bound)
+{
+    auto s = std::format("{:.10f}", bound);
+    while(s.size() > 1 and s.back() == '0')
+        s.pop_back();
+    if(not s.empty() and s.back() == '.')
+        s.pop_back();
+    return s;
+}
 
 struct metrics_label_key
 {
@@ -498,6 +511,9 @@ struct metrics_registry
         durations.clear();
     }
 
+    // Prometheus histogram buckets are cumulative: an observation of d seconds
+    // increments every bucket with le >= d (and +Inf). Fast requests therefore
+    // raise all bucket lines to the same count — that is expected, not a bug.
     void observe(std::string_view method, std::string_view status, double duration_seconds)
     {
         auto key = metrics_label_key{std::string{method}, std::string{status}};
@@ -544,7 +560,7 @@ struct metrics_registry
                     "http_request_duration_seconds_bucket{{method=\"{}\",status=\"{}\",le=\"{}\"}} {}\n",
                     key.method,
                     key.status,
-                    http_metrics_histogram_bounds[i],
+                    format_histogram_le(http_metrics_histogram_bounds[i]),
                     series.buckets[i]);
             }
             std::format_to(
@@ -585,6 +601,8 @@ inline std::string_view metrics_status_code(std::string_view status_line)
     return status_line.substr(0, space);
 }
 
+inline constexpr auto metrics_method_header = "x-http-method"sv;
+
 inline std::pair<std::string_view, std::string_view> metrics_method_and_target(std::string_view request_line)
 {
     auto rest = request_line;
@@ -594,10 +612,11 @@ inline std::pair<std::string_view, std::string_view> metrics_method_and_target(s
     if(rest.empty())
         return {"UNKNOWN"sv, "/"sv};
 
+    // URI-only (how http::server calls handlers) — method comes from x-http-method when set.
     if(rest.front() == '/')
     {
         const auto sp = rest.find(' ');
-        return {"GET"sv, sp == std::string_view::npos ? rest : rest.substr(0, sp)};
+        return {"UNKNOWN"sv, sp == std::string_view::npos ? rest : rest.substr(0, sp)};
     }
 
     const auto method_end = rest.find(' ');
@@ -612,6 +631,16 @@ inline std::pair<std::string_view, std::string_view> metrics_method_and_target(s
     if(target_end != std::string_view::npos)
         target = target.substr(0, target_end);
     return {method, target.empty() ? "/"sv : target};
+}
+
+inline std::pair<std::string, std::string_view> metrics_resolve_method_and_target(
+    std::string_view req,
+    const headers& hdr)
+{
+    auto [parsed_method, target] = metrics_method_and_target(req);
+    if(hdr.contains(std::string{metrics_method_header}))
+        return {hdr[std::string{metrics_method_header}], target};
+    return {std::string{parsed_method}, target};
 }
 
 inline bool is_metrics_scrape_request(std::string_view method, std::string_view target)
@@ -629,13 +658,14 @@ inline bool is_metrics_scrape_request(std::string_view method, std::string_view 
 
 // Middleware: Prometheus metrics — records method/status counters and latency histogram;
 // short-circuits GET /metrics with Prometheus text exposition (scrapes are not counted).
+// Prefer method from x-http-method (set by http::server); fall back to parsing a request line.
 inline auto metrics_middleware()
 {
     return [](callback_with_headers next)
     {
         return [next = std::move(next)](auto req, auto body, auto hdr) mutable
         {
-            const auto [method, target] = metrics_method_and_target(req);
+            const auto [method, target] = metrics_resolve_method_and_target(req, hdr);
 
             if(is_metrics_scrape_request(method, target))
             {
