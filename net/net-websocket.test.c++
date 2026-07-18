@@ -36,6 +36,88 @@ inline frame make_masked_close(std::uint32_t key = 0x01020304u)
     return f;
 }
 
+inline frame make_masked_ping(std::string_view payload, std::uint32_t key = 0x01020304u)
+{
+    auto f = frame{};
+    f.op = opcode::ping;
+    f.masked = true;
+    f.masking_key = key;
+    f.payload.resize(payload.size());
+    if(not payload.empty())
+        std::memcpy(f.payload.data(), payload.data(), payload.size());
+    return f;
+}
+
+inline frame make_masked_pong(std::uint32_t key = 0x01020304u)
+{
+    auto f = frame{};
+    f.op = opcode::pong;
+    f.masked = true;
+    f.masking_key = key;
+    return f;
+}
+
+// In-memory duplex stream: reads consume a prepared input buffer, writes are
+// captured separately so run_text_session responses can be inspected without a
+// socket. Keeping the two directions apart avoids the reader looping over freshly
+// written response bytes (which a single shared buffer would do).
+class duplex_buf : public std::streambuf
+{
+public:
+
+    explicit duplex_buf(std::string input) : m_in{std::move(input)}
+    {
+        auto* base = m_in.data();
+        setg(base, base, base + m_in.size());
+    }
+
+    const std::string& output() const noexcept { return m_out; }
+
+protected:
+
+    int_type overflow(int_type ch) override
+    {
+        if(ch != traits_type::eof())
+            m_out.push_back(static_cast<char>(ch));
+        return ch;
+    }
+
+    std::streamsize xsputn(const char* s, std::streamsize n) override
+    {
+        m_out.append(s, static_cast<std::size_t>(n));
+        return n;
+    }
+
+private:
+
+    std::string m_in;
+    std::string m_out;
+};
+
+class duplex_stream : public std::iostream
+{
+public:
+
+    explicit duplex_stream(std::string input) : std::iostream{nullptr}, m_buf{std::move(input)}
+    {
+        rdbuf(&m_buf);
+    }
+
+    const std::string& output() const noexcept { return m_buf.output(); }
+
+private:
+
+    duplex_buf m_buf;
+};
+
+// Encode a frame to bytes for use as duplex_stream input.
+inline std::string frame_bytes(const frame& f)
+{
+    auto oss = std::ostringstream{};
+    write_frame(oss, f);
+    return oss.str();
+}
+
 } // namespace
 
 auto register_websocket_tests()
@@ -67,6 +149,115 @@ auto register_websocket_tests()
         auto decoded = frame{};
         require_true(read_frame(iss, decoded));
         check_eq(payload_as_string(decoded), payload);
+    };
+
+    tester::bdd::scenario("websocket unmasked server frame round-trip, [net]") = [] {
+        auto oss = std::ostringstream{};
+        require_true(write_frame(oss, make_text_frame("server-say"sv)));
+
+        auto iss = std::istringstream{oss.str()};
+        auto decoded = frame{};
+        require_true(read_frame(iss, decoded));
+        check_true(not decoded.masked);
+        check_eq(decoded.op, opcode::text);
+        check_eq(payload_as_string(decoded), "server-say"s);
+    };
+
+    tester::bdd::scenario("websocket frame supports 64-bit extended length, [net]") = [] {
+        // > 0xFFFF forces the 8-byte length encoding, still under the 1 MiB cap.
+        const auto payload = std::string(70000, 'y');
+        auto oss = std::ostringstream{};
+        require_true(write_frame(oss, make_masked_text(payload)));
+
+        auto iss = std::istringstream{oss.str()};
+        auto decoded = frame{};
+        require_true(read_frame(iss, decoded));
+        check_eq(decoded.payload.size(), payload.size());
+        check_eq(payload_as_string(decoded), payload);
+    };
+
+    tester::bdd::scenario("websocket read_frame rejects oversized payload, [net]") = [] {
+        // Hand-craft a header that claims > 1 MiB via the 64-bit length field.
+        auto header = std::string{};
+        header.push_back(static_cast<char>(0x81)); // FIN + text
+        header.push_back(static_cast<char>(0x7F)); // 127 => 64-bit length, unmasked
+        const auto len = std::uint64_t{(1u << 20) + 1};
+        for(int shift = 56; shift >= 0; shift -= 8)
+            header.push_back(static_cast<char>((len >> shift) & 0xFFu));
+
+        auto iss = std::istringstream{header};
+        auto decoded = frame{};
+        check_true(not read_frame(iss, decoded));
+    };
+
+    tester::bdd::scenario("websocket read_frame fails on truncated payload, [net]") = [] {
+        // Announce 5 bytes but only provide 2.
+        auto oss = std::ostringstream{};
+        require_true(write_frame(oss, make_masked_text("hello"sv)));
+        auto truncated = oss.str().substr(0, oss.str().size() - 3);
+
+        auto iss = std::istringstream{truncated};
+        auto decoded = frame{};
+        check_true(not read_frame(iss, decoded));
+    };
+
+    tester::bdd::scenario("run_text_session echoes text via handler, [net]") = [] {
+        auto stream = duplex_stream{frame_bytes(make_masked_text("hello"sv))};
+        run_text_session(stream, [](std::string_view msg) -> std::optional<std::string> {
+            return std::string{msg} + "!";
+        });
+
+        auto out = std::istringstream{stream.output()};
+        auto reply = frame{};
+        require_true(read_frame(out, reply));
+        check_true(not reply.masked);
+        check_eq(reply.op, opcode::text);
+        check_eq(payload_as_string(reply), "hello!"s);
+    };
+
+    tester::bdd::scenario("run_text_session suppresses reply when handler returns nullopt, [net]") = [] {
+        auto stream = duplex_stream{frame_bytes(make_masked_text("quiet"sv))};
+        run_text_session(stream, [](std::string_view) -> std::optional<std::string> {
+            return std::nullopt;
+        });
+        check_true(stream.output().empty());
+    };
+
+    tester::bdd::scenario("run_text_session answers ping with pong, [net]") = [] {
+        auto stream = duplex_stream{frame_bytes(make_masked_ping("hb"sv))};
+        run_text_session(stream, nullptr);
+
+        auto out = std::istringstream{stream.output()};
+        auto reply = frame{};
+        require_true(read_frame(out, reply));
+        check_eq(reply.op, opcode::pong);
+        check_eq(payload_as_string(reply), "hb"s);
+    };
+
+    tester::bdd::scenario("run_text_session ignores pong frames, [net]") = [] {
+        auto stream = duplex_stream{frame_bytes(make_masked_pong())};
+        run_text_session(stream, nullptr);
+        check_true(stream.output().empty());
+    };
+
+    tester::bdd::scenario("run_text_session replies to close and ends, [net]") = [] {
+        // A close frame followed by a text frame: the session must stop after the
+        // close and never echo the trailing text.
+        auto input = frame_bytes(make_masked_close());
+        input += frame_bytes(make_masked_text("after-close"sv));
+
+        auto stream = duplex_stream{input};
+        run_text_session(stream, [](std::string_view msg) -> std::optional<std::string> {
+            return std::string{msg};
+        });
+
+        auto out = std::istringstream{stream.output()};
+        auto reply = frame{};
+        require_true(read_frame(out, reply));
+        check_eq(reply.op, opcode::close);
+
+        auto extra = frame{};
+        check_true(not read_frame(out, extra)); // nothing echoed after close
     };
 
     tester::bdd::scenario("http server websocket echo upgrade, [net]") = [] {
