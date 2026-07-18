@@ -285,6 +285,19 @@ public:
         m_timeout = t;
     }
 
+    // Cap Content-Length before allocating/reading the body. Middleware that
+    // inspects body.size() cannot prevent the allocation — set this on the
+    // server (YarDB uses 1 MiB). Default is unlimited for backward compatibility.
+    std::size_t max_request_body_size() const
+    {
+        return m_max_request_body_size;
+    }
+
+    void max_request_body_size(std::size_t bytes)
+    {
+        m_max_request_body_size = bytes;
+    }
+
     void stop()
     {
         m_stop.store(true);
@@ -500,6 +513,30 @@ private:
                               << std::pair{"request_id", request_id}
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
+                           << "Date: " << date() << net::crlf
+                           << "Server: " << host() << net::crlf
+                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Content-Length: 0" << net::crlf
+                           << "Connection: close" << net::crlf
+                           << net::crlf << net::flush;
+                    break;
+                }
+
+                // Reject before allocate/read — body_size_validation_middleware
+                // only sees the body after it is fully in memory.
+                if(static_cast<unsigned long long>(content_length) > m_max_request_body_size)
+                {
+                    const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                    net::slog << net::warning("HTTP_PAYLOAD_TOO_LARGE") << "content-length exceeds max request body size from " << endpoint << ":" << port
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << std::pair{"content_length", content_length}
+                              << std::pair{"max_request_body_size", static_cast<long long>(m_max_request_body_size)}
+                              << std::pair{"status", status_payload_too_large}
+                              << std::pair{"request_id", request_id}
+                              << std::pair{"duration_ms", request_duration}
+                              << net::flush;
+                    stream << "HTTP/1.1 " << status_payload_too_large << net::crlf
                            << "Date: " << date() << net::crlf
                            << "Server: " << host() << net::crlf
                            << "Content-Type: " << m_content_type << net::crlf
@@ -860,6 +897,7 @@ private:
     std::string m_content_type = "*/*";
     std::flat_set<method_type> m_methods = {method_head, method_options};
     std::chrono::seconds m_timeout = std::chrono::seconds{0};
+    std::size_t m_max_request_body_size = std::numeric_limits<std::size_t>::max();
     std::atomic<bool> m_stop{false};
 };
 
