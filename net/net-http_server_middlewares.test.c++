@@ -852,6 +852,62 @@ auto register_middleware_tests()
         };
     };
 
+    tester::bdd::scenario("metrics_middleware - templates numeric path segments, [net]") = [] {
+        tester::bdd::given("A metrics middleware with a successful handler") = [] {
+            ::http::middleware::http_metrics().reset();
+            auto mw = ::http::middleware::metrics_middleware();
+            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+                return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
+            };
+            auto wrapped = mw(handler);
+
+            tester::bdd::when("Handling GETs for distinct document ids") = [wrapped]() mutable {
+                auto headers = ::http::headers{};
+                (void)wrapped("GET /orders/1 HTTP/1.1"sv, ""sv, headers);
+                (void)wrapped("GET /orders/99 HTTP/1.1"sv, ""sv, headers);
+                auto scrape_headers = ::http::headers{};
+                auto [scrape_status, scrape_body, scrape_hdrs] = wrapped("GET /metrics HTTP/1.1"sv, ""sv, scrape_headers);
+
+                tester::bdd::then("Both ids share one templated path series") = [scrape_status, scrape_body] {
+                    check_eq(scrape_status, ::http::status_ok);
+                    check_contains(
+                        scrape_body,
+                        R"(http_requests_total{method="GET",status="200",path="/orders/{id}",scenario="-"} 2)");
+                    check_true(scrape_body.find(R"(path="/orders/1")") == std::string::npos);
+                    check_true(scrape_body.find(R"(path="/orders/99")") == std::string::npos);
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("metrics_middleware - caps unique series with path=_other, [net]") = [] {
+        tester::bdd::given("A metrics registry filled to the series cap") = [] {
+            ::http::middleware::http_metrics().reset();
+            for(std::size_t i = 0; i < ::http::middleware::metrics_max_series; ++i)
+            {
+                ::http::middleware::http_metrics().observe(
+                    "GET"sv,
+                    "200"sv,
+                    std::format("/c{}", i),
+                    "-"sv,
+                    0.001);
+            }
+
+            tester::bdd::when("Observing one more distinct path") = [] {
+                ::http::middleware::http_metrics().observe(
+                    "GET"sv, "200"sv, "/overflow-path"sv, "-"sv, 0.001);
+                const auto body = ::http::middleware::http_metrics().render_prometheus_text();
+
+                tester::bdd::then("Overflow lands on path=_other") = [body] {
+                    check_contains(
+                        body,
+                        R"(http_requests_total{method="GET",status="200",path="_other",scenario="-"} 1)");
+                    check_true(body.find(R"(path="/overflow-path")") == std::string::npos);
+                };
+            };
+        };
+    };
+
     tester::bdd::scenario("metrics_middleware - records X-Metrics-Scenario, [net]") = [] {
         tester::bdd::given("A metrics middleware with a successful handler") = [] {
             ::http::middleware::http_metrics().reset();

@@ -439,10 +439,14 @@ inline auto cors_middleware(
 }
 
 // Prometheus HTTP metrics: request counters + duration histogram.
-// Labels: method, status, path (no query), scenario (X-Metrics-Scenario or "-").
-// GET /metrics is served by the middleware (not counted).
+// Labels: method, status, path (no query; numeric segments → {id}), scenario
+// (X-Metrics-Scenario or "-"). GET /metrics is served by the middleware (not counted).
 // Bounds favour sub-50ms latencies typical of this stack (100µs … 50ms), plus coarser
 // upper buckets for slow outliers.
+//
+// Path cardinality: raw /collection/{n} would create one series per document id
+// (and still grow under auth failures, since metrics wraps auth). Collapse digit-only
+// segments and hard-cap unique label keys so scrapes cannot OOM the process.
 
 inline constexpr std::array<double, 16> http_metrics_histogram_bounds = {
     0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025,
@@ -452,6 +456,8 @@ inline constexpr std::array<double, 16> http_metrics_histogram_bounds = {
 inline constexpr auto metrics_scenario_header = "x-metrics-scenario"sv;
 inline constexpr auto metrics_scenario_default = "-"sv;
 inline constexpr std::size_t metrics_scenario_max_len = 64;
+inline constexpr auto metrics_path_overflow = "_other"sv;
+inline constexpr std::size_t metrics_max_series = 1024;
 
 // Stable decimal le labels (avoid std::format scientific notation like 1e-04).
 inline std::string format_histogram_le(double bound)
@@ -471,6 +477,47 @@ inline std::string_view metrics_path_without_query(std::string_view target)
     if(q != std::string_view::npos)
         path = path.substr(0, q);
     return path.empty() ? "/"sv : path;
+}
+
+inline bool metrics_digit_segment(std::string_view segment)
+{
+    return not segment.empty()
+        and std::ranges::all_of(segment, [](unsigned char c) {
+            return c >= '0' and c <= '9';
+        });
+}
+
+// Strip query and replace digit-only path segments with "{id}" so REST document
+// routes share one series instead of one per primary key.
+inline std::string metrics_normalize_path(std::string_view target)
+{
+    const auto path = metrics_path_without_query(target);
+    auto out = std::string{};
+    out.reserve(path.size());
+
+    std::size_t i = 0;
+    while(i < path.size())
+    {
+        if(path[i] != '/')
+        {
+            out.push_back(path[i]);
+            ++i;
+            continue;
+        }
+
+        out.push_back('/');
+        ++i;
+        const auto start = i;
+        while(i < path.size() and path[i] != '/')
+            ++i;
+        const auto segment = path.substr(start, i - start);
+        if(metrics_digit_segment(segment))
+            out += "{id}"sv;
+        else
+            out.append(segment);
+    }
+
+    return out.empty() ? "/"s : out;
 }
 
 inline bool metrics_scenario_char_ok(char c)
@@ -544,6 +591,10 @@ struct metrics_registry
             std::string{scenario}};
 
         std::lock_guard lock{mutex};
+        // Bound memory under path/collection spam; collapse surplus into path="_other".
+        if(not request_totals.contains(key) and request_totals.size() >= metrics_max_series)
+            key.path = std::string{metrics_path_overflow};
+
         ++request_totals[key];
 
         auto& series = durations[key];
@@ -710,7 +761,7 @@ inline auto metrics_middleware()
                 return make_response(status_ok, http_metrics().render_prometheus_text(), std::make_optional(response_headers));
             }
 
-            const auto path = std::string{metrics_path_without_query(target)};
+            const auto path = metrics_normalize_path(target);
             const auto scenario = metrics_resolve_scenario(hdr);
             const auto started = std::chrono::steady_clock::now();
             auto response = next(req, body, hdr);
