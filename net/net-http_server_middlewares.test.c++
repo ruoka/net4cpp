@@ -11,6 +11,7 @@ using namespace std::string_view_literals;
 using namespace std::chrono_literals;
 using tester::assertions::check_eq;
 using tester::assertions::check_true;
+using tester::assertions::check_false;
 using tester::assertions::check_contains;
 using tester::assertions::check_nothrow;
 } // namespace
@@ -373,7 +374,7 @@ auto register_middleware_tests()
         };
     };
 
-    tester::bdd::scenario("cors_middleware - uses wildcard when no Origin header, [net]") = [] {
+    tester::bdd::scenario("cors_middleware - omits ACAO when no Origin header, [net]") = [] {
         tester::bdd::given("A CORS middleware with default config") = [] {
             auto allowed_origin = [](std::string_view) { return true; };
             auto mw = ::http::middleware::cors_middleware(allowed_origin);
@@ -391,12 +392,12 @@ auto register_middleware_tests()
                 
                 auto [status, content, headers_opt] = wrapped(req_view, empty_body, headers);
                 
-                tester::bdd::then("Response uses wildcard origin") = [status, headers_opt] {
+                tester::bdd::then("Response omits Access-Control-Allow-Origin") = [status, headers_opt] {
                     check_eq(status, ::http::status_ok);
                     check_true(headers_opt.has_value());
                     if(headers_opt.has_value())
                     {
-                        check_eq(headers_opt.value()["access-control-allow-origin"s], "*"s);
+                        check_false(headers_opt.value().contains("access-control-allow-origin"s));
                     }
                 };
             };
@@ -438,7 +439,7 @@ auto register_middleware_tests()
         };
     };
 
-    tester::bdd::scenario("cors_middleware - uses wildcard for disallowed origin, [net]") = [] {
+    tester::bdd::scenario("cors_middleware - omits ACAO for disallowed origin, [net]") = [] {
         tester::bdd::given("A CORS middleware with restricted origins") = [] {
             auto allowed_origins = std::make_shared<std::set<std::string>>(std::set<std::string>{"https://example.com"});
             auto allowed_origin = [allowed_origins](std::string_view origin) -> bool {
@@ -461,12 +462,13 @@ auto register_middleware_tests()
                 
                 auto [status, content, headers_opt] = wrapped(req_view, empty_body, headers);
                 
-                tester::bdd::then("Response uses wildcard origin") = [status, headers_opt] {
+                tester::bdd::then("Response omits Access-Control-Allow-Origin") = [status, headers_opt] {
                     check_eq(status, ::http::status_ok);
                     check_true(headers_opt.has_value());
                     if(headers_opt.has_value())
                     {
-                        check_eq(headers_opt.value()["access-control-allow-origin"s], "*"s);
+                        check_false(headers_opt.value().contains("access-control-allow-origin"s));
+                        check_false(headers_opt.value().contains("access-control-allow-credentials"s));
                     }
                 };
             };
@@ -488,6 +490,7 @@ auto register_middleware_tests()
                 auto req_view = "/test"sv;
                 auto empty_body = ""sv;
                 auto headers = ::http::headers{};
+                headers.set("origin"s, "https://example.com"s);
                 
                 auto [status, content, headers_opt] = wrapped(req_view, empty_body, headers);
                 
@@ -521,6 +524,7 @@ auto register_middleware_tests()
                 auto req_view = "/test"sv;
                 auto empty_body = ""sv;
                 auto headers = ::http::headers{};
+                headers.set("origin"s, "https://example.com"s);
                 
                 auto [status, content, headers_opt] = wrapped(req_view, empty_body, headers);
                 
@@ -533,6 +537,7 @@ auto register_middleware_tests()
                         check_true(h.contains("custom-header"s));
                         check_eq(h["custom-header"s], "custom-value"s);
                         check_true(h.contains("access-control-allow-origin"s));
+                        check_eq(h["access-control-allow-origin"s], "https://example.com"s);
                     }
                 };
             };
