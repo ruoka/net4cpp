@@ -1,5 +1,5 @@
 name: "setup-llvm"
-description: "Install LLVM 21 + related tools (with caching). Accepts a space-separated list of apt packages."
+description: "Install LLVM 21 + related tools via apt, caching .deb archives in a user-owned directory."
 inputs:
   packages:
     description: "Space-separated apt packages to install (default includes libc++, clang, lld, lldb, jq)"
@@ -9,51 +9,86 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Cache LLVM 21 + libc++
-      id: cache
-      uses: actions/cache@v4
-      with:
-        path: |
-          /usr/lib/llvm-21
-          /usr/bin/clang-21
-          /usr/bin/clang++-21
-          /usr/bin/lld-21
-          /usr/bin/lldb-21
-          /usr/bin/clang-tidy-21
-        key: llvm-21-ubuntu-${{ runner.arch }}-2025-v1
-        restore-keys: |
-          llvm-21-ubuntu-${{ runner.arch }}-
-          llvm-21-ubuntu-
-          llvm-21-
-
-    - name: Ensure LLVM toolchain installed (install if missing)
+    # Apt must remain the source of truth for /usr. We only cache downloaded
+    # .debs in a user-owned directory so actions/cache can restore them (the
+    # runner user cannot extract into root-owned /var/cache/apt/archives).
+    - name: Prepare LLVM apt source and cache fingerprint
+      id: prep
       shell: bash
+      env:
+        LLVM_PACKAGES: ${{ inputs.packages }}
       run: |
         set -euo pipefail
 
-        # If clang++-21 is present, skip install; otherwise install requested packages.
-        if command -v clang++-21 >/dev/null 2>&1; then
-          echo "clang++-21 found; skipping apt install."
-        else
-          echo "clang++-21 not found — installing LLVM 21 toolchain..."
-          sudo apt-get update -y
-          sudo apt-get install -y wget gnupg ca-certificates lsb-release software-properties-common
-          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/apt-llvm.gpg
-          echo "deb [signed-by=/usr/share/keyrings/apt-llvm.gpg] https://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-21 main" | sudo tee /etc/apt/sources.list.d/apt-llvm.org.list > /dev/null
-          sudo apt-get update -y
-          sudo apt-get install -y ${{ inputs.packages }}
-        fi
+        APT_CACHE="${HOME}/.cache/ruoka-apt-llvm"
+        mkdir -p "${APT_CACHE}/partial"
+        echo "cache_dir=${APT_CACHE}" >> "${GITHUB_OUTPUT}"
 
-        # Ensure clang/clang++/lld alternatives point to the clang-21 binaries if present
-        if [ -x /usr/bin/clang-21 ]; then
+        # Hosted runners wipe kept packages via docker-clean; keep .debs so the
+        # archive cache is non-empty after install.
+        sudo rm -f /etc/apt/apt.conf.d/docker-clean
+        echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' \
+          | sudo tee /etc/apt/apt.conf.d/01keep-debs >/dev/null
+
+        sudo apt-get update -y
+        sudo apt-get install -y wget gnupg ca-certificates lsb-release software-properties-common
+
+        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key \
+          | sudo gpg --dearmor -o /usr/share/keyrings/apt-llvm.gpg
+        echo "deb [signed-by=/usr/share/keyrings/apt-llvm.gpg] https://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-21 main" \
+          | sudo tee /etc/apt/sources.list.d/apt-llvm.org.list >/dev/null
+        sudo apt-get update -y
+
+        # Fingerprint candidate versions so a LLVM apt bump invalidates the cache.
+        fingerprint="$(
+          {
+            printf 'packages:%s\n' "${LLVM_PACKAGES}"
+            # shellcheck disable=SC2086
+            for pkg in ${LLVM_PACKAGES}; do
+              apt-cache policy "${pkg}" 2>/dev/null \
+                | awk -v p="${pkg}" '/Candidate:/ { print p ":" $2; exit }'
+            done
+          } | sha256sum | awk '{ print $1 }'
+        )"
+        echo "fingerprint=${fingerprint}" >> "${GITHUB_OUTPUT}"
+        echo "Apt fingerprint: ${fingerprint}"
+
+    - name: Cache apt .deb archives
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.prep.outputs.cache_dir }}
+        key: apt-llvm-21-${{ runner.os }}-${{ runner.arch }}-${{ steps.prep.outputs.fingerprint }}
+        restore-keys: |
+          apt-llvm-21-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Install LLVM packages from apt
+      shell: bash
+      env:
+        LLVM_PACKAGES: ${{ inputs.packages }}
+        APT_CACHE: ${{ steps.prep.outputs.cache_dir }}
+      run: |
+        set -euo pipefail
+
+        mkdir -p "${APT_CACHE}/partial"
+
+        # shellcheck disable=SC2086
+        sudo apt-get \
+          -o Dir::Cache::archives="${APT_CACHE}" \
+          install -y ${LLVM_PACKAGES}
+
+        # actions/cache packs as the runner user; apt may have written as root.
+        sudo chown -R "$(id -u):$(id -g)" "${APT_CACHE}"
+
+        if [[ -x /usr/bin/clang-21 ]]; then
           sudo update-alternatives --install /usr/bin/clang   clang   /usr/bin/clang-21   100 || true
         fi
-        if [ -x /usr/bin/clang++-21 ]; then
+        if [[ -x /usr/bin/clang++-21 ]]; then
           sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-21 100 || true
         fi
-        if [ -x /usr/bin/lld-21 ]; then
+        if [[ -x /usr/bin/lld-21 ]]; then
           sudo update-alternatives --install /usr/bin/lld     lld     /usr/bin/lld-21     100 || true
         fi
 
+        clang++-21 --version | head -1
+        echo "Apt archive cache: $(du -sh "${APT_CACHE}" | awk '{print $1}') ($(find "${APT_CACHE}" -name '*.deb' | wc -l | tr -d ' ') .deb files)"
         echo "LLVM setup complete."
-
