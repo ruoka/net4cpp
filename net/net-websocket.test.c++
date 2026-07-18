@@ -260,6 +260,31 @@ auto register_websocket_tests()
         check_true(not read_frame(out, extra)); // nothing echoed after close
     };
 
+    tester::bdd::scenario("run_text_session rejects unmasked client frame with 1002, [net]") = [] {
+        // RFC 6455 §5.1: client frames must be masked. An unmasked text frame must
+        // be rejected with a protocol-error close and the handler must not run.
+        auto handler_ran = std::make_shared<bool>(false);
+        auto stream = duplex_stream{frame_bytes(make_text_frame("nomask"sv))};
+        run_text_session(stream, [handler_ran](std::string_view msg) -> std::optional<std::string> {
+            *handler_ran = true;
+            return std::string{msg};
+        });
+
+        auto out = std::istringstream{stream.output()};
+        auto reply = frame{};
+        require_true(read_frame(out, reply));
+        check_eq(reply.op, opcode::close);
+        require_true(reply.payload.size() >= 2);
+        const auto code = static_cast<std::uint16_t>(
+            (std::to_integer<unsigned>(reply.payload[0]) << 8)
+            | std::to_integer<unsigned>(reply.payload[1]));
+        check_eq(code, close_protocol_error);
+        check_true(not *handler_ran);
+
+        auto extra = frame{};
+        check_true(not read_frame(out, extra)); // session ended after the close
+    };
+
     tester::bdd::scenario("http server websocket echo upgrade, [net]") = [] {
         if(not network_tests_enabled())
             return;
