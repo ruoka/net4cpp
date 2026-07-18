@@ -20,3 +20,5 @@ export import :structured_log_stream;
 export import :uri;
 export import :utils;
 export import :uuid;
+export import :websocket;
+export import :websocket_frame;

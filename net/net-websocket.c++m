@@ -1,0 +1,185 @@
+export module net:websocket;
+export import :websocket_frame;
+import :http_base64;
+import :http_headers;
+import :utils;
+import std;
+
+export namespace net::websocket {
+
+using namespace std::string_literals;
+using namespace std::string_view_literals;
+
+// RFC 6455 §1.3 magic GUID
+inline constexpr auto accept_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"sv;
+
+namespace detail {
+
+// Compact SHA-1 (FIPS 180-1) for the short WebSocket accept material only.
+inline std::array<std::byte, 20> sha1_digest(std::string_view message)
+{
+    auto left_rotate = [](std::uint32_t value, std::uint32_t bits) noexcept
+    {
+        return (value << bits) | (value >> (32u - bits));
+    };
+
+    auto h0 = 0x67452301u;
+    auto h1 = 0xEFCDAB89u;
+    auto h2 = 0x98BADCFEu;
+    auto h3 = 0x10325476u;
+    auto h4 = 0xC3D2E1F0u;
+
+    auto bytes = std::vector<std::uint8_t>(message.begin(), message.end());
+    const auto bit_len = static_cast<std::uint64_t>(bytes.size()) * 8ull;
+    bytes.push_back(0x80u);
+    while((bytes.size() % 64u) != 56u)
+        bytes.push_back(0u);
+    for(int shift = 56; shift >= 0; shift -= 8)
+        bytes.push_back(static_cast<std::uint8_t>((bit_len >> shift) & 0xFFu));
+
+    for(std::size_t offset = 0; offset < bytes.size(); offset += 64)
+    {
+        std::array<std::uint32_t, 80> w{};
+        for(std::size_t i = 0; i < 16; ++i)
+        {
+            w[i] = (static_cast<std::uint32_t>(bytes[offset + i * 4]) << 24)
+                | (static_cast<std::uint32_t>(bytes[offset + i * 4 + 1]) << 16)
+                | (static_cast<std::uint32_t>(bytes[offset + i * 4 + 2]) << 8)
+                | static_cast<std::uint32_t>(bytes[offset + i * 4 + 3]);
+        }
+        for(std::size_t i = 16; i < 80; ++i)
+            w[i] = left_rotate(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+
+        auto a = h0;
+        auto b = h1;
+        auto c = h2;
+        auto d = h3;
+        auto e = h4;
+
+        for(std::size_t i = 0; i < 80; ++i)
+        {
+            std::uint32_t f = 0;
+            std::uint32_t k = 0;
+            if(i < 20)
+            {
+                f = (b & c) | ((~b) & d);
+                k = 0x5A827999u;
+            }
+            else if(i < 40)
+            {
+                f = b ^ c ^ d;
+                k = 0x6ED9EBA1u;
+            }
+            else if(i < 60)
+            {
+                f = (b & c) | (b & d) | (c & d);
+                k = 0x8F1BBCDCu;
+            }
+            else
+            {
+                f = b ^ c ^ d;
+                k = 0xCA62C1D6u;
+            }
+
+            const auto temp = left_rotate(a, 5) + f + e + k + w[i];
+            e = d;
+            d = c;
+            c = left_rotate(b, 30);
+            b = a;
+            a = temp;
+        }
+
+        h0 += a;
+        h1 += b;
+        h2 += c;
+        h3 += d;
+        h4 += e;
+    }
+
+    auto digest = std::array<std::byte, 20>{};
+    const auto words = std::array{h0, h1, h2, h3, h4};
+    for(std::size_t i = 0; i < words.size(); ++i)
+    {
+        digest[i * 4] = static_cast<std::byte>((words[i] >> 24) & 0xFFu);
+        digest[i * 4 + 1] = static_cast<std::byte>((words[i] >> 16) & 0xFFu);
+        digest[i * 4 + 2] = static_cast<std::byte>((words[i] >> 8) & 0xFFu);
+        digest[i * 4 + 3] = static_cast<std::byte>(words[i] & 0xFFu);
+    }
+    return digest;
+}
+
+} // namespace detail
+
+inline std::string sec_websocket_accept(std::string_view client_key)
+{
+    auto material = std::string{client_key};
+    material.append(accept_guid);
+    const auto digest = detail::sha1_digest(material);
+    return ::http::base64::encode(
+        std::string_view{reinterpret_cast<const char*>(digest.data()), digest.size()});
+}
+
+inline bool header_token_contains(std::string value, std::string_view token)
+{
+    utils::ascii_to_lower(value);
+    auto needle = std::string{token};
+    utils::ascii_to_lower(needle);
+    return value.contains(needle);
+}
+
+inline bool is_websocket_upgrade(const ::http::headers& hs)
+{
+    if(not hs.contains("upgrade") or not hs.contains("connection"))
+        return false;
+    return header_token_contains(hs["upgrade"], "websocket"sv)
+        and header_token_contains(hs["connection"], "upgrade"sv);
+}
+
+using text_handler = std::function<std::optional<std::string>(std::string_view)>;
+
+// Drive a WebSocket session until close/error. Server frames are unmasked.
+inline void run_text_session(std::iostream& stream, const text_handler& on_text)
+{
+    while(stream)
+    {
+        auto incoming = frame{};
+        if(not read_frame(stream, incoming))
+            break;
+
+        switch(incoming.op)
+        {
+        case opcode::ping:
+            if(not write_frame(stream, make_pong_frame(incoming.payload)))
+                return;
+            break;
+
+        case opcode::pong:
+            break;
+
+        case opcode::close:
+            write_frame(stream, make_close_frame(incoming.payload));
+            return;
+
+        case opcode::text:
+        {
+            if(not on_text)
+                break;
+            const auto text = payload_as_string(incoming);
+            if(auto reply = on_text(text))
+            {
+                if(not write_frame(stream, make_text_frame(*reply)))
+                    return;
+            }
+            break;
+        }
+
+        case opcode::binary:
+        case opcode::continuation:
+        default:
+            // v1: ignore unsupported data opcodes
+            break;
+        }
+    }
+}
+
+} // namespace net::websocket
