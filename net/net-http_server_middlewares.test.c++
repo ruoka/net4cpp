@@ -898,11 +898,54 @@ auto register_middleware_tests()
                     "GET"sv, "200"sv, "/overflow-path"sv, "-"sv, 0.001);
                 const auto body = ::http::middleware::http_metrics().render_prometheus_text();
 
-                tester::bdd::then("Overflow lands on path=_other") = [body] {
+                tester::bdd::then("Overflow lands on the all-_other bucket") = [body] {
                     check_contains(
                         body,
-                        R"(http_requests_total{method="GET",status="200",path="_other",scenario="-"} 1)");
+                        R"(http_requests_total{method="_other",status="_other",path="_other",scenario="_other"} 1)");
                     check_true(body.find(R"(path="/overflow-path")") == std::string::npos);
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("metrics_middleware - caps unique series under scenario spam, [net]") = [] {
+        tester::bdd::given("A metrics registry filled to the series cap") = [] {
+            ::http::middleware::http_metrics().reset();
+            for(std::size_t i = 0; i < ::http::middleware::metrics_max_series; ++i)
+            {
+                ::http::middleware::http_metrics().observe(
+                    "GET"sv,
+                    "200"sv,
+                    "/health"sv,
+                    std::format("s{}", i),
+                    0.001);
+            }
+
+            tester::bdd::when("Observing many more distinct scenarios") = [] {
+                constexpr auto extra = std::size_t{500};
+                for(std::size_t i = 0; i < extra; ++i)
+                {
+                    ::http::middleware::http_metrics().observe(
+                        "GET"sv,
+                        "200"sv,
+                        "/health"sv,
+                        std::format("extra{}", i),
+                        0.001);
+                }
+                const auto body = ::http::middleware::http_metrics().render_prometheus_text();
+
+                tester::bdd::then("Series count stays at cap plus one overflow bucket") = [body] {
+                    auto series = std::size_t{0};
+                    for(std::size_t pos = 0;
+                        (pos = body.find("http_requests_total{", pos)) != std::string::npos;
+                        ++pos)
+                    {
+                        ++series;
+                    }
+                    check_eq(series, ::http::middleware::metrics_max_series + 1);
+                    check_contains(
+                        body,
+                        R"(http_requests_total{method="_other",status="_other",path="_other",scenario="_other"} 500)");
                 };
             };
         };
