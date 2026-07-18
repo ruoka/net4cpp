@@ -302,6 +302,73 @@ inline auto rate_limiting_middleware(
     };
 }
 
+// Join header/method lists as a comma-separated string.
+inline auto join_cors_list(const std::vector<std::string>& values)
+{
+    if(values.empty())
+        return ""s;
+
+    auto view = values | std::views::transform([](const auto& v) { return std::string_view{v}; });
+    auto total_size = std::accumulate(
+        view.begin(),
+        view.end(),
+        std::size_t{0},
+        [](auto sum, auto v) { return sum + v.size() + 2; }) - 2;
+    auto joined = std::string{};
+    joined.reserve(total_size);
+    auto first = true;
+    std::ranges::for_each(view, [&](auto value)
+    {
+        if(not first)
+            joined += ", "s;
+        joined += value;
+        first = false;
+    });
+    return joined;
+}
+
+// Resolve a reflected ACAO value. Disallowed or missing Origin must not fall
+// back to "*" — that would open CORS to every browser origin.
+template<OriginValidator OriginValidatorFunc>
+inline auto resolve_cors_origin(const headers& hdr, OriginValidatorFunc& allowed_origin)
+    -> std::optional<std::string>
+{
+    if(not hdr.contains("origin"s))
+        return std::nullopt;
+
+    const auto origin = hdr["origin"s];
+    if(not allowed_origin(origin))
+        return std::nullopt;
+
+    return std::string{origin};
+}
+
+// Apply Allow-* CORS headers only when the request Origin is permitted.
+inline void apply_cors_allow_headers(
+    headers& out,
+    const std::string& origin_value,
+    const std::vector<std::string>& allowed_methods,
+    const std::vector<std::string>& allowed_headers,
+    bool allow_credentials,
+    std::optional<int> max_age)
+{
+    out.set("access-control-allow-origin"s, origin_value);
+
+    if(not allowed_methods.empty())
+        out.set("access-control-allow-methods"s, join_cors_list(allowed_methods));
+
+    if(not allowed_headers.empty())
+        out.set("access-control-allow-headers"s, join_cors_list(allowed_headers));
+
+    // Reflecting a concrete Origin is required when credentials are enabled
+    // (wildcard ACAO is incompatible with Access-Control-Allow-Credentials).
+    if(allow_credentials)
+        out.set("access-control-allow-credentials"s, "true"s);
+
+    if(max_age.has_value())
+        out.set("access-control-max-age"s, std::to_string(max_age.value()));
+}
+
 // Middleware: CORS (Cross-Origin Resource Sharing) - adds CORS headers to responses
 // Handles CORS headers for all responses and OPTIONS preflight requests
 // Template version using concepts for better performance (no type erasure overhead)
@@ -326,7 +393,7 @@ inline auto cors_middleware(
         for(const auto& header : default_cors_allowed_headers)
             allowed_headers.emplace_back(header);
     }
-    
+
     return [allowed_origin = std::forward<OriginValidatorFunc>(allowed_origin),
             allowed_methods = std::move(allowed_methods),
             allowed_headers = std::move(allowed_headers),
@@ -335,128 +402,37 @@ inline auto cors_middleware(
     {
         return [allowed_origin, allowed_methods, allowed_headers, allow_credentials, max_age, next = std::move(next)](auto req, auto body, auto hdr) mutable -> response_with_headers
         {
-            using namespace std::string_literals;
-            
-            // Handle OPTIONS preflight requests
+            // Preflight: only advertise CORS allowances for permitted origins.
             if(hdr.contains("access-control-request-method"s))
             {
-                // This is a preflight request - return early with CORS headers
-                auto origin_value = "*"s;
-                if(hdr.contains("origin"s))
-                {
-                    const auto origin = hdr["origin"s];
-                    if(allowed_origin(origin))
-                        origin_value = std::string{origin};
-                }
-                
-                // CORS spec: cannot use wildcard with credentials
-                // If credentials enabled but origin is wildcard, disable credentials for this response
-                auto use_credentials = allow_credentials and origin_value != "*"s;
-                
                 auto preflight_headers = headers{};
-                preflight_headers.set("access-control-allow-origin"s, origin_value);
-                
-                // Build allowed methods using ranges - pre-calculate size for efficiency
-                if(not allowed_methods.empty())
+                if(auto origin_value = resolve_cors_origin(hdr, allowed_origin))
                 {
-                    auto methods_view = allowed_methods | std::views::transform([](const auto& m) { return std::string_view{m}; });
-                    auto total_size = std::accumulate(methods_view.begin(), methods_view.end(), std::size_t{0},
-                        [](auto sum, auto m) { return sum + m.size() + 2; }) - 2; // -2 for last ", "
-                    auto methods_str = std::string{};
-                    methods_str.reserve(total_size);
-                    auto first = true;
-                    std::ranges::for_each(methods_view, [&](auto method) {
-                        if(not first) methods_str += ", "s;
-                        methods_str += method;
-                        first = false;
-                    });
-                    preflight_headers.set("access-control-allow-methods"s, methods_str);
+                    apply_cors_allow_headers(
+                        preflight_headers,
+                        *origin_value,
+                        allowed_methods,
+                        allowed_headers,
+                        allow_credentials,
+                        max_age);
                 }
-                
-                // Build allowed headers using ranges - pre-calculate size for efficiency
-                if(not allowed_headers.empty())
-                {
-                    auto headers_view = allowed_headers | std::views::transform([](const auto& h) { return std::string_view{h}; });
-                    auto total_size = std::accumulate(headers_view.begin(), headers_view.end(), std::size_t{0},
-                        [](auto sum, auto h) { return sum + h.size() + 2; }) - 2; // -2 for last ", "
-                    auto headers_str = std::string{};
-                    headers_str.reserve(total_size);
-                    auto first = true;
-                    std::ranges::for_each(headers_view, [&](auto header) {
-                        if(not first) headers_str += ", "s;
-                        headers_str += header;
-                        first = false;
-                    });
-                    preflight_headers.set("access-control-allow-headers"s, headers_str);
-                }
-                
-                if(use_credentials)
-                    preflight_headers.set("access-control-allow-credentials"s, "true"s);
-                
-                if(max_age.has_value())
-                    preflight_headers.set("access-control-max-age"s, std::to_string(max_age.value()));
-                
                 return {status_no_content, ""s, std::make_optional(preflight_headers)};
             }
-            
-            // Normal request - add CORS headers to response
+
             auto [status, content, headers_opt] = next(req, body, hdr);
-            
-            // Add CORS headers to response
             auto cors_headers = headers_opt.has_value() ? headers_opt.value() : headers{};
-            
-            auto origin_value = "*"s;
-            if(hdr.contains("origin"s))
+
+            if(auto origin_value = resolve_cors_origin(hdr, allowed_origin))
             {
-                const auto origin = hdr["origin"s];
-                if(allowed_origin(origin))
-                    origin_value = std::string{origin};
+                apply_cors_allow_headers(
+                    cors_headers,
+                    *origin_value,
+                    allowed_methods,
+                    allowed_headers,
+                    allow_credentials,
+                    max_age);
             }
-            
-            cors_headers.set("access-control-allow-origin"s, origin_value);
-            
-            // Build allowed methods using ranges - pre-calculate size for efficiency
-            if(not allowed_methods.empty())
-            {
-                auto methods_view = allowed_methods | std::views::transform([](const auto& m) { return std::string_view{m}; });
-                auto total_size = std::accumulate(methods_view.begin(), methods_view.end(), std::size_t{0},
-                    [](auto sum, auto m) { return sum + m.size() + 2; }) - 2; // -2 for last ", "
-                auto methods_str = std::string{};
-                methods_str.reserve(total_size);
-                auto first = true;
-                std::ranges::for_each(methods_view, [&](auto method) {
-                    if(not first) methods_str += ", "s;
-                    methods_str += method;
-                    first = false;
-                });
-                cors_headers.set("access-control-allow-methods"s, methods_str);
-            }
-            
-            // Build allowed headers using ranges - pre-calculate size for efficiency
-            if(not allowed_headers.empty())
-            {
-                auto headers_view = allowed_headers | std::views::transform([](const auto& h) { return std::string_view{h}; });
-                auto total_size = std::accumulate(headers_view.begin(), headers_view.end(), std::size_t{0},
-                    [](auto sum, auto h) { return sum + h.size() + 2; }) - 2; // -2 for last ", "
-                auto headers_str = std::string{};
-                headers_str.reserve(total_size);
-                auto first = true;
-                std::ranges::for_each(headers_view, [&](auto header) {
-                    if(not first) headers_str += ", "s;
-                    headers_str += header;
-                    first = false;
-                });
-                cors_headers.set("access-control-allow-headers"s, headers_str);
-            }
-            
-            // CORS spec: cannot use wildcard with credentials
-            // If credentials enabled but origin is wildcard, disable credentials for this response
-            if(allow_credentials and origin_value != "*"s)
-                cors_headers.set("access-control-allow-credentials"s, "true"s);
-            
-            if(max_age.has_value())
-                cors_headers.set("access-control-max-age"s, std::to_string(max_age.value()));
-            
+
             return {status, content, std::make_optional(cors_headers)};
         };
     };
