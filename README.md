@@ -123,6 +123,23 @@ Use `html_escaped` for text nodes and attribute values. Use `url_encoded` for qu
 parameter values in `href` and `action` URLs. The HTTP server does not escape
 response bodies automatically.
 
+# WebSocket (v1 spike)
+
+Upgrade is handled inside `http::server` (not as response middleware). Register a path
+with `server.ws(...).ws(handler)`; a matching `GET` with `Upgrade: websocket` returns
+`101` and runs a text-frame session (ping/pong/close + optional text replies).
+
+```cpp
+import net;
+import std;
+
+auto server = http::server{};
+server.ws("/echo").ws([](std::string_view msg) -> std::optional<std::string> {
+    return std::string{msg}; // echo
+});
+server.listen("127.0.0.1", "8080");
+```
+
 # Syslog Stream Example
 
 ## Basic Usage
