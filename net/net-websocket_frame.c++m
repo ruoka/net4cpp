@@ -18,6 +18,10 @@ enum class opcode : std::uint8_t
     pong = 0xA,
 };
 
+// RFC 6455 §7.4.1 close status codes (subset used by this server).
+inline constexpr std::uint16_t close_normal = 1000;
+inline constexpr std::uint16_t close_protocol_error = 1002;
+
 struct frame
 {
     bool fin = true;
@@ -52,6 +56,17 @@ inline frame make_close_frame(std::span<const std::byte> payload = {})
     auto f = frame{};
     f.op = opcode::close;
     f.payload.assign(payload.begin(), payload.end());
+    return f;
+}
+
+// Close frame carrying a 2-byte big-endian status code (RFC 6455 §5.5.1).
+inline frame make_close_frame(std::uint16_t status_code)
+{
+    auto f = frame{};
+    f.op = opcode::close;
+    f.payload.resize(2);
+    f.payload[0] = static_cast<std::byte>((status_code >> 8) & 0xFFu);
+    f.payload[1] = static_cast<std::byte>(status_code & 0xFFu);
     return f;
 }
 
