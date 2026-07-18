@@ -1,0 +1,188 @@
+export module net:websocket_frame;
+import std;
+
+// RFC 6455 WebSocket framing (byte-oriented; no bitfield endian surprises).
+
+export namespace net::websocket {
+
+using namespace std::string_literals;
+using namespace std::string_view_literals;
+
+enum class opcode : std::uint8_t
+{
+    continuation = 0x0,
+    text = 0x1,
+    binary = 0x2,
+    close = 0x8,
+    ping = 0x9,
+    pong = 0xA,
+};
+
+struct frame
+{
+    bool fin = true;
+    opcode op = opcode::text;
+    bool masked = false;
+    std::uint32_t masking_key = 0;
+    std::vector<std::byte> payload;
+};
+
+inline void apply_mask(std::span<std::byte> data, std::uint32_t key) noexcept
+{
+    const auto key_bytes = std::array{
+        static_cast<std::byte>((key >> 24) & 0xFFu),
+        static_cast<std::byte>((key >> 16) & 0xFFu),
+        static_cast<std::byte>((key >> 8) & 0xFFu),
+        static_cast<std::byte>(key & 0xFFu)};
+    for(std::size_t i = 0; i < data.size(); ++i)
+        data[i] ^= key_bytes[i % 4];
+}
+
+inline frame make_text_frame(std::string_view text)
+{
+    auto f = frame{};
+    f.op = opcode::text;
+    f.payload.resize(text.size());
+    std::memcpy(f.payload.data(), text.data(), text.size());
+    return f;
+}
+
+inline frame make_close_frame(std::span<const std::byte> payload = {})
+{
+    auto f = frame{};
+    f.op = opcode::close;
+    f.payload.assign(payload.begin(), payload.end());
+    return f;
+}
+
+inline frame make_pong_frame(std::span<const std::byte> payload)
+{
+    auto f = frame{};
+    f.op = opcode::pong;
+    f.payload.assign(payload.begin(), payload.end());
+    return f;
+}
+
+inline std::string payload_as_string(const frame& f)
+{
+    return std::string{
+        reinterpret_cast<const char*>(f.payload.data()),
+        f.payload.size()};
+}
+
+inline bool write_frame(std::ostream& os, const frame& f)
+{
+    const auto len = f.payload.size();
+    auto b0 = static_cast<unsigned char>(static_cast<unsigned>(f.op) & 0x0Fu);
+    if(f.fin)
+        b0 |= 0x80u;
+
+    auto b1 = static_cast<unsigned char>(f.masked ? 0x80u : 0u);
+    if(len <= 125)
+        b1 |= static_cast<unsigned char>(len);
+    else if(len <= 0xFFFFu)
+        b1 |= 126u;
+    else
+        b1 |= 127u;
+
+    os.put(static_cast<char>(b0));
+    os.put(static_cast<char>(b1));
+
+    if(len > 125 and len <= 0xFFFFu)
+    {
+        os.put(static_cast<char>((len >> 8) & 0xFFu));
+        os.put(static_cast<char>(len & 0xFFu));
+    }
+    else if(len > 0xFFFFu)
+    {
+        for(int shift = 56; shift >= 0; shift -= 8)
+            os.put(static_cast<char>((len >> shift) & 0xFFu));
+    }
+
+    auto payload = f.payload;
+    if(f.masked)
+    {
+        apply_mask(payload, f.masking_key);
+        os.put(static_cast<char>((f.masking_key >> 24) & 0xFFu));
+        os.put(static_cast<char>((f.masking_key >> 16) & 0xFFu));
+        os.put(static_cast<char>((f.masking_key >> 8) & 0xFFu));
+        os.put(static_cast<char>(f.masking_key & 0xFFu));
+    }
+
+    os.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
+    os.flush();
+    return static_cast<bool>(os);
+}
+
+inline bool read_frame(std::istream& is, frame& f)
+{
+    f = frame{};
+    const auto c0 = is.get();
+    const auto c1 = is.get();
+    if(not is)
+        return false;
+
+    const auto b0 = static_cast<unsigned char>(c0);
+    const auto b1 = static_cast<unsigned char>(c1);
+    f.fin = (b0 & 0x80u) != 0;
+    f.op = static_cast<opcode>(b0 & 0x0Fu);
+    f.masked = (b1 & 0x80u) != 0;
+    auto len = static_cast<std::uint64_t>(b1 & 0x7Fu);
+
+    if(len == 126)
+    {
+        const auto hi = is.get();
+        const auto lo = is.get();
+        if(not is)
+            return false;
+        len = (static_cast<std::uint64_t>(static_cast<unsigned char>(hi)) << 8)
+            | static_cast<unsigned char>(lo);
+    }
+    else if(len == 127)
+    {
+        len = 0;
+        for(int i = 0; i < 8; ++i)
+        {
+            const auto b = is.get();
+            if(not is)
+                return false;
+            len = (len << 8) | static_cast<unsigned char>(b);
+        }
+    }
+
+    // v1 guard — reject absurd frames early
+    constexpr auto max_payload = std::uint64_t{1u << 20}; // 1 MiB
+    if(len > max_payload)
+        return false;
+
+    if(f.masked)
+    {
+        std::array<unsigned char, 4> key_bytes{};
+        for(auto& b : key_bytes)
+        {
+            const auto c = is.get();
+            if(not is)
+                return false;
+            b = static_cast<unsigned char>(c);
+        }
+        f.masking_key = (static_cast<std::uint32_t>(key_bytes[0]) << 24)
+            | (static_cast<std::uint32_t>(key_bytes[1]) << 16)
+            | (static_cast<std::uint32_t>(key_bytes[2]) << 8)
+            | static_cast<std::uint32_t>(key_bytes[3]);
+    }
+
+    f.payload.resize(static_cast<std::size_t>(len));
+    if(len > 0)
+    {
+        is.read(reinterpret_cast<char*>(f.payload.data()), static_cast<std::streamsize>(len));
+        if(not is or static_cast<std::uint64_t>(is.gcount()) != len)
+            return false;
+    }
+
+    if(f.masked)
+        apply_mask(f.payload, f.masking_key);
+
+    return true;
+}
+
+} // namespace net::websocket

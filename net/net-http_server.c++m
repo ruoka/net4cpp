@@ -6,6 +6,7 @@ import :http_headers;
 import :endpointstream;
 import :utils;
 import :uuid;
+import :websocket;
 import std;
 
 export namespace http {
@@ -21,8 +22,10 @@ constexpr auto method_put = "PUT"sv;
 constexpr auto method_patch = "PATCH"sv;
 constexpr auto method_delete = "DELETE"sv;
 constexpr auto method_options = "OPTIONS"sv;
+constexpr auto method_ws = "WS"sv;
 
 // HTTP status constants
+const auto status_switching_protocols = "101 Switching Protocols"s;
 const auto status_ok = "200 OK"s;
 const auto status_created = "201 Created"s;
 const auto status_no_content = "204 No Content"s;
@@ -82,6 +85,7 @@ class controller
 public:
 
     using callback = std::function<::http::response_with_headers(request_view, body_view, headers&)>;
+    using websocket_callback = net::websocket::text_handler;
 
     void text(const content& c)
     {
@@ -153,10 +157,28 @@ public:
         return {std::move(s), std::move(c), m_content_type, std::move(custom_h)};
     }
 
+    // WebSocket text handler: payload in → optional text frame out (nullopt = no reply).
+    controller& ws(websocket_callback cb)
+    {
+        m_ws_callback = std::move(cb);
+        return *this;
+    }
+
+    [[nodiscard]] bool has_websocket() const noexcept
+    {
+        return static_cast<bool>(m_ws_callback);
+    }
+
+    [[nodiscard]] const websocket_callback& websocket_handler() const noexcept
+    {
+        return m_ws_callback;
+    }
+
 private:
 
     content_type m_content_type = "*/*";
     callback m_callback = [](request_view, body_view, headers&) -> ::http::response_with_headers { return make_response(status_ok, "Not Found"s); };
+    websocket_callback m_ws_callback;
 };
 
 class server
@@ -197,6 +219,12 @@ public:
     {
         m_methods.insert(method_delete);
         return m_router[std::string{path}][method_delete];
+    }
+
+    // Register a WebSocket endpoint (upgrade from GET). Chain `.ws(handler)`.
+    controller& ws(std::string_view path)
+    {
+        return m_router[std::string{path}][method_ws];
     }
 
     void listen(std::string_view service_or_port = "http")
@@ -450,6 +478,68 @@ private:
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
+                    break;
+                }
+
+                // WebSocket upgrade takes over the connection (not a normal HTTP response).
+                if(method == method_get and net::websocket::is_websocket_upgrade(hs))
+                {
+                    const auto path_only = std::string{uri.substr(0, uri.find('?'))};
+                    auto matched_path = std::optional<std::string>{};
+                    for(const auto& [path, methods_map] : m_router)
+                    {
+                        if(not std::regex_match(path_only, std::regex{path}))
+                            continue;
+                        if(methods_map.contains(method_ws) and methods_map.at(method_ws).has_websocket())
+                        {
+                            matched_path = path;
+                            break;
+                        }
+                    }
+
+                    if(not matched_path)
+                    {
+                        stream << "HTTP/1.1 " << status_not_found << net::crlf
+                               << "Date: " << date() << net::crlf
+                               << "Server: " << host() << net::crlf
+                               << "Content-Type: " << m_content_type << net::crlf
+                               << "Content-Length: 0" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf << net::flush;
+                        break;
+                    }
+
+                    if(not hs.contains("sec-websocket-key") or hs["sec-websocket-key"].empty())
+                    {
+                        stream << "HTTP/1.1 " << status_bad_request << net::crlf
+                               << "Date: " << date() << net::crlf
+                               << "Server: " << host() << net::crlf
+                               << "Content-Type: " << m_content_type << net::crlf
+                               << "Content-Length: 0" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf << net::flush;
+                        break;
+                    }
+
+                    const auto accept = net::websocket::sec_websocket_accept(hs["sec-websocket-key"]);
+                    net::slog << net::notice("HTTP_WEBSOCKET_UPGRADE") << "upgrading connection"
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << std::pair{"uri", std::string{uri}}
+                              << std::pair{"request_id", request_id}
+                              << net::flush;
+
+                    stream << "HTTP/1.1 " << status_switching_protocols << net::crlf
+                           << "Date: " << date() << net::crlf
+                           << "Server: " << host() << net::crlf
+                           << "Upgrade: websocket" << net::crlf
+                           << "Connection: Upgrade" << net::crlf
+                           << "Sec-WebSocket-Accept: " << accept << net::crlf
+                           << net::crlf << net::flush;
+
+                    // Copy handler before session (flat_map proxies are not stable refs).
+                    const auto ws_handler = m_router.at(*matched_path).at(method_ws).websocket_handler();
+                    net::websocket::run_text_session(stream, ws_handler);
                     break;
                 }
 
