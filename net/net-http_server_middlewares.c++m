@@ -438,8 +438,9 @@ inline auto cors_middleware(
     };
 }
 
-// Prometheus HTTP metrics (minimum): request counters + duration histogram.
-// Labels: method + status only. GET /metrics is served by the middleware (not counted).
+// Prometheus HTTP metrics: request counters + duration histogram.
+// Labels: method, status, path (no query), scenario (X-Metrics-Scenario or "-").
+// GET /metrics is served by the middleware (not counted).
 // Bounds favour sub-50ms latencies typical of this stack (100µs … 50ms), plus coarser
 // upper buckets for slow outliers.
 
@@ -447,6 +448,10 @@ inline constexpr std::array<double, 16> http_metrics_histogram_bounds = {
     0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025,
     0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0
 };
+
+inline constexpr auto metrics_scenario_header = "x-metrics-scenario"sv;
+inline constexpr auto metrics_scenario_default = "-"sv;
+inline constexpr std::size_t metrics_scenario_max_len = 64;
 
 // Stable decimal le labels (avoid std::format scientific notation like 1e-04).
 inline std::string format_histogram_le(double bound)
@@ -459,10 +464,45 @@ inline std::string format_histogram_le(double bound)
     return s;
 }
 
+inline std::string_view metrics_path_without_query(std::string_view target)
+{
+    auto path = target;
+    const auto q = path.find('?');
+    if(q != std::string_view::npos)
+        path = path.substr(0, q);
+    return path.empty() ? "/"sv : path;
+}
+
+inline bool metrics_scenario_char_ok(char c)
+{
+    return (c >= 'A' and c <= 'Z')
+        or (c >= 'a' and c <= 'z')
+        or (c >= '0' and c <= '9')
+        or c == '_' or c == '.' or c == ':' or c == '-';
+}
+
+inline std::string metrics_sanitize_scenario(std::string_view raw)
+{
+    if(raw.empty() or raw.size() > metrics_scenario_max_len)
+        return std::string{metrics_scenario_default};
+    if(not std::ranges::all_of(raw, metrics_scenario_char_ok))
+        return std::string{metrics_scenario_default};
+    return std::string{raw};
+}
+
+inline std::string metrics_resolve_scenario(const headers& hdr)
+{
+    if(not hdr.contains(std::string{metrics_scenario_header}))
+        return std::string{metrics_scenario_default};
+    return metrics_sanitize_scenario(hdr[std::string{metrics_scenario_header}]);
+}
+
 struct metrics_label_key
 {
     std::string method;
     std::string status;
+    std::string path;
+    std::string scenario;
 
     friend auto operator<=>(const metrics_label_key&, const metrics_label_key&) = default;
 };
@@ -490,9 +530,18 @@ struct metrics_registry
     // Prometheus histogram buckets are cumulative: an observation of d seconds
     // increments every bucket with le >= d (and +Inf). Fast requests therefore
     // raise all bucket lines to the same count — that is expected, not a bug.
-    void observe(std::string_view method, std::string_view status, double duration_seconds)
+    void observe(
+        std::string_view method,
+        std::string_view status,
+        std::string_view path,
+        std::string_view scenario,
+        double duration_seconds)
     {
-        auto key = metrics_label_key{std::string{method}, std::string{status}};
+        auto key = metrics_label_key{
+            std::string{method},
+            std::string{status},
+            std::string{path},
+            std::string{scenario}};
 
         std::lock_guard lock{mutex};
         ++request_totals[key];
@@ -511,7 +560,7 @@ struct metrics_registry
     {
         std::lock_guard lock{mutex};
         auto out = std::string{};
-        out.reserve(512 + request_totals.size() * 64);
+        out.reserve(512 + request_totals.size() * 96);
 
         out += "# HELP http_requests_total Total HTTP requests\n"s;
         out += "# TYPE http_requests_total counter\n"s;
@@ -519,9 +568,11 @@ struct metrics_registry
         {
             std::format_to(
                 std::back_inserter(out),
-                "http_requests_total{{method=\"{}\",status=\"{}\"}} {}\n",
+                "http_requests_total{{method=\"{}\",status=\"{}\",path=\"{}\",scenario=\"{}\"}} {}\n",
                 key.method,
                 key.status,
+                key.path,
+                key.scenario,
                 total);
         }
 
@@ -533,29 +584,37 @@ struct metrics_registry
             {
                 std::format_to(
                     std::back_inserter(out),
-                    "http_request_duration_seconds_bucket{{method=\"{}\",status=\"{}\",le=\"{}\"}} {}\n",
+                    "http_request_duration_seconds_bucket{{method=\"{}\",status=\"{}\",path=\"{}\",scenario=\"{}\",le=\"{}\"}} {}\n",
                     key.method,
                     key.status,
+                    key.path,
+                    key.scenario,
                     format_histogram_le(http_metrics_histogram_bounds[i]),
                     series.buckets[i]);
             }
             std::format_to(
                 std::back_inserter(out),
-                "http_request_duration_seconds_bucket{{method=\"{}\",status=\"{}\",le=\"+Inf\"}} {}\n",
+                "http_request_duration_seconds_bucket{{method=\"{}\",status=\"{}\",path=\"{}\",scenario=\"{}\",le=\"+Inf\"}} {}\n",
                 key.method,
                 key.status,
+                key.path,
+                key.scenario,
                 series.count);
             std::format_to(
                 std::back_inserter(out),
-                "http_request_duration_seconds_sum{{method=\"{}\",status=\"{}\"}} {}\n",
+                "http_request_duration_seconds_sum{{method=\"{}\",status=\"{}\",path=\"{}\",scenario=\"{}\"}} {}\n",
                 key.method,
                 key.status,
+                key.path,
+                key.scenario,
                 series.sum);
             std::format_to(
                 std::back_inserter(out),
-                "http_request_duration_seconds_count{{method=\"{}\",status=\"{}\"}} {}\n",
+                "http_request_duration_seconds_count{{method=\"{}\",status=\"{}\",path=\"{}\",scenario=\"{}\"}} {}\n",
                 key.method,
                 key.status,
+                key.path,
+                key.scenario,
                 series.count);
         }
 
@@ -632,9 +691,10 @@ inline bool is_metrics_scrape_request(std::string_view method, std::string_view 
     return path == "/metrics"sv;
 }
 
-// Middleware: Prometheus metrics — records method/status counters and latency histogram;
-// short-circuits GET /metrics with Prometheus text exposition (scrapes are not counted).
+// Middleware: Prometheus metrics — records method/status/path/scenario counters and latency
+// histogram; short-circuits GET /metrics with Prometheus text exposition (scrapes are not counted).
 // Prefer method from x-http-method (set by http::server); fall back to parsing a request line.
+// Optional X-Metrics-Scenario selects the scenario label (sanitized); absent → "-".
 inline auto metrics_middleware()
 {
     return [](callback_with_headers next)
@@ -650,11 +710,18 @@ inline auto metrics_middleware()
                 return make_response(status_ok, http_metrics().render_prometheus_text(), std::make_optional(response_headers));
             }
 
+            const auto path = std::string{metrics_path_without_query(target)};
+            const auto scenario = metrics_resolve_scenario(hdr);
             const auto started = std::chrono::steady_clock::now();
             auto response = next(req, body, hdr);
             const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
 
-            http_metrics().observe(method, metrics_status_code(std::get<0>(response)), elapsed);
+            http_metrics().observe(
+                method,
+                metrics_status_code(std::get<0>(response)),
+                path,
+                scenario,
+                elapsed);
             return response;
         };
     };
