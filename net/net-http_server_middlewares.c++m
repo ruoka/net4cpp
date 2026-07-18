@@ -447,6 +447,8 @@ inline auto cors_middleware(
 // Path cardinality: raw /collection/{n} would create one series per document id
 // (and still grow under auth failures, since metrics wraps auth). Collapse digit-only
 // segments and hard-cap unique label keys so scrapes cannot OOM the process.
+// The cap must collapse the entire label key (not only path): client-controlled
+// X-Metrics-Scenario would otherwise keep allocating series after path="_other".
 
 inline constexpr std::array<double, 16> http_metrics_histogram_bounds = {
     0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025,
@@ -591,9 +593,17 @@ struct metrics_registry
             std::string{scenario}};
 
         std::lock_guard lock{mutex};
-        // Bound memory under path/collection spam; collapse surplus into path="_other".
+        // Bound memory under label spam. Path-only collapse is not enough:
+        // X-Metrics-Scenario (and novel method/status pairs) would still create
+        // unbounded keys after rewriting path to "_other". Collapse the whole
+        // label set into one overflow bucket once the registry is full.
         if(not request_totals.contains(key) and request_totals.size() >= metrics_max_series)
+        {
+            key.method = std::string{metrics_path_overflow};
+            key.status = std::string{metrics_path_overflow};
             key.path = std::string{metrics_path_overflow};
+            key.scenario = std::string{metrics_path_overflow};
+        }
 
         ++request_totals[key];
 
