@@ -146,6 +146,14 @@ inline void run_text_session(std::iostream& stream, const text_handler& on_text)
         if(not read_frame(stream, incoming))
             break;
 
+        // RFC 6455 §5.1: every client-to-server frame MUST be masked. Reject an
+        // unmasked frame with a 1002 (protocol error) close and end the session.
+        if(not incoming.masked)
+        {
+            write_frame(stream, make_close_frame(close_protocol_error));
+            return;
+        }
+
         switch(incoming.op)
         {
         case opcode::ping:
