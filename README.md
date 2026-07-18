@@ -129,6 +129,9 @@ Upgrade is handled inside `http::server` (not as response middleware). Register 
 with `server.ws(...).ws(handler)`; a matching `GET` with `Upgrade: websocket` returns
 `101` and runs a text-frame session (ping/pong/close + optional text replies).
 
+Per RFC 6455 §5.1, client-to-server frames must be masked; an unmasked frame is
+rejected with a `1002` (protocol error) close and ends the session.
+
 ```cpp
 import net;
 import std;
