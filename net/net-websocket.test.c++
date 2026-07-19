@@ -546,11 +546,11 @@ auto register_websocket_tests()
     // Regression: default-port URI overload used getaddrinfo service "http" as
     // the Host suffix (Host: example.com:http), which violates RFC 6455 §4.1.
     tester::bdd::scenario("websocket::connect Host header omits service names, [net]") = [] {
-        check_eq(detail::host_header("example.com"sv, "http"sv), "example.com"s);
-        check_eq(detail::host_header("example.com"sv, "80"sv), "example.com:80"s);
-        check_eq(detail::host_header("127.0.0.1"sv, "18093"sv), "127.0.0.1:18093"s);
-        check_eq(detail::host_header("[::1]"sv, "http"sv), "[::1]"s);
-        check_eq(detail::host_header("[::1]"sv, "8080"sv), "[::1]:8080"s);
+        check_eq(net::websocket::detail::host_header("example.com"sv, "http"sv), "example.com"s);
+        check_eq(net::websocket::detail::host_header("example.com"sv, "80"sv), "example.com:80"s);
+        check_eq(net::websocket::detail::host_header("127.0.0.1"sv, "18093"sv), "127.0.0.1:18093"s);
+        check_eq(net::websocket::detail::host_header("[::1]"sv, "http"sv), "[::1]"s);
+        check_eq(net::websocket::detail::host_header("[::1]"sv, "8080"sv), "[::1]:8080"s);
     };
 
     tester::bdd::scenario("websocket::connect uri Host uses numeric port only, [net]") = [] {
