@@ -111,6 +111,7 @@ constexpr auto inaddr_any       = INADDR_ANY;
 constexpr auto inaddr_loopback  = INADDR_LOOPBACK;
 
 constexpr auto sol_socket       = SOL_SOCKET;
+constexpr auto so_type          = SO_TYPE;
 constexpr auto so_error         = SO_ERROR;
 constexpr auto so_reuseaddr     = SO_REUSEADDR;
 
