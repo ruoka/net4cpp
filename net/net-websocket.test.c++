@@ -698,6 +698,76 @@ auto register_websocket_tests()
             peer_thread.join();
     };
 
+    // Regression: bounding only wait_for still hung in read_frame when the peer
+    // sent a truncated frame (first byte readable, rest never arrives).
+    tester::bdd::scenario("websocket::connect close times out on truncated peer frame, [net]") = [] {
+        if(not network_tests_enabled())
+            return;
+
+        using namespace std::chrono_literals;
+
+        auto acc = net::acceptor{"127.0.0.1", "0"};
+        const auto port = std::to_string(acc.bound_port());
+        auto peer_ready = std::promise<void>{};
+        auto peer_ready_future = peer_ready.get_future();
+        auto stop_peer = std::atomic<bool>{false};
+
+        std::thread peer_thread{[&] {
+            try
+            {
+                peer_ready.set_value();
+                auto [stream, client, client_port] = acc.accept();
+
+                auto method = ""s;
+                auto target = ""s;
+                auto version = ""s;
+                stream >> method >> target >> version;
+                auto discard = ""s;
+                std::getline(stream, discard);
+                auto hs = http::headers{};
+                stream >> hs >> net::crlf;
+                if(not hs.contains("sec-websocket-key"))
+                    return;
+                const auto accept = sec_websocket_accept(hs["sec-websocket-key"]);
+
+                stream << "HTTP/1.1 101 Switching Protocols" << net::crlf
+                       << "Upgrade: websocket" << net::crlf
+                       << "Connection: Upgrade" << net::crlf
+                       << "Sec-WebSocket-Accept: " << accept << net::crlf
+                       << net::crlf << net::flush;
+
+                // One header byte of a text frame — wait_for succeeds, but the
+                // second header byte / payload never arrives.
+                stream.put(static_cast<char>(0x81));
+                stream.flush();
+
+                while(not stop_peer.load())
+                    std::this_thread::sleep_for(20ms);
+            }
+            catch(...)
+            {
+                try { peer_ready.set_value(); } catch(...) {}
+            }
+        }};
+
+        require_true(peer_ready_future.wait_for(3s) == std::future_status::ready);
+
+        auto ws = websocket::connect("127.0.0.1"sv, port, "/"sv);
+        require_true(static_cast<bool>(ws));
+
+        const auto started = std::chrono::steady_clock::now();
+        ws.close(close_normal, 300ms);
+        const auto elapsed = std::chrono::steady_clock::now() - started;
+
+        check_true(not ws);
+        check_true(elapsed < 2s);
+        check_true(elapsed >= 200ms);
+
+        stop_peer = true;
+        if(peer_thread.joinable())
+            peer_thread.join();
+    };
+
     // Large text frames exercise istream::read via endpointbuf::xsgetn's bulk path
     // (payload > tcp_buffer_size). A short recv must not abort the frame.
     tester::bdd::scenario("websocket::connect echoes large text payload, [net]") = [] {

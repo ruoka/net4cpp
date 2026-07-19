@@ -409,8 +409,10 @@ public:
     }
 
     // Initiate close; best-effort wait for peer close frame, then force-close.
-    // Without a drain budget a silent peer (or endless text/ping) would hang
-    // forever in blocking recv — RFC 6455 §7.1.1 allows the client to time out.
+    // Without a drain budget a silent peer, endless text/ping, or a truncated
+    // frame would hang forever in blocking recv — RFC 6455 §7.1.1 allows the
+    // client to time out. wait_for alone is not enough: once any byte is
+    // readable, read_frame() must also be deadline-bounded.
     void close(
         std::uint16_t code = close_normal,
         std::chrono::milliseconds drain_timeout = default_close_drain_timeout)
@@ -421,14 +423,20 @@ public:
         const auto deadline = std::chrono::steady_clock::now() + drain_timeout;
         while(m_stream and not m_closed)
         {
-            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-                deadline - std::chrono::steady_clock::now());
-            if(remaining.count() <= 0)
-                break;
-            if(not m_stream.wait_for(remaining))
+            if(std::chrono::steady_clock::now() >= deadline)
                 break;
             auto incoming = frame{};
-            if(read_frame(m_stream, incoming) != frame_read::ok)
+            const auto status = read_frame(m_stream, incoming, [&] {
+                // Prefer already-buffered bytes; wait_for only polls the socket.
+                if(m_stream.rdbuf() != nullptr and m_stream.rdbuf()->in_avail() > 0)
+                    return true;
+                const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    deadline - std::chrono::steady_clock::now());
+                if(remaining.count() <= 0)
+                    return false;
+                return m_stream.wait_for(remaining);
+            });
+            if(status != frame_read::ok)
                 break;
             if(incoming.op == opcode::close)
                 break;

@@ -248,14 +248,15 @@ inline bool write_frame(std::ostream& os, const frame& f)
     return static_cast<bool>(os);
 }
 
-// Parse one frame. Structural RFC checks only (RSV, opcodes, control size/FIN,
-// max length). Fragmentation / UTF-8 policy is applied by the session layer.
-inline frame_read read_frame(std::istream& is, frame& f)
+// Shared structural parse. `get_byte` returns the next octet or negative on
+// failure/timeout. `read_payload` fills `dest` or returns false.
+template<class GetByte, class ReadPayload>
+inline frame_read read_frame_impl(frame& f, GetByte get_byte, ReadPayload read_payload)
 {
     f = frame{};
-    const auto c0 = is.get();
-    const auto c1 = is.get();
-    if(not is)
+    const auto c0 = get_byte();
+    const auto c1 = get_byte();
+    if(c0 < 0 or c1 < 0)
         return frame_read::io_error;
 
     const auto b0 = static_cast<unsigned char>(c0);
@@ -274,9 +275,9 @@ inline frame_read read_frame(std::istream& is, frame& f)
 
     if(len == 126)
     {
-        const auto hi = is.get();
-        const auto lo = is.get();
-        if(not is)
+        const auto hi = get_byte();
+        const auto lo = get_byte();
+        if(hi < 0 or lo < 0)
             return frame_read::io_error;
         len = (static_cast<std::uint64_t>(static_cast<unsigned char>(hi)) << 8)
             | static_cast<unsigned char>(lo);
@@ -286,8 +287,8 @@ inline frame_read read_frame(std::istream& is, frame& f)
         len = 0;
         for(int i = 0; i < 8; ++i)
         {
-            const auto b = is.get();
-            if(not is)
+            const auto b = get_byte();
+            if(b < 0)
                 return frame_read::io_error;
             len = (len << 8) | static_cast<unsigned char>(b);
         }
@@ -308,8 +309,8 @@ inline frame_read read_frame(std::istream& is, frame& f)
         std::array<unsigned char, 4> key_bytes{};
         for(auto& b : key_bytes)
         {
-            const auto c = is.get();
-            if(not is)
+            const auto c = get_byte();
+            if(c < 0)
                 return frame_read::io_error;
             b = static_cast<unsigned char>(c);
         }
@@ -320,17 +321,61 @@ inline frame_read read_frame(std::istream& is, frame& f)
     }
 
     f.payload.resize(static_cast<std::size_t>(len));
-    if(len > 0)
-    {
-        is.read(reinterpret_cast<char*>(f.payload.data()), static_cast<std::streamsize>(len));
-        if(not is or static_cast<std::uint64_t>(is.gcount()) != len)
-            return frame_read::io_error;
-    }
+    if(len > 0 and not read_payload(std::span{f.payload}))
+        return frame_read::io_error;
 
     if(f.masked)
         apply_mask(f.payload, f.masking_key);
 
     return frame_read::ok;
+}
+
+// Parse one frame. Structural RFC checks only (RSV, opcodes, control size/FIN,
+// max length). Fragmentation / UTF-8 policy is applied by the session layer.
+inline frame_read read_frame(std::istream& is, frame& f)
+{
+    return read_frame_impl(
+        f,
+        [&]() -> int {
+            const auto c = is.get();
+            if(not is)
+                return -1;
+            return c;
+        },
+        [&](std::span<std::byte> dest) -> bool {
+            is.read(reinterpret_cast<char*>(dest.data()), static_cast<std::streamsize>(dest.size()));
+            return static_cast<bool>(is)
+                and static_cast<std::size_t>(is.gcount()) == dest.size();
+        });
+}
+
+// Like read_frame(), but `ensure_readable` must return true before each byte
+// that may block. Return false from ensure (e.g. deadline expired) → io_error.
+// Used by connection::close() so a truncated peer frame cannot hang forever.
+template<class EnsureReadable>
+inline frame_read read_frame(std::istream& is, frame& f, EnsureReadable ensure_readable)
+{
+    auto get_byte = [&]() -> int {
+        if(not ensure_readable())
+            return -1;
+        const auto c = is.get();
+        if(not is)
+            return -1;
+        return c;
+    };
+    return read_frame_impl(
+        f,
+        get_byte,
+        [&](std::span<std::byte> dest) -> bool {
+            for(auto& b : dest)
+            {
+                const auto c = get_byte();
+                if(c < 0)
+                    return false;
+                b = static_cast<std::byte>(static_cast<unsigned char>(c));
+            }
+            return true;
+        });
 }
 
 } // namespace net::websocket
