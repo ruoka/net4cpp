@@ -54,12 +54,14 @@ public:
         const auto node_str = std::string{node_for_gai};
         const auto service_str = std::string{service_or_port};
 
+        // Numeric ports need AI_NUMERICSERV on macOS (avoids EAI_NONAME).
         if (not service_str.empty() and std::isdigit(static_cast<unsigned char>(service_str[0]))) {
             hints.ai_flags |= posix::ai_numericserv;
         }
-        if (not is_any and not node_str.empty() and std::isdigit(static_cast<unsigned char>(node_str[0]))) {
-            hints.ai_flags |= posix::ai_numericnode;
-        }
+        // Do not set AI_NUMERICHOST from a leading digit. RFC 1123 allows
+        // digit-leading DNS labels (e.g. 9gag.com, 3com.com); forcing
+        // AI_NUMERICHOST makes getaddrinfo reject those names while still
+        // resolving ordinary IPv4/IPv6 literals without the flag.
 
         const auto error = posix::getaddrinfo(
             is_any ? nullptr : node_str.c_str(),
