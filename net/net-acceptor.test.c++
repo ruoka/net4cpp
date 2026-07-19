@@ -1,4 +1,5 @@
 module net;
+import :acceptor;
 import tester;
 import std;
 
@@ -8,7 +9,9 @@ namespace {
 using tester::basic::test_case;
 using tester::assertions::check_eq;
 using tester::assertions::check_true;
+using tester::assertions::check_false;
 using tester::assertions::failed;
+using namespace std::string_view_literals;
 
 inline bool network_tests_enabled()
 {
@@ -20,7 +23,36 @@ inline bool network_tests_enabled()
 
 auto register_acceptor_tests()
 {
-    if(not network_tests_enabled()) return false;
+    tester::bdd::scenario("is_wildcard_bind_host covers all-interfaces aliases, [net]") = [] {
+        check_true(is_wildcard_bind_host("0.0.0.0"sv));
+        check_true(is_wildcard_bind_host("::"sv));
+        check_true(is_wildcard_bind_host("::0"sv));
+        check_true(is_wildcard_bind_host("[::]"sv));
+        check_true(is_wildcard_bind_host("[::0]"sv));
+        check_true(is_wildcard_bind_host("[0.0.0.0]"sv));
+        check_true(is_wildcard_bind_host("[]"sv));
+        check_true(is_wildcard_bind_host("  [::0]  "sv));
+        check_true(is_wildcard_bind_host("0"sv));
+        check_true(is_wildcard_bind_host("0.0.0"sv));
+        check_true(is_wildcard_bind_host("00.0.0.0"sv));
+        // "*" is accepted as ANY on some Linux getaddrinfo builds, not on Darwin.
+        check_true(is_wildcard_bind_host("0::"sv));
+        check_true(is_wildcard_bind_host("0000::"sv));
+        check_true(is_wildcard_bind_host("0::0"sv));
+        check_true(is_wildcard_bind_host("::0000"sv));
+        check_true(is_wildcard_bind_host("0:0:0:0:0:0:0:0"sv));
+        check_true(is_wildcard_bind_host("[0::]"sv));
+        check_true(is_wildcard_bind_host("[0:0:0:0:0:0:0:0]"sv));
+        check_true(is_wildcard_bind_host("::ffff:0.0.0.0"sv));
+        check_true(is_wildcard_bind_host("[::ffff:0.0.0.0]"sv));
+
+        check_false(is_wildcard_bind_host("127.0.0.1"sv));
+        check_false(is_wildcard_bind_host("::1"sv));
+        check_false(is_wildcard_bind_host("[::1]"sv));
+        check_false(is_wildcard_bind_host("localhost"sv));
+    };
+
+    if(not network_tests_enabled()) return true;
 
     tester::bdd::scenario("Basic construction, [net]") = [] {
         tester::bdd::given("An acceptor for localhost:54321") = [] {
