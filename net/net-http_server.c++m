@@ -227,6 +227,15 @@ public:
         return m_router[std::string{path}][method_delete];
     }
 
+    // Register an OPTIONS handler (e.g. cors_middleware around a no-op or shared
+    // callback). Do not rely on GET/POST handlers for browser preflight — that
+    // would execute application logic when the route is not CORS-wrapped.
+    controller& options(std::string_view path)
+    {
+        m_methods.insert(method_options);
+        return m_router[std::string{path}][method_options];
+    }
+
     // Register a WebSocket endpoint (upgrade from GET). Chain `.ws(handler)`.
     controller& ws(std::string_view path)
     {
@@ -911,81 +920,14 @@ private:
                         }
 
                     // OPTIONS with no matching path: 204. (No handler runs, so
-                    // cors_middleware cannot attach ACAO here.)
+                    // cors_middleware cannot attach ACAO here — register options()
+                    // with cors_middleware on paths that need preflight ACAO.)
                     if(method == method_options and not route_found and res_type.empty())
                     {
                         res_status = status_no_content;
                         res_content = "";
                         res_type = m_content_type;
                         custom_headers = std::nullopt;
-                    }
-                    // CORS preflight to an existing path: there is no options()
-                    // registrar, so OPTIONS never matches methods_map and would
-                    // otherwise 405 before cors_middleware can short-circuit.
-                    // Dispatch to a registered method handler on that path so a
-                    // wrapping cors_middleware sees Access-Control-Request-Method
-                    // and returns 204 + ACAO without running the inner handler.
-                    else if(method == method_options and route_found and not method_allowed
-                        and res_type.empty() and hs.contains("access-control-request-method"))
-                    {
-                        for(const auto& [path, methods_map] : m_router)
-                        {
-                            if(not std::regex_match(std::string{uri}, std::regex{path}))
-                                continue;
-
-                            // Prefer GET/POST (typical cors_middleware wrap targets).
-                            // Skip method_ws — those controllers have no HTTP callback chain.
-                            auto it = methods_map.find(method_get);
-                            if(it == methods_map.end())
-                                it = methods_map.find(method_post);
-                            if(it == methods_map.end())
-                            {
-                                for(auto cand = methods_map.begin(); cand != methods_map.end(); ++cand)
-                                {
-                                    if(cand->first != method_ws)
-                                    {
-                                        it = cand;
-                                        break;
-                                    }
-                                }
-                            }
-                            if(it == methods_map.end())
-                                continue;
-
-                            try
-                            {
-                                hs.set("x-http-method"s, method);
-                                std::tie(res_status, res_content, res_type, custom_headers) =
-                                    it->second.render(uri, body, hs);
-                                break;
-                            }
-                            catch(const std::exception& e)
-                            {
-                                const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
-                                net::slog << net::error("HTTP_HANDLER_EXCEPTION") << "exception in OPTIONS preflight dispatch for \"" << uri << "\" (route: " << path << "): " << e.what()
-                                          << std::pair{"ip"sv, endpoint}
-                                          << std::pair{"port", port}
-                                          << std::pair{"method", method}
-                                          << std::pair{"uri", std::string{uri}}
-                                          << std::pair{"route", path}
-                                          << std::pair{"status", status_internal_server_error}
-                                          << std::pair{"request_id", request_id}
-                                          << std::pair{"duration_ms", request_duration}
-                                          << net::flush;
-                                res_status = status_internal_server_error;
-                                res_content = "";
-                                res_type = m_content_type;
-                                custom_headers = std::nullopt;
-                                break;
-                            }
-                        }
-                        if(res_type.empty())
-                        {
-                            res_status = status_no_content;
-                            res_content = "";
-                            res_type = m_content_type;
-                            custom_headers = std::nullopt;
-                        }
                     }
                     // If route found but method not allowed, return 405 Method Not Allowed
                     else if(route_found and not method_allowed and res_type.empty())
