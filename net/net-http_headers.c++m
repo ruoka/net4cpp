@@ -55,6 +55,11 @@ inline std::istream& operator >> (std::istream &is,  headers &hdrs)
 
             auto name = std::string{name_sv};
             utils::ascii_to_lower(name);
+            // RFC 7230 §3.3.2 / §3.3.3: multiple Content-Length values with a
+            // differing field-value must be rejected. Collapsing via last-wins
+            // enables request smuggling when a front-end proxy uses the first.
+            if(name == "content-length" and hdrs.m_values.contains(name))
+                throw std::runtime_error{"duplicate Content-Length header"};
             hdrs.m_values[std::move(name)] = std::string{value_sv};
         }
     }

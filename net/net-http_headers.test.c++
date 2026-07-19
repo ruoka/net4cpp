@@ -10,6 +10,7 @@ using tester::basic::test_case;
 using tester::basic::section;
 using tester::assertions::check_eq;
 using tester::assertions::check_false;
+using tester::assertions::check_true;
 }
 
 auto register_malformed_headers_tests()
@@ -53,6 +54,26 @@ auto register_malformed_headers_tests()
             is >> hs;
             check_eq(hs["header1"], "v1");
             check_eq(hs["header2"], "v2");
+        };
+
+        // Regression: last-wins duplicate Content-Length enabled request
+        // smuggling when a front-end proxy used the first value.
+        section("Duplicate Content-Length is rejected") = [] {
+            auto raw = "Content-Length: 4\r\n"
+                       "Content-Length: 0\r\n"
+                       "\r\n"s;
+            auto is = std::istringstream{raw};
+            http::headers hs;
+            auto threw = false;
+            try
+            {
+                is >> hs;
+            }
+            catch(const std::runtime_error& e)
+            {
+                threw = std::string_view{e.what()}.contains("duplicate Content-Length");
+            }
+            check_true(threw);
         };
     };
 

@@ -481,6 +481,32 @@ private:
                     break;
                 }
 
+                // Body framing is Content-Length only. Ignoring Transfer-Encoding
+                // (or accepting TE + CL) desynchronizes from proxies that prefer
+                // chunked encoding — reject before reading any body bytes.
+                if(hs.contains("transfer-encoding"))
+                {
+                    const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                    net::slog << net::warning("HTTP_TRANSFER_ENCODING_UNSUPPORTED") << "Transfer-Encoding not supported from " << endpoint << ":" << port
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << std::pair{"method", method}
+                              << std::pair{"uri", std::string{uri}}
+                              << std::pair{"transfer_encoding", hs["transfer-encoding"]}
+                              << std::pair{"status", status_bad_request}
+                              << std::pair{"request_id", request_id}
+                              << std::pair{"duration_ms", request_duration}
+                              << net::flush;
+                    stream << "HTTP/1.1 " << status_bad_request << net::crlf
+                           << "Date: " << date() << net::crlf
+                           << "Server: " << host() << net::crlf
+                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Content-Length: 0" << net::crlf
+                           << "Connection: close" << net::crlf
+                           << net::crlf << net::flush;
+                    break;
+                }
+
                 // WebSocket upgrade takes over the connection (not a normal HTTP response).
                 if(method == method_get and net::websocket::is_websocket_upgrade(hs))
                 {
