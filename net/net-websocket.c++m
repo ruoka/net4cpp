@@ -145,6 +145,44 @@ inline std::string normalize_path(std::string_view path)
     return "/"s + std::string{path};
 }
 
+// Cap upgrade response head so a hostile peer cannot grow memory without bound.
+inline constexpr auto max_upgrade_response_bytes = std::size_t{16 * 1024};
+
+// Read status line + headers through the terminating blank line. wait_for only
+// means "some byte is readable"; operator>>/getline would still block forever
+// on a truncated response, so every read that may block is deadline-bounded.
+inline std::string read_upgrade_response_head(
+    net::endpointstream& stream,
+    std::chrono::steady_clock::time_point deadline)
+{
+    auto head = ""s;
+    head.reserve(256);
+    while(true)
+    {
+        if(head.size() >= 4 and head.ends_with("\r\n\r\n"))
+            return head;
+
+        if(head.size() >= max_upgrade_response_bytes)
+            throw std::runtime_error{
+                "websocket upgrade failed: response headers too large"};
+
+        if(stream.rdbuf() == nullptr or stream.rdbuf()->in_avail() <= 0)
+        {
+            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - std::chrono::steady_clock::now());
+            if(remaining.count() <= 0 or not stream.wait_for(remaining))
+                throw std::runtime_error{
+                    "websocket upgrade failed: handshake timeout waiting for response"};
+        }
+
+        const auto ch = stream.get();
+        if(not stream.good())
+            throw std::runtime_error{
+                "websocket upgrade failed: connection closed during handshake"};
+        head.push_back(static_cast<char>(ch));
+    }
+}
+
 } // namespace detail
 
 inline std::string sec_websocket_accept(std::string_view client_key)
@@ -427,9 +465,9 @@ private:
 
 // TCP connect + HTTP Upgrade handshake. Throws std::runtime_error on a failed
 // upgrade (TCP failure throws via net::connect). `timeout` bounds the TCP
-// connect and, separately, the wait for the upgrade response — a peer that
-// accepts then stays silent must not hang forever in blocking status/header
-// reads.
+// connect and the full upgrade-response read (status line + headers through the
+// terminating blank line). A peer that accepts then stays silent — or sends a
+// truncated response — must not hang forever in blocking reads.
 inline connection connect(
     std::string_view host,
     std::string_view port,
@@ -453,30 +491,19 @@ inline connection connect(
            << net::crlf << net::flush;
 
     const auto deadline = std::chrono::steady_clock::now() + timeout;
-    const auto wait_for_handshake = [&](std::string_view stage) {
-        // Prefer already-buffered bytes (status + headers often share one segment).
-        // wait_for() only polls the socket, so skipping it avoids false timeouts.
-        if(stream.rdbuf() != nullptr and stream.rdbuf()->in_avail() > 0)
-            return;
-        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-            deadline - std::chrono::steady_clock::now());
-        if(remaining.count() <= 0 or not stream.wait_for(remaining))
-            throw std::runtime_error{
-                "websocket upgrade failed: handshake timeout waiting for " + std::string{stage}};
-    };
+    const auto head = detail::read_upgrade_response_head(stream, deadline);
 
-    wait_for_handshake("status line"sv);
+    auto parse = std::istringstream{head};
     auto version = ""s;
     auto status_code = ""s;
     auto reason = ""s;
-    stream >> version >> status_code;
-    std::getline(stream, reason);
+    parse >> version >> status_code;
+    std::getline(parse, reason);
     if(status_code != "101"s)
         throw std::runtime_error{"websocket upgrade failed: expected 101, got " + status_code};
 
-    wait_for_handshake("response headers"sv);
     auto hs = ::http::headers{};
-    stream >> hs >> net::crlf;
+    parse >> hs >> net::crlf;
     if(not is_websocket_upgrade(hs))
         throw std::runtime_error{"websocket upgrade failed: missing Upgrade headers"};
     if(not hs.contains("sec-websocket-accept")
