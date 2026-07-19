@@ -1,5 +1,7 @@
 module net;
+import :endpointbuf;
 import :posix;
+import :socket;
 import tester;
 import std;
 

@@ -1,6 +1,7 @@
 module net;
-import tester;
+import :address_info;
 import :posix;
+import tester;
 import std;
 
 

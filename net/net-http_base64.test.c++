@@ -1,4 +1,5 @@
 module net;
+import :http_base64;
 import tester;
 import std;
 

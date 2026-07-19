@@ -1,5 +1,6 @@
 module net;
 import :posix;
+import :socket;
 import tester;
 import std;
 

@@ -1,4 +1,6 @@
 module net;
+import :websocket;
+import :websocket_frame;
 import tester;
 import std;
 
