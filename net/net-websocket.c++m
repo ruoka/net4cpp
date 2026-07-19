@@ -137,20 +137,37 @@ inline bool is_websocket_upgrade(const ::http::headers& hs)
 
 using text_handler = std::function<std::optional<std::string>(std::string_view)>;
 
+inline void close_session(std::iostream& stream, std::uint16_t code)
+{
+    write_frame(stream, make_close_frame(code));
+}
+
 // Drive a WebSocket session until close/error. Server frames are unmasked.
+// v1 policy: complete text frames only (no fragmentation / binary); invalid
+// UTF-8 → 1007; structural frame errors → 1002 / 1009.
 inline void run_text_session(std::iostream& stream, const text_handler& on_text)
 {
     while(stream)
     {
         auto incoming = frame{};
-        if(not read_frame(stream, incoming))
+        switch(read_frame(stream, incoming))
+        {
+        case frame_read::ok:
             break;
+        case frame_read::io_error:
+            return;
+        case frame_read::message_too_big:
+            close_session(stream, close_message_too_big);
+            return;
+        case frame_read::protocol_error:
+            close_session(stream, close_protocol_error);
+            return;
+        }
 
-        // RFC 6455 §5.1: every client-to-server frame MUST be masked. Reject an
-        // unmasked frame with a 1002 (protocol error) close and end the session.
+        // RFC 6455 §5.1: every client-to-server frame MUST be masked.
         if(not incoming.masked)
         {
-            write_frame(stream, make_close_frame(close_protocol_error));
+            close_session(stream, close_protocol_error);
             return;
         }
 
@@ -170,6 +187,17 @@ inline void run_text_session(std::iostream& stream, const text_handler& on_text)
 
         case opcode::text:
         {
+            // No reassembly: FIN=0 is unsupported (close 1003), not silently dropped.
+            if(not incoming.fin)
+            {
+                close_session(stream, close_unsupported_data);
+                return;
+            }
+            if(not is_valid_utf8(std::span<const std::byte>{incoming.payload}))
+            {
+                close_session(stream, close_invalid_payload);
+                return;
+            }
             if(not on_text)
                 break;
             const auto text = payload_as_string(incoming);
@@ -183,9 +211,12 @@ inline void run_text_session(std::iostream& stream, const text_handler& on_text)
 
         case opcode::binary:
         case opcode::continuation:
+            close_session(stream, close_unsupported_data);
+            return;
+
         default:
-            // v1: ignore unsupported data opcodes
-            break;
+            close_session(stream, close_protocol_error);
+            return;
         }
     }
 }

@@ -134,7 +134,7 @@ auto register_websocket_tests()
 
         auto iss = std::istringstream{oss.str()};
         auto decoded = frame{};
-        require_true(read_frame(iss, decoded));
+        require_true(read_frame(iss, decoded) == frame_read::ok);
         check_eq(decoded.op, opcode::text);
         check_true(decoded.fin);
         check_eq(payload_as_string(decoded), "hello"s);
@@ -147,7 +147,7 @@ auto register_websocket_tests()
 
         auto iss = std::istringstream{oss.str()};
         auto decoded = frame{};
-        require_true(read_frame(iss, decoded));
+        require_true(read_frame(iss, decoded) == frame_read::ok);
         check_eq(payload_as_string(decoded), payload);
     };
 
@@ -157,7 +157,7 @@ auto register_websocket_tests()
 
         auto iss = std::istringstream{oss.str()};
         auto decoded = frame{};
-        require_true(read_frame(iss, decoded));
+        require_true(read_frame(iss, decoded) == frame_read::ok);
         check_true(not decoded.masked);
         check_eq(decoded.op, opcode::text);
         check_eq(payload_as_string(decoded), "server-say"s);
@@ -171,7 +171,7 @@ auto register_websocket_tests()
 
         auto iss = std::istringstream{oss.str()};
         auto decoded = frame{};
-        require_true(read_frame(iss, decoded));
+        require_true(read_frame(iss, decoded) == frame_read::ok);
         check_eq(decoded.payload.size(), payload.size());
         check_eq(payload_as_string(decoded), payload);
     };
@@ -187,7 +187,7 @@ auto register_websocket_tests()
 
         auto iss = std::istringstream{header};
         auto decoded = frame{};
-        check_true(not read_frame(iss, decoded));
+        check_eq(read_frame(iss, decoded), frame_read::message_too_big);
     };
 
     tester::bdd::scenario("websocket read_frame fails on truncated payload, [net]") = [] {
@@ -198,7 +198,7 @@ auto register_websocket_tests()
 
         auto iss = std::istringstream{truncated};
         auto decoded = frame{};
-        check_true(not read_frame(iss, decoded));
+        check_true(read_frame(iss, decoded) != frame_read::ok);
     };
 
     tester::bdd::scenario("run_text_session echoes text via handler, [net]") = [] {
@@ -209,7 +209,7 @@ auto register_websocket_tests()
 
         auto out = std::istringstream{stream.output()};
         auto reply = frame{};
-        require_true(read_frame(out, reply));
+        require_true(read_frame(out, reply) == frame_read::ok);
         check_true(not reply.masked);
         check_eq(reply.op, opcode::text);
         check_eq(payload_as_string(reply), "hello!"s);
@@ -229,7 +229,7 @@ auto register_websocket_tests()
 
         auto out = std::istringstream{stream.output()};
         auto reply = frame{};
-        require_true(read_frame(out, reply));
+        require_true(read_frame(out, reply) == frame_read::ok);
         check_eq(reply.op, opcode::pong);
         check_eq(payload_as_string(reply), "hb"s);
     };
@@ -253,11 +253,11 @@ auto register_websocket_tests()
 
         auto out = std::istringstream{stream.output()};
         auto reply = frame{};
-        require_true(read_frame(out, reply));
+        require_true(read_frame(out, reply) == frame_read::ok);
         check_eq(reply.op, opcode::close);
 
         auto extra = frame{};
-        check_true(not read_frame(out, extra)); // nothing echoed after close
+        check_true(read_frame(out, extra) != frame_read::ok); // nothing echoed after close
     };
 
     tester::bdd::scenario("run_text_session rejects unmasked client frame with 1002, [net]") = [] {
@@ -272,17 +272,133 @@ auto register_websocket_tests()
 
         auto out = std::istringstream{stream.output()};
         auto reply = frame{};
-        require_true(read_frame(out, reply));
+        require_true(read_frame(out, reply) == frame_read::ok);
         check_eq(reply.op, opcode::close);
-        require_true(reply.payload.size() >= 2);
-        const auto code = static_cast<std::uint16_t>(
-            (std::to_integer<unsigned>(reply.payload[0]) << 8)
-            | std::to_integer<unsigned>(reply.payload[1]));
-        check_eq(code, close_protocol_error);
+        check_eq(close_code(reply), close_protocol_error);
         check_true(not *handler_ran);
 
         auto extra = frame{};
-        check_true(not read_frame(out, extra)); // session ended after the close
+        check_true(read_frame(out, extra) != frame_read::ok); // session ended after the close
+    };
+
+    tester::bdd::scenario("is_valid_utf8 accepts text and rejects illegal bytes, [net]") = [] {
+        check_true(is_valid_utf8("hello"sv));
+        check_true(is_valid_utf8("äö€"sv)); // multi-byte OK
+        check_true(is_valid_utf8(""sv));
+
+        const auto overlong = std::array{std::byte{0xC0}, std::byte{0x80}}; // U+0000 overlong
+        check_true(not is_valid_utf8(std::span<const std::byte>{overlong}));
+
+        const auto bad = std::array{std::byte{0xFFu}};
+        check_true(not is_valid_utf8(std::span<const std::byte>{bad}));
+
+        const auto truncated = std::array{std::byte{0xE2}, std::byte{0x82}}; // incomplete €
+        check_true(not is_valid_utf8(std::span<const std::byte>{truncated}));
+    };
+
+    tester::bdd::scenario("read_frame rejects RSV bits and oversized control, [net]") = [] {
+        // FIN + text with RSV1 set.
+        auto rsv = std::string{};
+        rsv.push_back(static_cast<char>(0xC1)); // FIN|RSV1|text
+        rsv.push_back(static_cast<char>(0x80)); // masked, len 0
+        rsv.append("\x01\x02\x03\x04", 4);
+        auto iss = std::istringstream{rsv};
+        auto decoded = frame{};
+        check_eq(read_frame(iss, decoded), frame_read::protocol_error);
+
+        // Control payload must be ≤ 125: claim 126 via 16-bit length on ping.
+        auto ctrl = std::string{};
+        ctrl.push_back(static_cast<char>(0x89)); // FIN + ping
+        ctrl.push_back(static_cast<char>(0xFE)); // masked + 126
+        ctrl.push_back(static_cast<char>(0x00));
+        ctrl.push_back(static_cast<char>(0x7E)); // 126 bytes
+        auto iss2 = std::istringstream{ctrl};
+        check_eq(read_frame(iss2, decoded), frame_read::protocol_error);
+    };
+
+    tester::bdd::scenario("run_text_session rejects fragmented text with 1003, [net]") = [] {
+        auto frag = make_masked_text("part"sv);
+        frag.fin = false;
+        auto handler_ran = std::make_shared<bool>(false);
+        auto stream = duplex_stream{frame_bytes(frag)};
+        run_text_session(stream, [handler_ran](std::string_view) -> std::optional<std::string> {
+            *handler_ran = true;
+            return std::nullopt;
+        });
+
+        auto out = std::istringstream{stream.output()};
+        auto reply = frame{};
+        require_true(read_frame(out, reply) == frame_read::ok);
+        check_eq(reply.op, opcode::close);
+        check_eq(close_code(reply), close_unsupported_data);
+        check_true(not *handler_ran);
+    };
+
+    tester::bdd::scenario("run_text_session rejects continuation and binary with 1003, [net]") = [] {
+        auto cont = frame{};
+        cont.op = opcode::continuation;
+        cont.fin = true;
+        cont.masked = true;
+        cont.masking_key = 0x01020304u;
+
+        auto stream = duplex_stream{frame_bytes(cont)};
+        run_text_session(stream, nullptr);
+        auto out = std::istringstream{stream.output()};
+        auto reply = frame{};
+        require_true(read_frame(out, reply) == frame_read::ok);
+        check_eq(close_code(reply), close_unsupported_data);
+
+        auto bin = frame{};
+        bin.op = opcode::binary;
+        bin.masked = true;
+        bin.masking_key = 0x01020304u;
+        bin.payload = {std::byte{0x01}};
+        auto stream2 = duplex_stream{frame_bytes(bin)};
+        run_text_session(stream2, nullptr);
+        auto out2 = std::istringstream{stream2.output()};
+        require_true(read_frame(out2, reply) == frame_read::ok);
+        check_eq(close_code(reply), close_unsupported_data);
+    };
+
+    tester::bdd::scenario("run_text_session rejects invalid UTF-8 with 1007, [net]") = [] {
+        auto bad = make_masked_text("x"sv);
+        bad.payload = {std::byte{0xFFu}};
+        auto handler_ran = std::make_shared<bool>(false);
+        auto stream = duplex_stream{frame_bytes(bad)};
+        run_text_session(stream, [handler_ran](std::string_view) -> std::optional<std::string> {
+            *handler_ran = true;
+            return std::nullopt;
+        });
+
+        auto out = std::istringstream{stream.output()};
+        auto reply = frame{};
+        require_true(read_frame(out, reply) == frame_read::ok);
+        check_eq(close_code(reply), close_invalid_payload);
+        check_true(not *handler_ran);
+    };
+
+    tester::bdd::scenario("run_text_session rejects oversized frame with 1009, [net]") = [] {
+        // Header only: length > 1 MiB; session must close 1009 without running handler.
+        auto header = std::string{};
+        header.push_back(static_cast<char>(0x81)); // FIN + text
+        header.push_back(static_cast<char>(0xFF)); // masked + 127
+        const auto len = std::uint64_t{(1u << 20) + 1};
+        for(int shift = 56; shift >= 0; shift -= 8)
+            header.push_back(static_cast<char>((len >> shift) & 0xFFu));
+        header.append("\x01\x02\x03\x04", 4); // masking key; no payload bytes
+
+        auto handler_ran = std::make_shared<bool>(false);
+        auto stream = duplex_stream{std::move(header)};
+        run_text_session(stream, [handler_ran](std::string_view) -> std::optional<std::string> {
+            *handler_ran = true;
+            return std::nullopt;
+        });
+
+        auto out = std::istringstream{stream.output()};
+        auto reply = frame{};
+        require_true(read_frame(out, reply) == frame_read::ok);
+        check_eq(close_code(reply), close_message_too_big);
+        check_true(not *handler_ran);
     };
 
     tester::bdd::scenario("http server websocket echo upgrade, [net]") = [] {
@@ -334,13 +450,13 @@ auto register_websocket_tests()
 
         require_true(write_frame(client, make_masked_text("ping-me"sv)));
         auto reply = frame{};
-        require_true(read_frame(client, reply));
+        require_true(read_frame(client, reply) == frame_read::ok);
         check_eq(reply.op, opcode::text);
         check_eq(payload_as_string(reply), "ping-me"s);
 
         require_true(write_frame(client, make_masked_close()));
         auto close_reply = frame{};
-        require_true(read_frame(client, close_reply));
+        require_true(read_frame(client, close_reply) == frame_read::ok);
         check_eq(close_reply.op, opcode::close);
 
         server->stop();
