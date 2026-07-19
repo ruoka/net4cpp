@@ -1,5 +1,8 @@
 module net;
+import :address_info;
+import :connector;
 import :posix;
+import :socket;
 import tester;
 import std;
 
