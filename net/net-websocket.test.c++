@@ -560,6 +560,77 @@ auto register_websocket_tests()
             peer_thread.join();
     };
 
+    // Regression: waiting only for the first readable byte still hung in
+    // blocking >>/getline when the peer sent a truncated status line/headers.
+    tester::bdd::scenario("websocket::connect times out on truncated upgrade response, [net]") = [] {
+        if(not network_tests_enabled())
+            return;
+
+        using namespace std::chrono_literals;
+
+        auto acc = net::acceptor{"127.0.0.1", "0"};
+        const auto port = std::to_string(acc.bound_port());
+        auto peer_ready = std::promise<void>{};
+        auto peer_ready_future = peer_ready.get_future();
+        auto stop_peer = std::atomic<bool>{false};
+
+        std::thread peer_thread{[&] {
+            try
+            {
+                peer_ready.set_value();
+                auto [stream, client, client_port] = acc.accept();
+
+                auto method = ""s;
+                auto target = ""s;
+                auto version = ""s;
+                stream >> method >> target >> version;
+                auto discard = ""s;
+                std::getline(stream, discard);
+                auto hs = http::headers{};
+                stream >> hs >> net::crlf;
+
+                // Partial 101 response: enough for wait_for to succeed once,
+                // but never the terminating blank line that ends HTTP headers.
+                stream << "HTTP/1.1 101 Switching Protocols" << net::crlf
+                       << "Upgrade: websocket" << net::crlf
+                       << net::flush;
+
+                while(not stop_peer.load())
+                    std::this_thread::sleep_for(20ms);
+            }
+            catch(...)
+            {
+                try { peer_ready.set_value(); } catch(...) {}
+            }
+        }};
+
+        require_true(peer_ready_future.wait_for(3s) == std::future_status::ready);
+
+        auto threw = false;
+        auto timed_out = false;
+        const auto started = std::chrono::steady_clock::now();
+        try
+        {
+            auto ws = websocket::connect("127.0.0.1"sv, port, "/"sv, 300ms);
+            (void)ws;
+        }
+        catch(const std::runtime_error& e)
+        {
+            threw = true;
+            timed_out = std::string_view{e.what()}.contains("handshake timeout"sv);
+        }
+        const auto elapsed = std::chrono::steady_clock::now() - started;
+
+        check_true(threw);
+        check_true(timed_out);
+        check_true(elapsed < 2s);
+        check_true(elapsed >= 200ms);
+
+        stop_peer = true;
+        if(peer_thread.joinable())
+            peer_thread.join();
+    };
+
     // Regression: close() used to drain forever waiting for a peer close frame.
     // A peer that completes the upgrade but never replies must not hang the client.
     tester::bdd::scenario("websocket::connect close times out on silent peer, [net]") = [] {
