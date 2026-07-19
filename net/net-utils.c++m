@@ -1,6 +1,26 @@
 export module net:utils;
 import std;
 
+namespace {
+
+constexpr std::string_view month_abbrev_view(const std::chrono::month& m) noexcept
+{
+    // clang (esp. with modules + debug info) can be sensitive to complex local constexpr objects.
+    // Keep the lookup table at namespace scope.
+    static constexpr std::string_view number2month[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    const auto n = static_cast<unsigned>(m);
+    return number2month[n];
+}
+
+constexpr std::string_view weekday_abbrev_view(const std::chrono::weekday& wd) noexcept
+{
+    static constexpr std::string_view number2weekday[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    const auto n = wd.c_encoding();
+    return number2weekday[n];
+}
+
+} // namespace
+
 export namespace utils
 {
 
@@ -25,22 +45,6 @@ struct [[deprecated("compose Class with std::mutex instead of utils::lockable")]
     lockable(const lockable&) = delete;
     lockable& operator=(const lockable&) = delete;
 };
-
-inline constexpr std::string_view month_abbrev_view(const std::chrono::month& m) noexcept
-{
-    // clang (esp. with modules + debug info) can be sensitive to complex local constexpr objects.
-    // Keep the lookup table at namespace scope.
-    static constexpr std::string_view number2month[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-    const auto n = static_cast<unsigned>(m);
-    return number2month[n];
-}
-
-inline constexpr std::string_view weekday_abbrev_view(const std::chrono::weekday& wd) noexcept
-{
-    static constexpr std::string_view number2weekday[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-    const auto n = wd.c_encoding();
-    return number2weekday[n];
-}
 
 template<typename T>
 auto rfc1123_legacy(const std::chrono::time_point<T>& current_time) noexcept
@@ -163,11 +167,6 @@ constexpr auto trim_left(std::string_view sv, std::string_view ws = default_whit
 constexpr auto trim(std::string_view sv, std::string_view ws = default_whitespace)
 {
     return trim_left(trim_right(sv, ws), ws);
-}
-
-inline auto trim_right_to_string(std::string_view sv)
-{
-    return std::string{trim_right(sv)};
 }
 
 // Safe string-to-long-long conversion using std::from_chars
