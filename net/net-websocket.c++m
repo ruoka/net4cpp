@@ -4,6 +4,7 @@ import :connector;
 import :endpointstream;
 import :http_base64;
 import :http_headers;
+import :uri;
 import :utils;
 import std;
 
@@ -519,6 +520,45 @@ inline connection connect(
         throw std::runtime_error{"websocket upgrade failed: Sec-WebSocket-Accept mismatch"};
 
     return connection{std::move(stream)};
+}
+
+// Parse authority/path/query from `url` and upgrade. `ws` / `http` with an empty
+// port resolve like HTTP (port 80). `wss` / `https` are rejected (no TLS in-repo).
+// Fragment is not sent. Same handshake rules as the host/port/path overload.
+inline connection connect(
+    const net::uri& url,
+    const std::chrono::milliseconds& timeout = net::default_connect_timeout)
+{
+    const auto host = static_cast<std::string_view>(url.host);
+    if(host.empty())
+        throw std::runtime_error{"websocket connect failed: URI has no host"};
+
+    const auto scheme = static_cast<std::string_view>(url.scheme);
+    const auto port = static_cast<std::string_view>(url.port);
+    auto service = ""s;
+    if(not port.empty())
+        service = std::string{port};
+    else if(scheme == "ws"sv or scheme == "http"sv)
+        service = "http"s;
+    else if(scheme == "wss"sv or scheme == "https"sv)
+        throw std::runtime_error{
+            "websocket connect failed: wss/https not supported (no TLS)"};
+    else if(not scheme.empty())
+        service = std::string{scheme};
+    else
+        throw std::runtime_error{"websocket connect failed: URI has no port"};
+
+    auto path = std::string{static_cast<std::string_view>(url.path)};
+    const auto query = static_cast<std::string_view>(url.query);
+    if(not query.empty())
+    {
+        if(path.empty())
+            path = "/"s;
+        path.push_back('?');
+        path.append(query);
+    }
+
+    return connect(host, service, path, timeout);
 }
 
 } // namespace net::websocket

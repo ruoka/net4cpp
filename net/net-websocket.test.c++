@@ -504,6 +504,45 @@ auto register_websocket_tests()
             server_thread.join();
     };
 
+    tester::bdd::scenario("websocket::connect uri overload echo, [net]") = [] {
+        if(not network_tests_enabled())
+            return;
+
+        auto server = std::make_shared<http::server>();
+        server->ws("/events").ws([](std::string_view msg) {
+            return text_reply{std::string{msg}};
+        });
+
+        std::promise<void> bound;
+        auto bound_future = bound.get_future();
+        std::thread server_thread{[server, &bound] {
+            try
+            {
+                server->listen("127.0.0.1"sv, "18093"sv, [&bound] { bound.set_value(); });
+            }
+            catch(...)
+            {
+                try { bound.set_value(); } catch(...) {}
+            }
+        }};
+
+        using namespace std::chrono_literals;
+        require_true(bound_future.wait_for(3s) == std::future_status::ready);
+        std::this_thread::sleep_for(50ms);
+
+        auto ws = websocket::connect(net::uri{"ws://127.0.0.1:18093/events"});
+        require_true(static_cast<bool>(ws));
+        require_true(ws.send("via-uri"sv));
+        auto reply = ws.recv();
+        require_true(reply.has_value());
+        check_eq(*reply, "via-uri"s);
+        ws.close();
+
+        server->stop();
+        if(server_thread.joinable())
+            server_thread.join();
+    };
+
     // Regression: connect() used to block forever on the upgrade response after
     // TCP succeeded. A peer that accepts then stays silent must time out.
     tester::bdd::scenario("websocket::connect times out on silent upgrade peer, [net]") = [] {
