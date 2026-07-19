@@ -130,7 +130,8 @@ with `server.ws(...).ws(handler)`; a matching `GET` with `Upgrade: websocket` re
 `101` and runs a text-frame session (ping/pong/close + optional text replies).
 
 Clients use `websocket::connect` for the same text session (masked outbound frames,
-automatic ping/pong, `send` / `recv` / `read_loop` / `close`). The connect `timeout`
+automatic ping/pong, `send` / `recv` / `read_loop` / `close`). Overloads take
+`(host, port, path)` or a `net::uri` (`ws://host:port/path`). The connect `timeout`
 bounds TCP connect and the full upgrade-response read (status line and headers).
 `close()` waits briefly for the peer close frame (including truncated frames), then
 force-closes (default 2s; RFC 6455 §7.1.1). No `wss://` — terminate TLS in front of
@@ -157,6 +158,7 @@ server.listen("127.0.0.1", "8080");
 
 // Client
 auto ws = net::websocket::connect("127.0.0.1", "8080", "/events");
+// or: auto ws = net::websocket::connect(net::uri{"ws://127.0.0.1:8080/events"});
 ws.send("hello");
 if(auto reply = ws.recv())
 {
