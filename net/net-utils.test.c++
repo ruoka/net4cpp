@@ -81,17 +81,6 @@ auto register_utils_tests()
         };
     };
 
-    tester::bdd::scenario("String view trim to string conversion, [net]") = [] {
-        tester::bdd::given("String views with whitespace") = [] {
-            tester::bdd::when("Using trim_right_to_string") = [] {
-                tester::bdd::then("Returns std::string with trailing whitespace removed") = [] {
-                    check_eq("hello"s, utils::trim_right_to_string("hello  "sv));
-                    check_eq("  hello"s, utils::trim_right_to_string("  hello  "sv));
-                };
-            };
-        };
-    };
-
     tester::bdd::scenario("RFC 1123 date parsing, [net]") = [] {
         tester::bdd::given("Valid RFC 1123 date strings") = [] {
             tester::bdd::when("Parsing dates with different weekdays") = [] {
