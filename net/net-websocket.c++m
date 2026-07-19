@@ -426,7 +426,10 @@ private:
 };
 
 // TCP connect + HTTP Upgrade handshake. Throws std::runtime_error on a failed
-// upgrade (TCP failure throws via net::connect).
+// upgrade (TCP failure throws via net::connect). `timeout` bounds the TCP
+// connect and, separately, the wait for the upgrade response — a peer that
+// accepts then stays silent must not hang forever in blocking status/header
+// reads.
 inline connection connect(
     std::string_view host,
     std::string_view port,
@@ -449,6 +452,20 @@ inline connection connect(
            << "Sec-WebSocket-Version: 13" << net::crlf
            << net::crlf << net::flush;
 
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto wait_for_handshake = [&](std::string_view stage) {
+        // Prefer already-buffered bytes (status + headers often share one segment).
+        // wait_for() only polls the socket, so skipping it avoids false timeouts.
+        if(stream.rdbuf() != nullptr and stream.rdbuf()->in_avail() > 0)
+            return;
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now());
+        if(remaining.count() <= 0 or not stream.wait_for(remaining))
+            throw std::runtime_error{
+                "websocket upgrade failed: handshake timeout waiting for " + std::string{stage}};
+    };
+
+    wait_for_handshake("status line"sv);
     auto version = ""s;
     auto status_code = ""s;
     auto reason = ""s;
@@ -457,6 +474,7 @@ inline connection connect(
     if(status_code != "101"s)
         throw std::runtime_error{"websocket upgrade failed: expected 101, got " + status_code};
 
+    wait_for_handshake("response headers"sv);
     auto hs = ::http::headers{};
     stream >> hs >> net::crlf;
     if(not is_websocket_upgrade(hs))
