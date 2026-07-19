@@ -130,8 +130,9 @@ with `server.ws(...).ws(handler)`; a matching `GET` with `Upgrade: websocket` re
 `101` and runs a text-frame session (ping/pong/close + optional text replies).
 
 Clients use `websocket::connect` for the same text session (masked outbound frames,
-automatic ping/pong, `send` / `recv` / `read_loop` / `close`). No `wss://` — terminate
-TLS in front of the server if needed.
+automatic ping/pong, `send` / `recv` / `read_loop` / `close`). `close()` waits briefly
+for the peer close frame, then force-closes (default 2s; RFC 6455 §7.1.1). No `wss://`
+— terminate TLS in front of the server if needed.
 
 v1 framing policy (fail closed with a close frame, no silent drops):
 
