@@ -1,5 +1,7 @@
 export module net:websocket;
 export import :websocket_frame;
+import :connector;
+import :endpointstream;
 import :http_base64;
 import :http_headers;
 import :utils;
@@ -108,6 +110,41 @@ inline std::array<std::byte, 20> sha1_digest(std::string_view message)
     return digest;
 }
 
+inline std::uint32_t random_u32()
+{
+    thread_local std::mt19937 gen{std::random_device{}()};
+    return std::uniform_int_distribution<std::uint32_t>{}(gen);
+}
+
+inline std::string random_websocket_key()
+{
+    std::array<char, 16> bytes{};
+    for(auto& b : bytes)
+        b = static_cast<char>(random_u32() & 0xFFu);
+    return ::http::base64::encode(std::string_view{bytes.data(), bytes.size()});
+}
+
+inline frame mask_frame(frame f)
+{
+    f.masked = true;
+    f.masking_key = random_u32();
+    return f;
+}
+
+inline bool write_masked(std::ostream& os, frame f)
+{
+    return write_frame(os, mask_frame(std::move(f)));
+}
+
+inline std::string normalize_path(std::string_view path)
+{
+    if(path.empty())
+        return "/"s;
+    if(path.front() == '/')
+        return std::string{path};
+    return "/"s + std::string{path};
+}
+
 } // namespace detail
 
 inline std::string sec_websocket_accept(std::string_view client_key)
@@ -136,6 +173,7 @@ inline bool is_websocket_upgrade(const ::http::headers& hs)
 }
 
 using text_handler = std::function<std::optional<std::string>(std::string_view)>;
+using text_sink = std::function<void(std::string_view)>;
 
 inline void close_session(std::iostream& stream, std::uint16_t code)
 {
@@ -219,6 +257,198 @@ inline void run_text_session(std::iostream& stream, const text_handler& on_text)
             return;
         }
     }
+}
+
+// Client connection: TCP + HTTP upgrade, then masked text send / unmasked recv.
+// Same v1 policy as the server (text-only, no fragments, UTF-8, fail closed).
+class connection
+{
+public:
+
+    connection(connection&&) noexcept = default;
+    connection& operator=(connection&&) noexcept = default;
+
+    [[nodiscard]] explicit operator bool() const noexcept
+    {
+        return not m_closed and static_cast<bool>(m_stream);
+    }
+
+    // Send one complete text message (client frames are masked).
+    [[nodiscard]] bool send(std::string_view text)
+    {
+        if(not *this)
+            return false;
+        return detail::write_masked(m_stream, make_text_frame(text));
+    }
+
+    // Next text message, or nullopt when the session ends (close / protocol / IO).
+    // Automatically answers ping with a masked pong.
+    [[nodiscard]] std::optional<std::string> recv()
+    {
+        while(*this)
+        {
+            auto incoming = frame{};
+            switch(read_frame(m_stream, incoming))
+            {
+            case frame_read::ok:
+                break;
+            case frame_read::io_error:
+                m_closed = true;
+                return std::nullopt;
+            case frame_read::message_too_big:
+                fail_close(close_message_too_big);
+                return std::nullopt;
+            case frame_read::protocol_error:
+                fail_close(close_protocol_error);
+                return std::nullopt;
+            }
+
+            // RFC 6455 §5.1: server-to-client frames MUST NOT be masked.
+            if(incoming.masked)
+            {
+                fail_close(close_protocol_error);
+                return std::nullopt;
+            }
+
+            switch(incoming.op)
+            {
+            case opcode::ping:
+                if(not detail::write_masked(m_stream, make_pong_frame(incoming.payload)))
+                {
+                    m_closed = true;
+                    return std::nullopt;
+                }
+                break;
+
+            case opcode::pong:
+                break;
+
+            case opcode::close:
+                detail::write_masked(m_stream, make_close_frame(incoming.payload));
+                m_closed = true;
+                return std::nullopt;
+
+            case opcode::text:
+                if(not incoming.fin)
+                {
+                    fail_close(close_unsupported_data);
+                    return std::nullopt;
+                }
+                if(not is_valid_utf8(std::span<const std::byte>{incoming.payload}))
+                {
+                    fail_close(close_invalid_payload);
+                    return std::nullopt;
+                }
+                return payload_as_string(incoming);
+
+            case opcode::binary:
+            case opcode::continuation:
+                fail_close(close_unsupported_data);
+                return std::nullopt;
+
+            default:
+                fail_close(close_protocol_error);
+                return std::nullopt;
+            }
+        }
+        return std::nullopt;
+    }
+
+    // Call on_text for each text message until the session ends.
+    void read_loop(const text_sink& on_text)
+    {
+        while(auto msg = recv())
+        {
+            if(on_text)
+                on_text(*msg);
+        }
+    }
+
+    // Initiate close; best-effort wait for peer close frame.
+    void close(std::uint16_t code = close_normal)
+    {
+        if(m_closed)
+            return;
+        detail::write_masked(m_stream, make_close_frame(code));
+        while(m_stream and not m_closed)
+        {
+            auto incoming = frame{};
+            if(read_frame(m_stream, incoming) != frame_read::ok)
+                break;
+            if(incoming.op == opcode::close)
+                break;
+            if(incoming.op == opcode::ping)
+                detail::write_masked(m_stream, make_pong_frame(incoming.payload));
+        }
+        m_closed = true;
+        m_stream.close();
+    }
+
+private:
+
+    friend connection connect(
+        std::string_view host,
+        std::string_view port,
+        std::string_view path,
+        const std::chrono::milliseconds& timeout); // defined below
+
+    explicit connection(net::endpointstream stream)
+        : m_stream{std::move(stream)}
+    {
+    }
+
+    void fail_close(std::uint16_t code)
+    {
+        if(not m_closed and m_stream)
+            detail::write_masked(m_stream, make_close_frame(code));
+        m_closed = true;
+    }
+
+    net::endpointstream m_stream;
+    bool m_closed = false;
+};
+
+// TCP connect + HTTP Upgrade handshake. Throws std::runtime_error on a failed
+// upgrade (TCP failure throws via net::connect).
+inline connection connect(
+    std::string_view host,
+    std::string_view port,
+    std::string_view path = "/"sv,
+    const std::chrono::milliseconds& timeout = net::default_connect_timeout)
+{
+    auto stream = net::connect(host, port, timeout);
+    const auto key = detail::random_websocket_key();
+    const auto expected_accept = sec_websocket_accept(key);
+    const auto request_path = detail::normalize_path(path);
+    auto host_header = std::string{host};
+    host_header.push_back(':');
+    host_header.append(port);
+
+    stream << "GET " << request_path << " HTTP/1.1" << net::crlf
+           << "Host: " << host_header << net::crlf
+           << "Upgrade: websocket" << net::crlf
+           << "Connection: Upgrade" << net::crlf
+           << "Sec-WebSocket-Key: " << key << net::crlf
+           << "Sec-WebSocket-Version: 13" << net::crlf
+           << net::crlf << net::flush;
+
+    auto version = ""s;
+    auto status_code = ""s;
+    auto reason = ""s;
+    stream >> version >> status_code;
+    std::getline(stream, reason);
+    if(status_code != "101"s)
+        throw std::runtime_error{"websocket upgrade failed: expected 101, got " + status_code};
+
+    auto hs = ::http::headers{};
+    stream >> hs >> net::crlf;
+    if(not is_websocket_upgrade(hs))
+        throw std::runtime_error{"websocket upgrade failed: missing Upgrade headers"};
+    if(not hs.contains("sec-websocket-accept")
+       or hs["sec-websocket-accept"] != expected_accept)
+        throw std::runtime_error{"websocket upgrade failed: Sec-WebSocket-Accept mismatch"};
+
+    return connection{std::move(stream)};
 }
 
 } // namespace net::websocket

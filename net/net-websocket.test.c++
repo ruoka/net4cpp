@@ -427,7 +427,7 @@ auto register_websocket_tests()
         require_true(bound_future.wait_for(3s) == std::future_status::ready);
         std::this_thread::sleep_for(50ms);
 
-        auto client = connect("127.0.0.1", "18090");
+        auto client = net::connect("127.0.0.1", "18090");
         client << "GET /echo HTTP/1.1" << net::crlf
                << "Host: 127.0.0.1:18090" << net::crlf
                << "Upgrade: websocket" << net::crlf
@@ -458,6 +458,93 @@ auto register_websocket_tests()
         auto close_reply = frame{};
         require_true(read_frame(client, close_reply) == frame_read::ok);
         check_eq(close_reply.op, opcode::close);
+
+        server->stop();
+        if(server_thread.joinable())
+            server_thread.join();
+    };
+
+    tester::bdd::scenario("websocket::connect send/recv/close echo, [net]") = [] {
+        if(not network_tests_enabled())
+            return;
+
+        auto server = std::make_shared<http::server>();
+        server->ws("/events").ws([](std::string_view msg) -> std::optional<std::string> {
+            return std::string{msg};
+        });
+
+        std::promise<void> bound;
+        auto bound_future = bound.get_future();
+        std::thread server_thread{[server, &bound] {
+            try
+            {
+                server->listen("127.0.0.1"sv, "18091"sv, [&bound] { bound.set_value(); });
+            }
+            catch(...)
+            {
+                try { bound.set_value(); } catch(...) {}
+            }
+        }};
+
+        using namespace std::chrono_literals;
+        require_true(bound_future.wait_for(3s) == std::future_status::ready);
+        std::this_thread::sleep_for(50ms);
+
+        auto ws = websocket::connect("127.0.0.1"sv, "18091"sv, "/events"sv);
+        require_true(static_cast<bool>(ws));
+        require_true(ws.send("hello"sv));
+        auto reply = ws.recv();
+        require_true(reply.has_value());
+        check_eq(*reply, "hello"s);
+        ws.close();
+        check_true(not ws);
+
+        server->stop();
+        if(server_thread.joinable())
+            server_thread.join();
+    };
+
+    tester::bdd::scenario("websocket::connect read_loop collects text, [net]") = [] {
+        if(not network_tests_enabled())
+            return;
+
+        auto server = std::make_shared<http::server>();
+        auto count = std::make_shared<int>(0);
+        server->ws("/events").ws([count](std::string_view msg) -> std::optional<std::string> {
+            ++(*count);
+            return std::string{msg} + "-" + std::to_string(*count);
+        });
+
+        std::promise<void> bound;
+        auto bound_future = bound.get_future();
+        std::thread server_thread{[server, &bound] {
+            try
+            {
+                server->listen("127.0.0.1"sv, "18092"sv, [&bound] { bound.set_value(); });
+            }
+            catch(...)
+            {
+                try { bound.set_value(); } catch(...) {}
+            }
+        }};
+
+        using namespace std::chrono_literals;
+        require_true(bound_future.wait_for(3s) == std::future_status::ready);
+        std::this_thread::sleep_for(50ms);
+
+        auto ws = websocket::connect("127.0.0.1"sv, "18092"sv, "/events"sv);
+        require_true(ws.send("a"sv));
+        require_true(ws.send("b"sv));
+
+        auto seen = std::vector<std::string>{};
+        ws.read_loop([&](std::string_view msg) {
+            seen.emplace_back(msg);
+            if(seen.size() == 2u)
+                ws.close();
+        });
+        require_true(seen.size() == 2u);
+        check_eq(seen[0], "a-1"s);
+        check_eq(seen[1], "b-2"s);
 
         server->stop();
         if(server_thread.joinable())
