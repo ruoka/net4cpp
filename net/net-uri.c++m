@@ -61,7 +61,10 @@ public:
             string.remove_prefix(2);
             position = string.find_first_of("/?#");
             auto authority = string.substr(0, position);
-            string.remove_prefix(position);
+            // find() returns npos when the URI ends at the authority (no path/query/
+            // fragment). remove_prefix(npos) is undefined — consume the remainder.
+            string.remove_prefix(
+                position == std::string_view::npos ? string.size() : position);
 
             position = authority.find_first_of('@');
             if(position != std::string_view::npos)
@@ -70,26 +73,42 @@ public:
                 authority.remove_prefix(position + 1);
             }
 
-            position = authority.find_last_of(':');
-            if(position != std::string_view::npos)
+            // Port colon is the last ':' outside an IPv6 literal [...]. Using
+            // find_last_of(':') on "[::1]" incorrectly treats an address colon
+            // as the port separator.
+            auto port_colon = std::string_view::npos;
+            if(not authority.empty() and authority.front() == '[')
             {
-                const auto size = authority.length() - position;
-                port = authority.substr(position + 1, size - 1);
-                authority.remove_suffix(size);
+                const auto close = authority.find(']');
+                if(close != std::string_view::npos
+                   and close + 1 < authority.size()
+                   and authority[close + 1] == ':')
+                    port_colon = close + 1;
+            }
+            else
+            {
+                port_colon = authority.find_last_of(':');
+            }
+            if(port_colon != std::string_view::npos)
+            {
+                port = authority.substr(port_colon + 1);
+                authority.remove_suffix(authority.size() - port_colon);
             }
             host = authority.substr();
         }
 
         position = string.find_first_of("?#");
         path = string.substr(0, position);
-        string.remove_prefix(position);
+        string.remove_prefix(
+            position == std::string_view::npos ? string.size() : position);
 
         if(not string.empty() and string.front() == '?')
         {
             string.remove_prefix(1);
             position = string.find_first_of("#");
             query = string.substr(0, position);
-            string.remove_prefix(position);
+            string.remove_prefix(
+                position == std::string_view::npos ? string.size() : position);
         }
 
         if(not string.empty() and string.front() == '#')

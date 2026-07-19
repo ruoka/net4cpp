@@ -37,8 +37,21 @@ public:
         hints.ai_family = family;
         hints.ai_socktype = socktype;
 
-        const auto is_any = node.empty() or node == "0.0.0.0" or node == "::";
-        const auto node_str = std::string{node};
+        // URI parsers keep RFC 3986 IP-literals as "[::1]"; getaddrinfo wants
+        // the bare address. Strip a single matching bracket pair when present.
+        auto node_for_gai = node;
+        if(node_for_gai.size() >= 2
+           and node_for_gai.front() == '['
+           and node_for_gai.back() == ']')
+        {
+            node_for_gai.remove_prefix(1);
+            node_for_gai.remove_suffix(1);
+        }
+
+        const auto is_any = node_for_gai.empty()
+            or node_for_gai == "0.0.0.0"
+            or node_for_gai == "::";
+        const auto node_str = std::string{node_for_gai};
         const auto service_str = std::string{service_or_port};
 
         if (not service_str.empty() and std::isdigit(static_cast<unsigned char>(service_str[0]))) {
