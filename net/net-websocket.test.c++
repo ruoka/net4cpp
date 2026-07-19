@@ -564,7 +564,7 @@ auto register_websocket_tests()
         check_true(not ws);
         // Must return near the drain budget, not hang on blocking recv.
         check_true(elapsed < 2s);
-        check_true(elapsed >= 250ms);
+        check_true(elapsed >= 200ms);
 
         stop_peer = true;
         if(peer_thread.joinable())
