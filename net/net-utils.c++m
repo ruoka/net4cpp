@@ -6,8 +6,11 @@ export namespace utils
 
 inline constexpr std::string_view default_whitespace = " \f\n\r\t\v";
 
+// Used by FIXer (order board) and YarDB yarproxy. Prefer composing
+// Class + std::mutex at the call site; this helper will be removed.
 template<class Class>
-struct lockable : public Class, public std::mutex
+struct [[deprecated("compose Class with std::mutex instead of utils::lockable")]] lockable
+    : public Class, public std::mutex
 {
     using Class::Class;
 
@@ -22,28 +25,6 @@ struct lockable : public Class, public std::mutex
     lockable(const lockable&) = delete;
     lockable& operator=(const lockable&) = delete;
 };
-
-template<class Lockable>
-auto make_lock(Lockable& l)
-{
-    return std::unique_lock<Lockable>(l);
-}
-
-[[deprecated("prefer chrono formatting (e.g. std::format(\"{:%b}\", date)) over utils::month_to_string")]]
-inline const std::string& month_to_string(const std::chrono::month& m) noexcept
-{
-    static const std::string number2month[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-    const auto n = static_cast<unsigned>(m);
-    return number2month[n];
-}
-
-[[deprecated("prefer chrono formatting (e.g. std::format(\"{:%a}\", date)) over utils::weekday_to_string")]]
-inline const std::string& weekday_to_string(const std::chrono::weekday& wd) noexcept
-{
-    static const std::string number2weekday[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-    const auto n = wd.c_encoding();
-    return number2weekday[n];
-}
 
 inline constexpr std::string_view month_abbrev_view(const std::chrono::month& m) noexcept
 {
@@ -84,13 +65,13 @@ auto rfc1123_legacy(const std::chrono::time_point<T>& current_time) noexcept
 inline auto parse_rfc1123_date(std::string_view sv)
 {
     using namespace std::chrono;
-    
+
     // Skip weekday (e.g., "Tue, ")
     auto pos = sv.find(',');
     if(pos == std::string_view::npos or pos + 2 >= sv.size())
         throw std::invalid_argument{"Invalid RFC 1123 date format"};
     sv.remove_prefix(pos + 2); // Skip ", "
-    
+
     // Parse day (1-31)
     auto day_end = sv.find(' ');
     if(day_end == std::string_view::npos)
@@ -100,7 +81,7 @@ inline auto parse_rfc1123_date(std::string_view sv)
     if(res.ec != std::errc{})
         throw std::invalid_argument{"Invalid day in RFC 1123 date"};
     sv.remove_prefix(day_end + 1);
-    
+
     // Parse month abbreviation (Jan, Feb, etc.)
     auto month_end = sv.find(' ');
     if(month_end == std::string_view::npos or month_end != 3)
@@ -121,7 +102,7 @@ inline auto parse_rfc1123_date(std::string_view sv)
     else if(month_str == "Dec") MM = 12;
     else throw std::invalid_argument{"Invalid month in RFC 1123 date"};
     sv.remove_prefix(4);
-    
+
     // Parse year (4 digits)
     auto year_end = sv.find(' ');
     if(year_end == std::string_view::npos or year_end != 4)
@@ -131,7 +112,7 @@ inline auto parse_rfc1123_date(std::string_view sv)
     if(res.ec != std::errc{})
         throw std::invalid_argument{"Invalid year in RFC 1123 date"};
     sv.remove_prefix(5);
-    
+
     // Parse time (HH:MM:SS)
     unsigned hh = 0u, mm = 0u, ss = 0u;
     res = std::from_chars(sv.data(), sv.data() + 2, hh);
@@ -143,25 +124,8 @@ inline auto parse_rfc1123_date(std::string_view sv)
     res = std::from_chars(sv.data() + 6, sv.data() + 8, ss);
     if(res.ec != std::errc{})
         throw std::invalid_argument{"Invalid time in RFC 1123 date"};
-    
-    return sys_days{year{YYYY}/month{MM}/day{DD}} + hours{hh} + minutes{mm} + seconds{ss};
-}
 
-inline auto to_time_point(const std::string_view sv)
-{
-    int YYYY = 0; unsigned MM = 0u, DD = 0u, hh = 0u, mm = 0u, ss = 0u, fff = 0u;
-    auto res = std::from_chars(sv.data(), sv.data() + 4, YYYY);
-    res = std::from_chars(++res.ptr, res.ptr + 2, MM);
-    res = std::from_chars(++res.ptr, res.ptr + 2, DD);
-    if(sv.length() == 24)
-    {
-        res = std::from_chars(++res.ptr, res.ptr + 2, hh);
-        res = std::from_chars(++res.ptr, res.ptr + 2, mm);
-        res = std::from_chars(++res.ptr, res.ptr + 2, ss);
-        res = std::from_chars(++res.ptr, res.ptr + 3, fff);
-    }
-    using namespace std::chrono;
-    return sys_days{year{YYYY}/month{MM}/day{DD}} + hours{hh} + minutes{mm} + seconds{ss} + milliseconds{fff};
+    return sys_days{year{YYYY}/month{MM}/day{DD}} + hours{hh} + minutes{mm} + seconds{ss};
 }
 
 inline void ascii_to_upper(std::string& str) noexcept
@@ -184,43 +148,16 @@ inline void ascii_to_lower(std::string& str) noexcept
     }
 }
 
-// Backwards-compatible aliases (locale-free ASCII).
-[[deprecated("use utils::ascii_to_upper")]]
-inline void to_upper(std::string& str) noexcept { ascii_to_upper(str); }
-[[deprecated("use utils::ascii_to_lower")]]
-inline void to_lower(std::string& str) noexcept { ascii_to_lower(str); }
-
-inline std::string& trim_right(std::string& str, std::string_view ws = default_whitespace)
-{
-    const auto pos = str.find_last_not_of(ws);
-    if (pos == std::string::npos) str.clear();
-    else str.erase(pos + 1);
-    return str;
-}
-
 constexpr auto trim_right(std::string_view sv, std::string_view ws = default_whitespace)
 {
     const auto end = sv.find_last_not_of(ws);
     return end == std::string_view::npos ? std::string_view{} : sv.substr(0, end + 1);
 }
 
-inline std::string& trim_left(std::string& str, std::string_view ws = default_whitespace)
-{
-    const auto pos = str.find_first_not_of(ws);
-    if (pos != std::string::npos) str.erase(0, pos);
-    else str.clear();
-    return str;
-}
-
 constexpr auto trim_left(std::string_view sv, std::string_view ws = default_whitespace)
 {
     const auto start = sv.find_first_not_of(ws);
     return start == std::string_view::npos ? std::string_view{} : sv.substr(start);
-}
-
-inline std::string& trim(std::string& str, std::string_view ws = default_whitespace)
-{
-    return trim_left(trim_right(str, ws), ws);
 }
 
 constexpr auto trim(std::string_view sv, std::string_view ws = default_whitespace)
@@ -231,11 +168,6 @@ constexpr auto trim(std::string_view sv, std::string_view ws = default_whitespac
 inline auto trim_right_to_string(std::string_view sv)
 {
     return std::string{trim_right(sv)};
-}
-
-inline auto trim_left_to_string(std::string_view sv)
-{
-    return std::string{trim_left(sv)};
 }
 
 // Safe string-to-long-long conversion using std::from_chars
@@ -253,4 +185,3 @@ inline auto stoll(std::string_view sv)
 
 
 } // namespace utils
-
