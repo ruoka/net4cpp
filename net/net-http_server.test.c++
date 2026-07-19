@@ -11,6 +11,7 @@ using tester::assertions::check_eq;
 using tester::assertions::check_true;
 using tester::assertions::check_contains;
 using tester::assertions::check_nothrow;
+using tester::assertions::require_true;
 
 inline bool network_tests_enabled()
 {
@@ -902,6 +903,71 @@ auto register_server_tests()
                 };
             };
         };
+    };
+
+    // Regression: routing used regex_match on the full request-target, so any
+    // query string made an otherwise valid route miss and return 404.
+    tester::bdd::scenario("GET with query string matches path route and passes full URI, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        auto server = std::make_shared<http::server>();
+        auto seen_uri = std::make_shared<std::string>();
+        server->get("/cancel").response_handler("text/plain", [seen_uri](std::string_view req, std::string_view, http::headers&) {
+            *seen_uri = std::string{req};
+            return http::make_response(http::status_ok, "ok");
+        });
+        server->timeout(std::chrono::seconds{1});
+
+        std::promise<void> bound;
+        auto bound_future = bound.get_future();
+        std::thread server_thread{[server, &bound] {
+            try
+            {
+                server->listen("127.0.0.1"sv, "18093"sv, [&bound] { bound.set_value(); });
+            }
+            catch(...)
+            {
+                try { bound.set_value(); } catch(...) {}
+            }
+        }};
+
+        using namespace std::chrono_literals;
+        require_true(bound_future.wait_for(3s) == std::future_status::ready);
+        std::this_thread::sleep_for(50ms);
+
+        auto response_status = ""s;
+        try
+        {
+            auto stream = connect("127.0.0.1", "18093");
+            stream << "GET /cancel?ref=abc123 HTTP/1.1" << net::crlf
+                   << "Host: 127.0.0.1:18093" << net::crlf
+                   << "Connection: close" << net::crlf
+                   << net::crlf
+                   << net::flush;
+
+            std::string line;
+            if(stream and std::getline(stream, line))
+            {
+                if(not line.empty() and line.back() == '\r')
+                    line.pop_back();
+                auto space1 = line.find(' ');
+                if(space1 != std::string::npos)
+                {
+                    auto space2 = line.find(' ', space1 + 1);
+                    response_status = space2 != std::string::npos
+                        ? line.substr(space1 + 1, space2 - space1 - 1)
+                        : line.substr(space1 + 1);
+                }
+            }
+        }
+        catch(...) {}
+
+        server->stop();
+        if(server_thread.joinable())
+            server_thread.join();
+
+        check_eq(response_status, "200"s);
+        check_eq(*seen_uri, "/cancel?ref=abc123"s);
     };
 
     tester::bdd::scenario("413 when Content-Length exceeds max_request_body_size before allocate, [net]") = [] {

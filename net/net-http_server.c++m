@@ -750,8 +750,12 @@ private:
                     bool route_found = false;
                     bool method_allowed = false;
 
+                    // Match on path only — query strings are for handlers, not routing.
+                    // (WebSocket upgrade already strips '?' the same way.)
+                    const auto path_only = std::string{uri.substr(0, uri.find('?'))};
+
                     for(const auto& [path, methods_map] : m_router)
-                        if(std::regex_match(std::string{uri}, std::regex(path)))
+                        if(std::regex_match(path_only, std::regex(path)))
                         {
                             route_found = true;
                             auto it = methods_map.find(method);
@@ -764,7 +768,7 @@ private:
                                 method_allowed = true;
                                 try
                                 {
-                                    // Handlers receive URI only; expose method for metrics middleware.
+                                    // Handlers receive full request-target (path + query); expose method for metrics.
                                     hs.set("x-http-method"s, method);
                                     std::tie(res_status, res_content, res_type, custom_headers) = it->second.render(uri, body, hs);
                                     if(not res_type.empty())
