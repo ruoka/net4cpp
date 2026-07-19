@@ -12,6 +12,7 @@ using namespace std::string_view_literals;
 namespace {
 
 using tester::assertions::check_eq;
+using tester::assertions::check_false;
 using tester::assertions::check_true;
 using tester::assertions::require_true;
 
@@ -466,6 +467,57 @@ auto register_websocket_tests()
             server_thread.join();
     };
 
+    // Regression: Upgrade/Connection substring tokens must not switch protocols.
+    tester::bdd::scenario("http server rejects substring WebSocket upgrade tokens, [net]") = [] {
+        if(not network_tests_enabled())
+            return;
+
+        auto server = std::make_shared<http::server>();
+        auto upgraded = std::make_shared<std::atomic<bool>>(false);
+        server->ws("/echo").ws([upgraded](std::string_view) {
+            upgraded->store(true);
+            return text_reply{};
+        });
+
+        std::promise<void> bound;
+        auto bound_future = bound.get_future();
+        std::thread server_thread{[server, &bound] {
+            try
+            {
+                server->listen("127.0.0.1"sv, "18095"sv, [&bound] { bound.set_value(); });
+            }
+            catch(...)
+            {
+                try { bound.set_value(); } catch(...) {}
+            }
+        }};
+
+        using namespace std::chrono_literals;
+        require_true(bound_future.wait_for(3s) == std::future_status::ready);
+        std::this_thread::sleep_for(50ms);
+
+        auto client = net::connect("127.0.0.1", "18095");
+        client << "GET /echo HTTP/1.1" << net::crlf
+               << "Host: 127.0.0.1:18095" << net::crlf
+               << "Upgrade: websocketx" << net::crlf
+               << "Connection: upgradeable" << net::crlf
+               << "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" << net::crlf
+               << "Sec-WebSocket-Version: 13" << net::crlf
+               << net::crlf << net::flush;
+
+        auto version = ""s;
+        auto status_code = ""s;
+        auto reason = ""s;
+        client >> version >> status_code;
+        std::getline(client, reason);
+        check_true(status_code != "101"s);
+        check_false(upgraded->load());
+
+        server->stop();
+        if(server_thread.joinable())
+            server_thread.join();
+    };
+
     tester::bdd::scenario("websocket::connect send/recv/close echo, [net]") = [] {
         if(not network_tests_enabled())
             return;
@@ -543,6 +595,27 @@ auto register_websocket_tests()
         server->stop();
         if(server_thread.joinable())
             server_thread.join();
+    };
+
+    // Regression: substring match treated Upgrade: websocketx and
+    // Connection: upgradeable as a WebSocket handshake (proxy desync risk).
+    tester::bdd::scenario("is_websocket_upgrade requires exact header tokens, [net]") = [] {
+        auto make = [](std::string_view upgrade, std::string_view connection) {
+            http::headers hs;
+            hs.set("upgrade", std::string{upgrade});
+            hs.set("connection", std::string{connection});
+            return hs;
+        };
+
+        check_true(is_websocket_upgrade(make("websocket"sv, "Upgrade"sv)));
+        check_true(is_websocket_upgrade(make("WebSocket"sv, "keep-alive, Upgrade"sv)));
+        check_true(is_websocket_upgrade(make(" websocket "sv, "Upgrade"sv)));
+
+        check_false(is_websocket_upgrade(make("websocketx"sv, "Upgrade"sv)));
+        check_false(is_websocket_upgrade(make("xwebsocket"sv, "Upgrade"sv)));
+        check_false(is_websocket_upgrade(make("not-websocket"sv, "Upgrade"sv)));
+        check_false(is_websocket_upgrade(make("websocket"sv, "upgradeable"sv)));
+        check_false(is_websocket_upgrade(make("websocket"sv, "keep-alive, upgradeable"sv)));
     };
 
     // Regression: default-port URI overload used getaddrinfo service "http" as
