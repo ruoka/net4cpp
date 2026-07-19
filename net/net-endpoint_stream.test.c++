@@ -1,4 +1,8 @@
 module net;
+import :endpointbuf;
+import :endpointstream;
+import :posix;
+import :socket;
 import tester;
 import std;
 
@@ -9,6 +13,8 @@ using tester::basic::test_case;
 using tester::assertions::check_true;
 using tester::assertions::check_eq;
 using tester::assertions::check_nothrow;
+using tester::assertions::require_true;
+using tester::assertions::require_eq;
 
 inline bool network_tests_enabled()
 {
@@ -153,6 +159,57 @@ tester::bdd::scenario("Bulk Data Transfer, [net]") = [] {
         server_thread.join();
         check_true(read_ok.load());
         check_eq(sent_data, received_data);
+    };
+
+    // Regression: after the TCP short-recv assemble fix, xsgetn looped recv for
+    // every socket type when count >= N. udp_buffer_size == N, so the natural
+    // max-datagram read waited forever for more bytes after the first message.
+    tester::bdd::scenario("UDP bulk read returns one datagram, [net]") = [] {
+        using namespace std::chrono_literals;
+        using namespace std::string_literals;
+
+        auto receiver = socket{posix::af_inet, posix::sock_dgram};
+        auto sender = socket{posix::af_inet, posix::sock_dgram};
+        require_true(static_cast<bool>(receiver));
+        require_true(static_cast<bool>(sender));
+
+        auto addr = posix::sockaddr_in{};
+        addr.sin_family = posix::af_inet;
+        addr.sin_addr.s_addr = posix::htonl(posix::inaddr_loopback);
+        addr.sin_port = posix::htons(0);
+        require_eq(posix::bind(receiver, reinterpret_cast<posix::sockaddr*>(&addr), sizeof addr), 0);
+        auto addrlen = posix::socklen_t{sizeof addr};
+        require_eq(posix::getsockname(receiver, reinterpret_cast<posix::sockaddr*>(&addr), &addrlen), 0);
+        require_eq(posix::connect(sender, reinterpret_cast<posix::sockaddr*>(&addr), sizeof addr), 0);
+
+        const auto payload = "udp-xsgetn-one-message"s;
+        require_eq(
+            static_cast<std::size_t>(posix::send(sender, payload.data(), payload.size(), 0)),
+            payload.size());
+
+        // Do not wait_for/peek first: peek would underflow the datagram into the
+        // streambuf and miss the count >= N bulk path this regression targets.
+        endpointstream stream{new udp_endpointbuf{std::move(receiver)}};
+        auto buf = std::vector<char>(udp_buffer_size);
+        auto gcount = std::streamsize{0};
+        auto done = std::atomic<bool>{false};
+        std::thread reader{[&] {
+            stream.read(buf.data(), static_cast<std::streamsize>(udp_buffer_size));
+            gcount = stream.gcount();
+            done = true;
+        }};
+        auto start = std::chrono::steady_clock::now();
+        while(not done.load() and (std::chrono::steady_clock::now() - start) < 2s)
+            std::this_thread::sleep_for(10ms);
+        // Short datagram: failbit is expected; gcount must reflect one message
+        // and the read must not block waiting for udp_buffer_size bytes.
+        check_true(done.load());
+        if(done.load())
+            reader.join();
+        else
+            reader.detach(); // regression hang — don't block the test process forever
+        check_eq(gcount, static_cast<std::streamsize>(payload.size()));
+        check_eq(std::string_view{buf.data(), payload.size()}, std::string_view{payload});
     };
 
     return true;
