@@ -203,8 +203,8 @@ auto register_websocket_tests()
 
     tester::bdd::scenario("run_text_session echoes text via handler, [net]") = [] {
         auto stream = duplex_stream{frame_bytes(make_masked_text("hello"sv))};
-        run_text_session(stream, [](std::string_view msg) -> std::optional<std::string> {
-            return std::string{msg} + "!";
+        run_text_session(stream, [](std::string_view msg) {
+            return text_reply{std::string{msg} + "!"};
         });
 
         auto out = std::istringstream{stream.output()};
@@ -217,8 +217,8 @@ auto register_websocket_tests()
 
     tester::bdd::scenario("run_text_session suppresses reply when handler returns nullopt, [net]") = [] {
         auto stream = duplex_stream{frame_bytes(make_masked_text("quiet"sv))};
-        run_text_session(stream, [](std::string_view) -> std::optional<std::string> {
-            return std::nullopt;
+        run_text_session(stream, [](std::string_view) {
+            return text_reply{};
         });
         check_true(stream.output().empty());
     };
@@ -247,8 +247,8 @@ auto register_websocket_tests()
         input += frame_bytes(make_masked_text("after-close"sv));
 
         auto stream = duplex_stream{input};
-        run_text_session(stream, [](std::string_view msg) -> std::optional<std::string> {
-            return std::string{msg};
+        run_text_session(stream, [](std::string_view msg) {
+            return text_reply{std::string{msg}};
         });
 
         auto out = std::istringstream{stream.output()};
@@ -265,9 +265,9 @@ auto register_websocket_tests()
         // be rejected with a protocol-error close and the handler must not run.
         auto handler_ran = std::make_shared<bool>(false);
         auto stream = duplex_stream{frame_bytes(make_text_frame("nomask"sv))};
-        run_text_session(stream, [handler_ran](std::string_view msg) -> std::optional<std::string> {
+        run_text_session(stream, [handler_ran](std::string_view msg) {
             *handler_ran = true;
-            return std::string{msg};
+            return text_reply{std::string{msg}};
         });
 
         auto out = std::istringstream{stream.output()};
@@ -321,9 +321,9 @@ auto register_websocket_tests()
         frag.fin = false;
         auto handler_ran = std::make_shared<bool>(false);
         auto stream = duplex_stream{frame_bytes(frag)};
-        run_text_session(stream, [handler_ran](std::string_view) -> std::optional<std::string> {
+        run_text_session(stream, [handler_ran](std::string_view) {
             *handler_ran = true;
-            return std::nullopt;
+            return text_reply{};
         });
 
         auto out = std::istringstream{stream.output()};
@@ -365,9 +365,9 @@ auto register_websocket_tests()
         bad.payload = {std::byte{0xFFu}};
         auto handler_ran = std::make_shared<bool>(false);
         auto stream = duplex_stream{frame_bytes(bad)};
-        run_text_session(stream, [handler_ran](std::string_view) -> std::optional<std::string> {
+        run_text_session(stream, [handler_ran](std::string_view) {
             *handler_ran = true;
-            return std::nullopt;
+            return text_reply{};
         });
 
         auto out = std::istringstream{stream.output()};
@@ -389,9 +389,9 @@ auto register_websocket_tests()
 
         auto handler_ran = std::make_shared<bool>(false);
         auto stream = duplex_stream{std::move(header)};
-        run_text_session(stream, [handler_ran](std::string_view) -> std::optional<std::string> {
+        run_text_session(stream, [handler_ran](std::string_view) {
             *handler_ran = true;
-            return std::nullopt;
+            return text_reply{};
         });
 
         auto out = std::istringstream{stream.output()};
@@ -406,8 +406,8 @@ auto register_websocket_tests()
             return;
 
         auto server = std::make_shared<http::server>();
-        server->ws("/echo").ws([](std::string_view msg) -> std::optional<std::string> {
-            return std::string{msg};
+        server->ws("/echo").ws([](std::string_view msg) {
+            return text_reply{std::string{msg}};
         });
 
         std::promise<void> bound;
@@ -469,8 +469,8 @@ auto register_websocket_tests()
             return;
 
         auto server = std::make_shared<http::server>();
-        server->ws("/events").ws([](std::string_view msg) -> std::optional<std::string> {
-            return std::string{msg};
+        server->ws("/events").ws([](std::string_view msg) {
+            return text_reply{std::string{msg}};
         });
 
         std::promise<void> bound;
@@ -510,9 +510,9 @@ auto register_websocket_tests()
 
         auto server = std::make_shared<http::server>();
         auto count = std::make_shared<int>(0);
-        server->ws("/events").ws([count](std::string_view msg) -> std::optional<std::string> {
+        server->ws("/events").ws([count](std::string_view msg) {
             ++(*count);
-            return std::string{msg} + "-" + std::to_string(*count);
+            return text_reply{std::string{msg} + "-" + std::to_string(*count)};
         });
 
         std::promise<void> bound;
