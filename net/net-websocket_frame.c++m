@@ -18,9 +18,22 @@ enum class opcode : std::uint8_t
     pong = 0xA,
 };
 
-// RFC 6455 §7.4.1 close status codes (subset used by this server).
+// RFC 6455 §7.4.1 close status codes (subset used by this library).
 inline constexpr std::uint16_t close_normal = 1000;
 inline constexpr std::uint16_t close_protocol_error = 1002;
+inline constexpr std::uint16_t close_unsupported_data = 1003; // e.g. fragments / binary
+inline constexpr std::uint16_t close_invalid_payload = 1007;  // invalid UTF-8 text
+inline constexpr std::uint16_t close_message_too_big = 1009;
+
+inline constexpr std::uint64_t max_frame_payload = 1u << 20; // 1 MiB
+
+enum class frame_read : std::uint8_t
+{
+    ok,
+    io_error,         // truncated header/payload or stream fail
+    message_too_big,  // declared length > max_frame_payload
+    protocol_error,   // RSV, reserved opcode, or control-frame rules
+};
 
 struct frame
 {
@@ -30,6 +43,112 @@ struct frame
     std::uint32_t masking_key = 0;
     std::vector<std::byte> payload;
 };
+
+inline bool is_control_opcode(opcode op) noexcept
+{
+    const auto v = static_cast<unsigned>(op);
+    return v >= 0x8u and v <= 0xAu;
+}
+
+inline bool is_known_opcode(opcode op) noexcept
+{
+    switch(op)
+    {
+    case opcode::continuation:
+    case opcode::text:
+    case opcode::binary:
+    case opcode::close:
+    case opcode::ping:
+    case opcode::pong:
+        return true;
+    }
+    return false;
+}
+
+inline std::uint16_t close_code(const frame& f) noexcept
+{
+    if(f.payload.size() < 2)
+        return 0;
+    return static_cast<std::uint16_t>(
+        (std::to_integer<unsigned>(f.payload[0]) << 8)
+        | std::to_integer<unsigned>(f.payload[1]));
+}
+
+// Strict UTF-8 (RFC 3629): reject overlongs, surrogates, and > U+10FFFF.
+// No dependency on xson — WebSocket text validation stays in net.
+inline bool is_valid_utf8(std::span<const std::byte> bytes) noexcept
+{
+    std::size_t i = 0;
+    while(i < bytes.size())
+    {
+        const auto b0 = std::to_integer<unsigned>(bytes[i]);
+        if(b0 <= 0x7Fu)
+        {
+            ++i;
+            continue;
+        }
+
+        unsigned need = 0;
+        unsigned long cp = 0;
+        if((b0 & 0xE0u) == 0xC0u)
+        {
+            need = 1;
+            cp = b0 & 0x1Fu;
+            if(cp < 0x02u) // overlong 2-byte
+                return false;
+        }
+        else if((b0 & 0xF0u) == 0xE0u)
+        {
+            need = 2;
+            cp = b0 & 0x0Fu;
+        }
+        else if((b0 & 0xF8u) == 0xF0u)
+        {
+            need = 3;
+            cp = b0 & 0x07u;
+            if(cp > 0x04u) // would exceed U+10FFFF
+                return false;
+        }
+        else
+            return false;
+
+        if(i + need >= bytes.size())
+            return false;
+
+        for(unsigned n = 1; n <= need; ++n)
+        {
+            const auto bx = std::to_integer<unsigned>(bytes[i + n]);
+            if((bx & 0xC0u) != 0x80u)
+                return false;
+            cp = (cp << 6) | (bx & 0x3Fu);
+        }
+
+        if(need == 2)
+        {
+            if(cp < 0x800u) // overlong 3-byte
+                return false;
+            if(cp >= 0xD800u and cp <= 0xDFFFu) // UTF-16 surrogates
+                return false;
+        }
+        else if(need == 3)
+        {
+            if(cp < 0x10000u) // overlong 4-byte
+                return false;
+            if(cp > 0x10FFFFu)
+                return false;
+        }
+
+        i += need + 1;
+    }
+    return true;
+}
+
+inline bool is_valid_utf8(std::string_view text) noexcept
+{
+    return is_valid_utf8(std::span<const std::byte>{
+        reinterpret_cast<const std::byte*>(text.data()),
+        text.size()});
+}
 
 inline void apply_mask(std::span<std::byte> data, std::uint32_t key) noexcept
 {
@@ -129,13 +248,15 @@ inline bool write_frame(std::ostream& os, const frame& f)
     return static_cast<bool>(os);
 }
 
-inline bool read_frame(std::istream& is, frame& f)
+// Parse one frame. Structural RFC checks only (RSV, opcodes, control size/FIN,
+// max length). Fragmentation / UTF-8 policy is applied by the session layer.
+inline frame_read read_frame(std::istream& is, frame& f)
 {
     f = frame{};
     const auto c0 = is.get();
     const auto c1 = is.get();
     if(not is)
-        return false;
+        return frame_read::io_error;
 
     const auto b0 = static_cast<unsigned char>(c0);
     const auto b1 = static_cast<unsigned char>(c1);
@@ -144,12 +265,19 @@ inline bool read_frame(std::istream& is, frame& f)
     f.masked = (b1 & 0x80u) != 0;
     auto len = static_cast<std::uint64_t>(b1 & 0x7Fu);
 
+    // §5.2: RSV1–3 must be 0 unless an extension was negotiated (we negotiate none).
+    if((b0 & 0x70u) != 0)
+        return frame_read::protocol_error;
+
+    if(not is_known_opcode(f.op))
+        return frame_read::protocol_error;
+
     if(len == 126)
     {
         const auto hi = is.get();
         const auto lo = is.get();
         if(not is)
-            return false;
+            return frame_read::io_error;
         len = (static_cast<std::uint64_t>(static_cast<unsigned char>(hi)) << 8)
             | static_cast<unsigned char>(lo);
     }
@@ -160,15 +288,20 @@ inline bool read_frame(std::istream& is, frame& f)
         {
             const auto b = is.get();
             if(not is)
-                return false;
+                return frame_read::io_error;
             len = (len << 8) | static_cast<unsigned char>(b);
         }
     }
 
-    // v1 guard — reject absurd frames early
-    constexpr auto max_payload = std::uint64_t{1u << 20}; // 1 MiB
-    if(len > max_payload)
-        return false;
+    // §5.5: control frames must be FIN and ≤ 125 bytes.
+    if(is_control_opcode(f.op))
+    {
+        if(not f.fin or len > 125u)
+            return frame_read::protocol_error;
+    }
+
+    if(len > max_frame_payload)
+        return frame_read::message_too_big;
 
     if(f.masked)
     {
@@ -177,7 +310,7 @@ inline bool read_frame(std::istream& is, frame& f)
         {
             const auto c = is.get();
             if(not is)
-                return false;
+                return frame_read::io_error;
             b = static_cast<unsigned char>(c);
         }
         f.masking_key = (static_cast<std::uint32_t>(key_bytes[0]) << 24)
@@ -191,13 +324,13 @@ inline bool read_frame(std::istream& is, frame& f)
     {
         is.read(reinterpret_cast<char*>(f.payload.data()), static_cast<std::streamsize>(len));
         if(not is or static_cast<std::uint64_t>(is.gcount()) != len)
-            return false;
+            return frame_read::io_error;
     }
 
     if(f.masked)
         apply_mask(f.payload, f.masking_key);
 
-    return true;
+    return frame_read::ok;
 }
 
 } // namespace net::websocket
