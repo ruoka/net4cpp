@@ -9,6 +9,7 @@ using namespace std::string_literals;
 using namespace std::string_view_literals;
 using tester::assertions::check_eq;
 using tester::assertions::check_true;
+using tester::assertions::check_false;
 using tester::assertions::check_contains;
 using tester::assertions::check_nothrow;
 
