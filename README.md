@@ -129,6 +129,10 @@ Upgrade is handled inside `http::server` (not as response middleware). Register 
 with `server.ws(...).ws(handler)`; a matching `GET` with `Upgrade: websocket` returns
 `101` and runs a text-frame session (ping/pong/close + optional text replies).
 
+Clients use `websocket::connect` for the same text session (masked outbound frames,
+automatic ping/pong, `send` / `recv` / `read_loop` / `close`). No `wss://` — terminate
+TLS in front of the server if needed.
+
 v1 framing policy (fail closed with a close frame, no silent drops):
 
 - Client-to-server frames must be masked (`1002` if not).
@@ -141,11 +145,22 @@ v1 framing policy (fail closed with a close frame, no silent drops):
 import net;
 import std;
 
+// Server
 auto server = http::server{};
-server.ws("/echo").ws([](std::string_view msg) -> std::optional<std::string> {
+server.ws("/events").ws([](std::string_view msg) -> std::optional<std::string> {
     return std::string{msg}; // echo
 });
 server.listen("127.0.0.1", "8080");
+
+// Client
+auto ws = net::websocket::connect("127.0.0.1", "8080", "/events");
+ws.send("hello");
+if(auto reply = ws.recv())
+{
+    // …
+}
+// or: ws.read_loop([](std::string_view msg) { … });
+ws.close();
 ```
 
 # Syslog Stream Example
