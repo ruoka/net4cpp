@@ -48,12 +48,35 @@ protected:
             total += chunk;
         }
 
-        // 2. Large read: bypass buffer
+        // 2. Large read: bypass the streambuf, but keep calling recv until the
+        // request is satisfied or the peer closes. A single recv commonly returns
+        // only one TCP segment; returning that short read makes istream::read
+        // set failbit even though more bytes are still in flight (breaks
+        // WebSocket payloads and other bulk reads above the buffer size).
         if (count >= static_cast<std::streamsize>(N)) {
-            auto received = posix::recv(m_socket, dest, static_cast<std::size_t>(count), 0);
-            if (received > 0) return total + received;
-            if (received == 0) return total;  // EOF
-            // Fall through on error/EWOULDBLOCK
+            while (count > 0) {
+                auto received = posix::recv(m_socket, dest, static_cast<std::size_t>(count), 0);
+                if (received > 0) {
+                    dest += received;
+                    count -= received;
+                    total += received;
+                    continue;
+                }
+                if (received == 0)
+                    return total; // EOF
+                const auto err = posix::get_errno();
+                if (err == posix::eintr)
+                    continue;
+                if (err == posix::ewouldblock or err == posix::eagain) {
+                    // wait_for selects for readability (wait() is for writable).
+                    if (not m_socket.wait_for(std::chrono::milliseconds{60'000}))
+                        return total;
+                    continue;
+                }
+                break; // hard error — try the buffered path for any remainder
+            }
+            if (count == 0)
+                return total;
         }
 
         // 3. Fill buffer via underflow

@@ -110,6 +110,51 @@ tester::bdd::scenario("Bulk Data Transfer, [net]") = [] {
         };
     };
 
+    // Regression: xsgetn used to return after the first short recv when count >=
+    // buffer size, so istream::read failed even though more bytes were still
+    // coming. Split the write so the server must assemble across recv calls.
+    tester::bdd::scenario("Bulk read assembles across short recv, [net]") = [] {
+        acceptor acc{"127.0.0.1", "0"};
+        const auto port = acc.bound_port();
+
+        const std::size_t data_size = tcp_buffer_size + 512;
+        const std::size_t first_chunk = 1024; // well below one TCP segment / buffer
+        auto sent_data = std::string(data_size, '\0');
+        for(std::size_t i = 0; i < data_size; ++i)
+            sent_data[i] = static_cast<char>('a' + static_cast<int>(i % 26));
+
+        auto received_data = std::string{};
+        auto read_ok = std::atomic<bool>{false};
+        std::thread server_thread{[&] {
+            try
+            {
+                auto [stream, client, client_port] = acc.accept();
+                auto buf = std::vector<char>(data_size);
+                stream.read(buf.data(), static_cast<std::streamsize>(data_size));
+                read_ok = static_cast<bool>(stream) and stream.gcount() == static_cast<std::streamsize>(data_size);
+                if(read_ok)
+                    received_data.assign(buf.begin(), buf.end());
+            }
+            catch(...) {}
+        }};
+
+        {
+            using namespace std::chrono_literals;
+            auto client = connect("127.0.0.1", std::to_string(port));
+            client.write(sent_data.data(), static_cast<std::streamsize>(first_chunk));
+            client.flush();
+            // Give the server time to enter xsgetn and observe a short recv.
+            std::this_thread::sleep_for(50ms);
+            client.write(sent_data.data() + first_chunk,
+                         static_cast<std::streamsize>(data_size - first_chunk));
+            client.flush();
+        }
+
+        server_thread.join();
+        check_true(read_ok.load());
+        check_eq(sent_data, received_data);
+    };
+
     return true;
 }
 
