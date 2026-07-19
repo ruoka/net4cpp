@@ -148,9 +148,18 @@ inline std::string normalize_path(std::string_view path)
 
 // RFC 6455 §4.1 / RFC 7230: Host is uri-host [ ":" port ] with a numeric
 // port. getaddrinfo service names ("http") must not appear after ':'.
+// Bare IPv6 literals must be bracketed so Host: ::1:8080 is not emitted.
 inline std::string host_header(std::string_view host, std::string_view port)
 {
-    auto header = std::string{host};
+    const auto already_bracketed =
+        host.size() >= 2 and host.front() == '[' and host.back() == ']';
+    // Any unbracketed host containing ':' is an IP-literal (IPv6 / future).
+    const auto needs_brackets =
+        not already_bracketed and host.find(':') != std::string_view::npos;
+
+    auto header = needs_brackets
+        ? ("["s + std::string{host} + "]"s)
+        : std::string{host};
     if(not port.empty()
        and std::ranges::all_of(port, [](unsigned char c) {
                return std::isdigit(c) != 0;
