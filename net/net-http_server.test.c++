@@ -1296,12 +1296,12 @@ auto register_server_tests()
         };
     };
 
-    // Regression: OPTIONS preflight to a registered POST/GET path used to 405
-    // before cors_middleware could short-circuit (no options() registrar).
+    // Regression: OPTIONS preflight must use a registered OPTIONS handler
+    // (typically cors_middleware around a no-op), never GET/POST fallbacks.
     tester::bdd::scenario("OPTIONS CORS preflight reaches cors_middleware on existing routes, [net]") = [] {
         if(not network_tests_enabled()) return;
 
-        tester::bdd::given("An HTTP server with a POST route wrapped in cors_middleware") = [] {
+        tester::bdd::given("An HTTP server with POST plus OPTIONS wrapped in cors_middleware") = [] {
             auto server = std::make_shared<http::server>();
             auto handler_invoked = std::make_shared<std::atomic<bool>>(false);
 
@@ -1319,7 +1319,11 @@ auto register_server_tests()
                 handler_invoked->store(true);
                 return http::make_response(http::status_created, "Created"s, std::optional<http::headers>{});
             };
+            auto options_handler = [](auto&&, auto&&, auto&&) -> http::response_with_headers {
+                return http::make_response(http::status_no_content, ""s, std::optional<http::headers>{});
+            };
             server->post("/api/data").response_with_headers("application/json", cors_mw(post_handler));
+            server->options("/api/data").response_with_headers("application/json", cors_mw(options_handler));
             server->timeout(std::chrono::seconds{1});
 
             tester::bdd::when("Browser-style OPTIONS preflight is sent to the POST route") = [server, handler_invoked] {
@@ -1386,6 +1390,81 @@ auto register_server_tests()
                         check_eq(*response_status, "204");
                         check_eq(*acao, "http://localhost:8080");
                         check_true(acam->contains("POST"));
+                        check_false(handler_invoked->load());
+                    };
+            };
+        };
+    };
+
+    // Regression: prior OPTIONS preflight fallback invoked POST when cors_middleware
+    // was absent, so a preflight body could create resources.
+    tester::bdd::scenario("OPTIONS preflight does not invoke POST without cors_middleware, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server with a bare POST route and no OPTIONS handler") = [] {
+            auto server = std::make_shared<http::server>();
+            auto handler_invoked = std::make_shared<std::atomic<bool>>(false);
+
+            auto post_handler = [handler_invoked](auto&&, auto&&, auto&&) -> http::response_with_headers {
+                handler_invoked->store(true);
+                return http::make_response(http::status_created, "Created"s, std::optional<http::headers>{});
+            };
+            server->post("/api/data").response_with_headers("application/json", post_handler);
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("OPTIONS preflight with a body is sent to the POST path") = [server, handler_invoked] {
+                auto response_status = std::make_shared<std::string>("");
+
+                std::promise<void> started;
+                auto started_future = started.get_future();
+
+                std::thread server_thread{[server, &started]{
+                    try {
+                        started.set_value();
+                        server->listen("8095");
+                    } catch(...) {}
+                }};
+
+                using namespace std::chrono_literals;
+                if (started_future.wait_for(2s) == std::future_status::ready) {
+                    std::this_thread::sleep_for(200ms);
+
+                    try {
+                        const auto body = R"({"name":"preflight-must-not-create"})"s;
+                        auto stream = connect("127.0.0.1", "8095");
+                        stream << "OPTIONS /api/data HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:8095" << net::crlf
+                               << "Access-Control-Request-Method: POST" << net::crlf
+                               << "Content-Type: application/json" << net::crlf
+                               << "Content-Length: " << body.size() << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << body
+                               << net::flush;
+
+                        std::string line;
+                        if(stream and std::getline(stream, line)) {
+                            if(not line.empty() and line.back() == '\r')
+                                line.pop_back();
+                            auto space1 = line.find(' ');
+                            if(space1 != std::string::npos) {
+                                auto space2 = line.find(' ', space1 + 1);
+                                *response_status = space2 != std::string::npos
+                                    ? line.substr(space1 + 1, space2 - space1 - 1)
+                                    : line.substr(space1 + 1);
+                            }
+                        }
+                    } catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if (server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("Response is 204 and POST handler is not run") =
+                    [response_status, handler_invoked] {
+                        check_eq(*response_status, "204");
                         check_false(handler_invoked->load());
                     };
             };
