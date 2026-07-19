@@ -50,8 +50,8 @@ inline std::istream& operator >> (std::istream &is,  headers &hdrs)
         auto sv = std::string_view{line};
         auto pos = sv.find(':');
         if (pos != std::string_view::npos) {
-            const auto name_sv = utils::trim_view(sv.substr(0, pos));
-            const auto value_sv = utils::trim_view(sv.substr(pos + 1));
+            const auto name_sv = utils::trim(sv.substr(0, pos));
+            const auto value_sv = utils::trim(sv.substr(pos + 1));
 
             auto name = std::string{name_sv};
             utils::ascii_to_lower(name);
