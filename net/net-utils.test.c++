@@ -47,23 +47,25 @@ auto register_utils_tests()
 
     tester::bdd::scenario("String view trim functions, [net]") = [] {
         tester::bdd::given("Strings with leading/trailing whitespace") = [] {
-            tester::bdd::when("Using trim_start") = [] {
+            tester::bdd::when("Using trim_left") = [] {
                 tester::bdd::then("Removes leading whitespace") = [] {
-                    check_eq("hello"sv, utils::trim_start("  hello"sv));
-                    check_eq("hello"sv, utils::trim_start("\t\nhello"sv));
-                    check_eq("hello  "sv, utils::trim_start("  hello  "sv));
-                    check_eq(""sv, utils::trim_start("   "sv));
-                    check_eq("hello"sv, utils::trim_start("hello"sv));
+                    check_eq("hello"sv, utils::trim_left("  hello"sv));
+                    check_eq("hello"sv, utils::trim_left("\t\nhello"sv));
+                    check_eq("hello"sv, utils::trim_left("\f\vhello"sv));
+                    check_eq("hello  "sv, utils::trim_left("  hello  "sv));
+                    check_eq(""sv, utils::trim_left("   "sv));
+                    check_eq("hello"sv, utils::trim_left("hello"sv));
                 };
             };
 
-            tester::bdd::when("Using trim_end") = [] {
+            tester::bdd::when("Using trim_right") = [] {
                 tester::bdd::then("Removes trailing whitespace") = [] {
-                    check_eq("hello"sv, utils::trim_end("hello  "sv));
-                    check_eq("hello"sv, utils::trim_end("hello\t\n"sv));
-                    check_eq("  hello"sv, utils::trim_end("  hello  "sv));
-                    check_eq(""sv, utils::trim_end("   "sv));
-                    check_eq("hello"sv, utils::trim_end("hello"sv));
+                    check_eq("hello"sv, utils::trim_right("hello  "sv));
+                    check_eq("hello"sv, utils::trim_right("hello\t\n"sv));
+                    check_eq("hello"sv, utils::trim_right("hello\f\v"sv));
+                    check_eq("  hello"sv, utils::trim_right("  hello  "sv));
+                    check_eq(""sv, utils::trim_right("   "sv));
+                    check_eq("hello"sv, utils::trim_right("hello"sv));
                 };
             };
 
@@ -71,6 +73,7 @@ auto register_utils_tests()
                 tester::bdd::then("Removes both leading and trailing whitespace") = [] {
                     check_eq("hello"sv, utils::trim("  hello  "sv));
                     check_eq("hello"sv, utils::trim("\t\nhello\t\n"sv));
+                    check_eq("hello"sv, utils::trim("\f\vhello\f\v"sv));
                     check_eq(""sv, utils::trim("   "sv));
                     check_eq("hello"sv, utils::trim("hello"sv));
                 };
@@ -80,30 +83,17 @@ auto register_utils_tests()
 
     tester::bdd::scenario("String view trim to string conversion, [net]") = [] {
         tester::bdd::given("String views with whitespace") = [] {
-            tester::bdd::when("Using trim_start_to_string") = [] {
+            tester::bdd::when("Using trim_left_to_string") = [] {
                 tester::bdd::then("Returns std::string with leading whitespace removed") = [] {
-                    check_eq("hello"s, utils::trim_start_to_string("  hello"sv));
-                    check_eq("hello  "s, utils::trim_start_to_string("  hello  "sv));
+                    check_eq("hello"s, utils::trim_left_to_string("  hello"sv));
+                    check_eq("hello  "s, utils::trim_left_to_string("  hello  "sv));
                 };
             };
 
-            tester::bdd::when("Using trim_end_to_string") = [] {
+            tester::bdd::when("Using trim_right_to_string") = [] {
                 tester::bdd::then("Returns std::string with trailing whitespace removed") = [] {
-                    check_eq("hello"s, utils::trim_end_to_string("hello  "sv));
-                    check_eq("  hello"s, utils::trim_end_to_string("  hello  "sv));
-                };
-            };
-        };
-    };
-
-    tester::bdd::scenario("Trim view function, [net]") = [] {
-        tester::bdd::given("String views with whitespace") = [] {
-            tester::bdd::when("Using trim_view") = [] {
-                tester::bdd::then("Returns string_view with whitespace removed") = [] {
-                    check_eq("hello"sv, utils::trim_view("  hello  "sv));
-                    check_eq("hello"sv, utils::trim_view("\t\nhello\t\n"sv));
-                    check_eq(""sv, utils::trim_view("   "sv));
-                    check_eq("hello"sv, utils::trim_view("hello"sv));
+                    check_eq("hello"s, utils::trim_right_to_string("hello  "sv));
+                    check_eq("  hello"s, utils::trim_right_to_string("  hello  "sv));
                 };
             };
         };
