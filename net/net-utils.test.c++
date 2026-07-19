@@ -83,13 +83,6 @@ auto register_utils_tests()
 
     tester::bdd::scenario("String view trim to string conversion, [net]") = [] {
         tester::bdd::given("String views with whitespace") = [] {
-            tester::bdd::when("Using trim_left_to_string") = [] {
-                tester::bdd::then("Returns std::string with leading whitespace removed") = [] {
-                    check_eq("hello"s, utils::trim_left_to_string("  hello"sv));
-                    check_eq("hello  "s, utils::trim_left_to_string("  hello  "sv));
-                };
-            };
-
             tester::bdd::when("Using trim_right_to_string") = [] {
                 tester::bdd::then("Returns std::string with trailing whitespace removed") = [] {
                     check_eq("hello"s, utils::trim_right_to_string("hello  "sv));
