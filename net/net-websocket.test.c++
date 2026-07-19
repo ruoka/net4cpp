@@ -628,6 +628,19 @@ auto register_websocket_tests()
         check_eq(net::websocket::detail::host_header("[::1]"sv, "8080"sv), "[::1]:8080"s);
     };
 
+    // Regression: bare IPv6 host/port produced Host: ::1:8080 (illegal). RFC 7230
+    // uri-host for IPv6 is an IP-literal and requires brackets: [::1]:8080.
+    tester::bdd::scenario("websocket::connect Host brackets bare IPv6 literals, [net]") = [] {
+        check_eq(net::websocket::detail::host_header("::1"sv, "8080"sv), "[::1]:8080"s);
+        check_eq(net::websocket::detail::host_header("::1"sv, "http"sv), "[::1]"s);
+        check_eq(
+            net::websocket::detail::host_header("2001:db8::1"sv, "443"sv),
+            "[2001:db8::1]:443"s);
+        // Already-bracketed hosts (URI authority form) must not be double-wrapped.
+        check_eq(net::websocket::detail::host_header("[::1]"sv, "8080"sv), "[::1]:8080"s);
+        check_eq(net::websocket::detail::host_header("[::1]"sv, "http"sv), "[::1]"s);
+    };
+
     tester::bdd::scenario("websocket::connect uri Host uses numeric port only, [net]") = [] {
         if(not network_tests_enabled())
             return;
