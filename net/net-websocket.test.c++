@@ -504,6 +504,35 @@ auto register_websocket_tests()
             server_thread.join();
     };
 
+    // Regression: host/port/path were interpolated into the upgrade request with
+    // no sanitization, so CR/LF/NUL could inject headers or rewrite the request
+    // line (CWE-93). Reject before any network I/O.
+    tester::bdd::scenario("websocket::connect rejects CR/LF/NUL in host port path, [net]") = [] {
+        using namespace std::chrono_literals;
+
+        auto expect_rejected = [](std::string_view host, std::string_view port, std::string_view path) {
+            auto threw = false;
+            auto mentioned = false;
+            try
+            {
+                auto ws = websocket::connect(host, port, path, 50ms);
+                (void)ws;
+            }
+            catch(const std::runtime_error& e)
+            {
+                threw = true;
+                mentioned = std::string_view{e.what()}.contains("CR, LF, or NUL"sv);
+            }
+            check_true(threw);
+            check_true(mentioned);
+        };
+
+        expect_rejected("127.0.0.1\r\nX-Injected: 1"sv, "9"sv, "/"sv);
+        expect_rejected("127.0.0.1"sv, "9\nX-Injected: 1"sv, "/"sv);
+        expect_rejected("127.0.0.1"sv, "9"sv, "/chat\r\nX-Injected: 1"sv);
+        expect_rejected("127.0.0.1"sv, "9"sv, std::string_view{"/\0evil", 6});
+    };
+
     // Regression: connect() used to block forever on the upgrade response after
     // TCP succeeded. A peer that accepts then stays silent must time out.
     tester::bdd::scenario("websocket::connect times out on silent upgrade peer, [net]") = [] {

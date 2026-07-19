@@ -145,6 +145,23 @@ inline std::string normalize_path(std::string_view path)
     return "/"s + std::string{path};
 }
 
+// CR/LF/NUL in host, port, or path would rewrite the HTTP upgrade request
+// (CWE-93 header / request-line injection). Reject before any network I/O.
+inline bool contains_http_separator(std::string_view s) noexcept
+{
+    return s.find('\r') != std::string_view::npos
+        or s.find('\n') != std::string_view::npos
+        or s.find('\0') != std::string_view::npos;
+}
+
+inline void require_safe_connect_field(std::string_view name, std::string_view value)
+{
+    if(contains_http_separator(value))
+        throw std::runtime_error{
+            "websocket connect failed: " + std::string{name}
+                + " contains CR, LF, or NUL"};
+}
+
 // Cap upgrade response head so a hostile peer cannot grow memory without bound.
 inline constexpr auto max_upgrade_response_bytes = std::size_t{16 * 1024};
 
@@ -476,12 +493,18 @@ private:
 // connect and the full upgrade-response read (status line + headers through the
 // terminating blank line). A peer that accepts then stays silent — or sends a
 // truncated response — must not hang forever in blocking reads.
+// host/port/path must not contain CR, LF, or NUL — those would inject headers
+// or rewrite the request line when interpolated into the upgrade request.
 inline connection connect(
     std::string_view host,
     std::string_view port,
     std::string_view path = "/"sv,
     const std::chrono::milliseconds& timeout = net::default_connect_timeout)
 {
+    detail::require_safe_connect_field("host"sv, host);
+    detail::require_safe_connect_field("port"sv, port);
+    detail::require_safe_connect_field("path"sv, path);
+
     auto stream = net::connect(host, port, timeout);
     const auto key = detail::random_websocket_key();
     const auto expected_accept = sec_websocket_accept(key);
