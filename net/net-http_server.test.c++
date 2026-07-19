@@ -1092,6 +1092,74 @@ auto register_server_tests()
         };
     };
 
+    // Regression: duplicate Host used to last-wins, so a proxy that honored the
+    // first value could route to the victim while the app saw the attacker Host.
+    tester::bdd::scenario("400 when Host is duplicated, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server with a GET route") = [] {
+            auto server = std::make_shared<http::server>();
+            auto handled = std::make_shared<std::atomic<bool>>(false);
+            server->get("/test").response_handler("text/plain",
+                [handled](std::string_view, std::string_view, http::headers&) {
+                    handled->store(true);
+                    return http::make_response(http::status_ok, "OK"s);
+                });
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A GET sends two Host headers") = [server, handled] {
+                auto response_status = std::make_shared<std::string>("");
+
+                std::promise<void> started;
+                auto started_future = started.get_future();
+
+                std::thread server_thread{[server, &started]{
+                    try {
+                        started.set_value();
+                        server->listen("8094");
+                    } catch(...) {}
+                }};
+
+                using namespace std::chrono_literals;
+                if (started_future.wait_for(2s) == std::future_status::ready) {
+                    std::this_thread::sleep_for(200ms);
+
+                    try {
+                        auto stream = connect("127.0.0.1", "8094");
+                        stream << "GET /test HTTP/1.1" << net::crlf
+                               << "Host: victim.example" << net::crlf
+                               << "Host: evil.attacker" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf << net::flush;
+
+                        std::string line;
+                        if(stream and std::getline(stream, line)) {
+                            if(not line.empty() and line.back() == '\r')
+                                line.pop_back();
+                            auto space1 = line.find(' ');
+                            if(space1 != std::string::npos) {
+                                auto space2 = line.find(' ', space1 + 1);
+                                *response_status = space2 != std::string::npos
+                                    ? line.substr(space1 + 1, space2 - space1 - 1)
+                                    : line.substr(space1 + 1);
+                            }
+                        }
+                    } catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if (server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("Response is 400 and the handler is not invoked") = [response_status, handled] {
+                    check_eq(*response_status, "400");
+                    check_false(handled->load());
+                };
+            };
+        };
+    };
+
     // Regression: Transfer-Encoding was ignored while Content-Length framed the
     // body, which desynchronizes from proxies that decode chunked requests.
     tester::bdd::scenario("400 when Transfer-Encoding is present, [net]") = [] {

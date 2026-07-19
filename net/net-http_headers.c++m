@@ -60,6 +60,11 @@ inline std::istream& operator >> (std::istream &is,  headers &hdrs)
             // enables request smuggling when a front-end proxy uses the first.
             if(name == "content-length" and hdrs.m_values.contains(name))
                 throw std::runtime_error{"duplicate Content-Length header"};
+            // RFC 7230 §5.4: more than one Host header field must be rejected.
+            // Last-wins lets a second Host poison absolute URLs / cache keys
+            // while a first-Host proxy still routes to the victim authority.
+            if(name == "host" and hdrs.m_values.contains(name))
+                throw std::runtime_error{"duplicate Host header"};
             hdrs.m_values[std::move(name)] = std::string{value_sv};
         }
     }

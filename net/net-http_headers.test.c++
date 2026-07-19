@@ -75,6 +75,26 @@ auto register_malformed_headers_tests()
             }
             check_true(threw);
         };
+
+        // Regression: last-wins duplicate Host enabled authority poisoning when
+        // a front-end proxy routed on the first Host and the app used the last.
+        section("Duplicate Host is rejected") = [] {
+            auto raw = "Host: victim.example\r\n"
+                       "Host: evil.attacker\r\n"
+                       "\r\n"s;
+            auto is = std::istringstream{raw};
+            http::headers hs;
+            auto threw = false;
+            try
+            {
+                is >> hs;
+            }
+            catch(const std::runtime_error& e)
+            {
+                threw = std::string_view{e.what()}.contains("duplicate Host");
+            }
+            check_true(threw);
+        };
     };
 
     return true;
