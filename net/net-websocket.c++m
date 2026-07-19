@@ -172,7 +172,9 @@ inline bool is_websocket_upgrade(const ::http::headers& hs)
         and header_token_contains(hs["connection"], "upgrade"sv);
 }
 
-using text_handler = std::function<std::optional<std::string>(std::string_view)>;
+// nullopt = no outbound text frame; engaged = send that payload.
+using text_reply = std::optional<std::string>;
+using text_handler = std::function<text_reply(std::string_view)>;
 using text_sink = std::function<void(std::string_view)>;
 
 inline void close_session(std::iostream& stream, std::uint16_t code)

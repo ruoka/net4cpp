@@ -147,8 +147,8 @@ import std;
 
 // Server
 auto server = http::server{};
-server.ws("/events").ws([](std::string_view msg) -> std::optional<std::string> {
-    return std::string{msg}; // echo
+server.ws("/events").ws([](std::string_view msg) {
+    return net::websocket::text_reply{std::string{msg}}; // echo
 });
 server.listen("127.0.0.1", "8080");
 
