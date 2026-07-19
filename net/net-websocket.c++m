@@ -146,6 +146,29 @@ inline std::string normalize_path(std::string_view path)
     return "/"s + std::string{path};
 }
 
+// RFC 6455 §4.1 / RFC 7230: Host is uri-host [ ":" port ] with a numeric
+// port. getaddrinfo service names ("http") must not appear after ':'.
+inline std::string host_header(std::string_view host, std::string_view port)
+{
+    auto header = std::string{host};
+    if(not port.empty()
+       and std::ranges::all_of(port, [](unsigned char c) {
+               return std::isdigit(c) != 0;
+           }))
+    {
+        header.push_back(':');
+        header.append(port);
+    }
+    return header;
+}
+
+inline bool contains_http_line_break(std::string_view value)
+{
+    return std::ranges::any_of(value, [](char c) {
+        return c == '\r' or c == '\n' or c == '\0';
+    });
+}
+
 // Cap upgrade response head so a hostile peer cannot grow memory without bound.
 inline constexpr auto max_upgrade_response_bytes = std::size_t{16 * 1024};
 
@@ -483,13 +506,16 @@ inline connection connect(
     std::string_view path = "/"sv,
     const std::chrono::milliseconds& timeout = net::default_connect_timeout)
 {
+    const auto request_path = detail::normalize_path(path);
+    if(detail::contains_http_line_break(host)
+       or detail::contains_http_line_break(request_path))
+        throw std::runtime_error{
+            "websocket connect failed: host/path contains CR, LF, or NUL"};
+
     auto stream = net::connect(host, port, timeout);
     const auto key = detail::random_websocket_key();
     const auto expected_accept = sec_websocket_accept(key);
-    const auto request_path = detail::normalize_path(path);
-    auto host_header = std::string{host};
-    host_header.push_back(':');
-    host_header.append(port);
+    const auto host_header = detail::host_header(host, port);
 
     stream << "GET " << request_path << " HTTP/1.1" << net::crlf
            << "Host: " << host_header << net::crlf
