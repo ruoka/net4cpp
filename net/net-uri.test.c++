@@ -87,6 +87,40 @@ auto register_uri_tests()
         };
     };
 
+    // Regression: authority-only URIs used to call remove_prefix(npos) (UB).
+    tester::bdd::scenario("Authority-only URI without path, [net]") = [] {
+        auto parsed = net::uri{"ws://127.0.0.1:18093"};
+        check_true(static_cast<bool>(parsed.absolute));
+        check_eq(static_cast<std::string_view>(parsed.scheme), "ws");
+        check_eq(static_cast<std::string_view>(parsed.host), "127.0.0.1");
+        check_eq(static_cast<std::string_view>(parsed.port), "18093");
+        check_eq(static_cast<std::string_view>(parsed.path), "");
+        check_eq(static_cast<std::string_view>(parsed.query), "");
+        check_eq(static_cast<std::string_view>(parsed.fragment), "");
+    };
+
+    tester::bdd::scenario("IPv6 literal host with and without port, [net]") = [] {
+        {
+            auto parsed = net::uri{"ws://[::1]/events"};
+            check_eq(static_cast<std::string_view>(parsed.host), "[::1]");
+            check_eq(static_cast<std::string_view>(parsed.port), "");
+            check_eq(static_cast<std::string_view>(parsed.path), "/events");
+        }
+        {
+            auto parsed = net::uri{"http://[2001:db8::1]:8080/path?x=1"};
+            check_eq(static_cast<std::string_view>(parsed.host), "[2001:db8::1]");
+            check_eq(static_cast<std::string_view>(parsed.port), "8080");
+            check_eq(static_cast<std::string_view>(parsed.path), "/path");
+            check_eq(static_cast<std::string_view>(parsed.query), "x=1");
+        }
+        {
+            auto parsed = net::uri{"ws://[::1]"};
+            check_eq(static_cast<std::string_view>(parsed.host), "[::1]");
+            check_eq(static_cast<std::string_view>(parsed.port), "");
+            check_eq(static_cast<std::string_view>(parsed.path), "");
+        }
+    };
+
     return true;
 }
 

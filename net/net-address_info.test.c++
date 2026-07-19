@@ -47,6 +47,16 @@ auto register_address_info_tests()
         };
     };
 
+    // Regression: URI IPv6 literals keep brackets; getaddrinfo rejects "[::1]".
+    tester::bdd::scenario("Bracketed IPv6 literal resolves, [net]") = [] {
+        auto ai = address_info{"[::1]", "80", posix::sock_stream};
+        auto b = begin(ai);
+        auto e = end(ai);
+        check_true(b != e);
+        for(const auto& a : ai)
+            check_eq(a.ai_family, posix::af_inet6);
+    };
+
     return true;
 }
 
