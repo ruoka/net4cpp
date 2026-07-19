@@ -177,6 +177,10 @@ using text_reply = std::optional<std::string>;
 using text_handler = std::function<text_reply(std::string_view)>;
 using text_sink = std::function<void(std::string_view)>;
 
+// Best-effort wait for the peer close frame after we initiate close (RFC 6455
+// §7.1.1). Past this budget, close() force-closes the TCP stream.
+inline constexpr auto default_close_drain_timeout = std::chrono::milliseconds{2000};
+
 inline void close_session(std::iostream& stream, std::uint16_t code)
 {
     write_frame(stream, make_close_frame(code));
@@ -366,14 +370,25 @@ public:
         }
     }
 
-    // Initiate close; best-effort wait for peer close frame.
-    void close(std::uint16_t code = close_normal)
+    // Initiate close; best-effort wait for peer close frame, then force-close.
+    // Without a drain budget a silent peer (or endless text/ping) would hang
+    // forever in blocking recv — RFC 6455 §7.1.1 allows the client to time out.
+    void close(
+        std::uint16_t code = close_normal,
+        std::chrono::milliseconds drain_timeout = default_close_drain_timeout)
     {
         if(m_closed)
             return;
         detail::write_masked(m_stream, make_close_frame(code));
+        const auto deadline = std::chrono::steady_clock::now() + drain_timeout;
         while(m_stream and not m_closed)
         {
+            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - std::chrono::steady_clock::now());
+            if(remaining.count() <= 0)
+                break;
+            if(not m_stream.wait_for(remaining))
+                break;
             auto incoming = frame{};
             if(read_frame(m_stream, incoming) != frame_read::ok)
                 break;
