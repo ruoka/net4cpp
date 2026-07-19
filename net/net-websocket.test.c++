@@ -543,6 +543,100 @@ auto register_websocket_tests()
             server_thread.join();
     };
 
+    // Regression: default-port URI overload used getaddrinfo service "http" as
+    // the Host suffix (Host: example.com:http), which violates RFC 6455 §4.1.
+    tester::bdd::scenario("websocket::connect Host header omits service names, [net]") = [] {
+        check_eq(detail::host_header("example.com"sv, "http"sv), "example.com"s);
+        check_eq(detail::host_header("example.com"sv, "80"sv), "example.com:80"s);
+        check_eq(detail::host_header("127.0.0.1"sv, "18093"sv), "127.0.0.1:18093"s);
+        check_eq(detail::host_header("[::1]"sv, "http"sv), "[::1]"s);
+        check_eq(detail::host_header("[::1]"sv, "8080"sv), "[::1]:8080"s);
+    };
+
+    tester::bdd::scenario("websocket::connect uri Host uses numeric port only, [net]") = [] {
+        if(not network_tests_enabled())
+            return;
+
+        using namespace std::chrono_literals;
+
+        auto acc = net::acceptor{"127.0.0.1", "0"};
+        const auto port = std::to_string(acc.bound_port());
+        auto peer_ready = std::promise<void>{};
+        auto peer_ready_future = peer_ready.get_future();
+        auto seen_host = std::promise<std::string>{};
+        auto seen_host_future = seen_host.get_future();
+
+        std::thread peer_thread{[&] {
+            try
+            {
+                peer_ready.set_value();
+                auto [stream, client, client_port] = acc.accept();
+                auto method = ""s;
+                auto target = ""s;
+                auto version = ""s;
+                stream >> method >> target >> version;
+                auto discard = ""s;
+                std::getline(stream, discard);
+                auto hs = http::headers{};
+                stream >> hs >> net::crlf;
+                seen_host.set_value(hs.contains("host") ? hs["host"] : ""s);
+            }
+            catch(...)
+            {
+                try { peer_ready.set_value(); } catch(...) {}
+                try { seen_host.set_value(""s); } catch(...) {}
+            }
+        }};
+
+        require_true(peer_ready_future.wait_for(3s) == std::future_status::ready);
+
+        auto threw = false;
+        try
+        {
+            auto ws = websocket::connect(
+                net::uri{"ws://127.0.0.1:" + port + "/events"}, 300ms);
+            (void)ws;
+        }
+        catch(const std::runtime_error&)
+        {
+            // Peer never completes the upgrade; connect may throw after sending.
+            threw = true;
+        }
+        (void)threw;
+
+        require_true(seen_host_future.wait_for(3s) == std::future_status::ready);
+        check_eq(seen_host_future.get(), "127.0.0.1:" + port);
+
+        if(peer_thread.joinable())
+            peer_thread.join();
+    };
+
+    tester::bdd::scenario("websocket::connect rejects CR LF in host or path, [net]") = [] {
+        using namespace std::chrono_literals;
+
+        auto threw_host = false;
+        try
+        {
+            (void)websocket::connect("127.0.0.1\r\nX: y"sv, "9"sv, "/"sv, 100ms);
+        }
+        catch(const std::runtime_error& e)
+        {
+            threw_host = std::string_view{e.what()}.contains("CR, LF, or NUL"sv);
+        }
+        check_true(threw_host);
+
+        auto threw_path = false;
+        try
+        {
+            (void)websocket::connect("127.0.0.1"sv, "9"sv, "/x\r\nX: y"sv, 100ms);
+        }
+        catch(const std::runtime_error& e)
+        {
+            threw_path = std::string_view{e.what()}.contains("CR, LF, or NUL"sv);
+        }
+        check_true(threw_path);
+    };
+
     // Regression: connect() used to block forever on the upgrade response after
     // TCP succeeded. A peer that accepts then stays silent must time out.
     tester::bdd::scenario("websocket::connect times out on silent upgrade peer, [net]") = [] {
