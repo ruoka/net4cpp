@@ -41,8 +41,14 @@ const auto status_precondition_failed = "412 Precondition Failed"s;
 const auto status_payload_too_large = "413 Payload Too Large"s;
 const auto status_unprocessable_entity = "422 Unprocessable Entity"s;
 const auto status_too_many_requests = "429 Too Many Requests"s;
+const auto status_request_header_fields_too_large = "431 Request Header Fields Too Large"s;
 const auto status_internal_server_error = "500 Internal Server Error"s;
 const auto status_service_unavailable = "503 Service Unavailable"s;
+
+// Cap request-line + headers before they are buffered. Matches the WebSocket
+// upgrade-response head limit; unbounded operator>> / getline can OOM a
+// server before max_request_body_size applies.
+inline constexpr auto default_max_request_head_size = std::size_t{16 * 1024};
 
 using status = std::string;
 using content = std::string;
@@ -326,6 +332,18 @@ public:
         m_max_request_body_size = bytes;
     }
 
+    // Cap request-line + header block bytes before parsing. Default is
+    // default_max_request_head_size (16 KiB). Oversized heads get 431 and close.
+    std::size_t max_request_head_size() const
+    {
+        return m_max_request_head_size;
+    }
+
+    void max_request_head_size(std::size_t bytes)
+    {
+        m_max_request_head_size = bytes;
+    }
+
     void stop()
     {
         m_stop.store(true);
@@ -337,6 +355,30 @@ public:
     }
 
 private:
+
+    // Read through the terminating blank line. Empty return means the peer
+    // closed before a complete head arrived. Throws when max_bytes is hit so
+    // a hostile client cannot grow memory without bound via request-line or
+    // header fields (body size is capped separately).
+    static std::string read_request_head(std::istream& stream, std::size_t max_bytes)
+    {
+        auto head = ""s;
+        head.reserve(std::min(max_bytes, std::size_t{256}));
+        while(true)
+        {
+            if(head.size() >= 4 and head.ends_with("\r\n\r\n"))
+                return head;
+
+            if(head.size() >= max_bytes)
+                throw std::runtime_error{"request headers too large"};
+
+            const auto ch = stream.get();
+            if(not stream.good())
+                return ""s;
+
+            head.push_back(static_cast<char>(ch));
+        }
+    }
 
     auto date() const
     {
@@ -390,10 +432,39 @@ private:
         {
             while(stream)
             {
-                std::string method, uri, version;
-                stream >> method >> uri >> version >> net::crlf;
+                static std::atomic<std::uint64_t> request_counter{0};
+                const auto request_start = system_clock::now();
 
-                if(not stream.good())
+                std::string head;
+                try
+                {
+                    head = read_request_head(stream, m_max_request_head_size);
+                }
+                catch(const std::runtime_error& e)
+                {
+                    if(not std::string_view{e.what()}.contains("too large"sv))
+                        throw;
+                    const auto request_id = std::to_string(++request_counter);
+                    const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                    net::slog << net::warning("HTTP_REQUEST_HEAD_TOO_LARGE") << "request head exceeds max size from " << endpoint << ":" << port
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << std::pair{"max_request_head_size", static_cast<long long>(m_max_request_head_size)}
+                              << std::pair{"status", status_request_header_fields_too_large}
+                              << std::pair{"request_id", request_id}
+                              << std::pair{"duration_ms", request_duration}
+                              << net::flush;
+                    stream << "HTTP/1.1 " << status_request_header_fields_too_large << net::crlf
+                           << "Date: " << date() << net::crlf
+                           << "Server: " << host() << net::crlf
+                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Content-Length: 0" << net::crlf
+                           << "Connection: close" << net::crlf
+                           << net::crlf << net::flush;
+                    break;
+                }
+
+                if(head.empty())
                 {
                     if(stream.eof())
                     {
@@ -419,10 +490,31 @@ private:
                     break;
                 }
 
-                // Generate request ID for logging (internal tracking)
-                static std::atomic<std::uint64_t> request_counter{0};
                 const auto request_id = std::to_string(++request_counter);
-                const auto request_start = system_clock::now();
+
+                auto parse = std::istringstream{head};
+                std::string method, uri, version;
+                parse >> method >> uri >> version >> net::crlf;
+
+                if(method.empty() or uri.empty() or version.empty())
+                {
+                    const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                    net::slog << net::warning("HTTP_BAD_REQUEST_LINE") << "malformed request line from " << endpoint << ":" << port
+                              << std::pair{"ip"sv, endpoint}
+                              << std::pair{"port", port}
+                              << std::pair{"status", status_bad_request}
+                              << std::pair{"request_id", request_id}
+                              << std::pair{"duration_ms", request_duration}
+                              << net::flush;
+                    stream << "HTTP/1.1 " << status_bad_request << net::crlf
+                           << "Date: " << date() << net::crlf
+                           << "Server: " << host() << net::crlf
+                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Content-Length: 0" << net::crlf
+                           << "Connection: close" << net::crlf
+                           << net::crlf << net::flush;
+                    break;
+                }
 
                 net::slog << net::notice("HTTP_REQUEST") << "request \"" << method << ' ' << uri << ' ' << version << "\""
                           << std::pair{"ip"sv, endpoint}
@@ -436,7 +528,7 @@ private:
                 headers hs{};
                 try
                 {
-                    stream >> hs >> net::crlf;
+                    parse >> hs >> net::crlf;
                 }
                 catch(const std::exception& e)
                 {
@@ -1014,6 +1106,7 @@ private:
     std::flat_set<method_type> m_methods = {method_head, method_options};
     std::chrono::seconds m_timeout = std::chrono::seconds{0};
     std::size_t m_max_request_body_size = std::numeric_limits<std::size_t>::max();
+    std::size_t m_max_request_head_size = default_max_request_head_size;
     std::atomic<bool> m_stop{false};
 };
 
