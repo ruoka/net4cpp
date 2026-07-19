@@ -508,14 +508,14 @@ auto register_websocket_tests()
     // no sanitization, so CR/LF/NUL could inject headers or rewrite the request
     // line (CWE-93). Reject before any network I/O.
     tester::bdd::scenario("websocket::connect rejects CR/LF/NUL in host port path, [net]") = [] {
-        using namespace std::chrono_literals;
+        const auto timeout = std::chrono::milliseconds{50};
 
-        auto expect_rejected = [](std::string_view host, std::string_view port, std::string_view path) {
+        auto expect_rejected = [&](std::string_view host, std::string_view port, std::string_view path) {
             auto threw = false;
             auto mentioned = false;
             try
             {
-                auto ws = websocket::connect(host, port, path, 50ms);
+                auto ws = websocket::connect(host, port, path, timeout);
                 (void)ws;
             }
             catch(const std::runtime_error& e)
