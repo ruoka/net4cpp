@@ -20,6 +20,18 @@ using tester::assertions::check_starts_with;
         return std::string_view{v} != "1";
     return true;
 }
+
+// Streamable type that throws from operator<< — models mid-entry failures such as
+// bad_alloc while appending a large HTTP request body to human_message.
+struct throwing_log_value
+{
+};
+
+inline std::ostream& operator<<(std::ostream& os, throwing_log_value)
+{
+    throw std::runtime_error{"slog mid-entry throw"};
+    return os;
+}
 }
 
 auto register_structured_log_stream_tests()
@@ -165,6 +177,47 @@ auto register_structured_log_stream_tests()
                     check_contains(output, "\"msg_id\":\"SERVER_START\"");
                     check_contains(output, "Listening on port 21120");
                     // Reset redirect to default to avoid dangling pointer
+                    slog.redirect(std::clog);
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("Null C-string structured fields stay exception-safe, [net]") = [] {
+        auto captured_output = std::make_shared<std::stringstream>();
+
+        tester::bdd::given("A JSONL slog stream and a null const char* field") = [captured_output] {
+            slog.app_name("testapp")
+                .log_level(syslog::severity::debug)
+                .format(log_format::jsonl)
+                .sd_id("api")
+                .redirect(*captured_output);
+
+            tester::bdd::when("Logging getenv-style null pointers as structured fields") = [captured_output] {
+                const char* missing = nullptr;
+                require_nothrow([&] {
+                    slog << net::info("ENV")
+                         << "missing env"
+                         << std::pair{"HOME", missing}
+                         << std::pair{"unset", std::getenv("NET4CPP_SLOG_NULL_FIELD_TEST_UNSET")}
+                         << net::flush;
+                });
+
+                tester::bdd::then("Null fields render as JSON null and slog remains usable") = [captured_output] {
+                    std::string output = captured_output->str();
+                    check_contains(output, "\"HOME\":null");
+                    check_contains(output, "\"unset\":null");
+                    check_contains(output, "\"msg_id\":\"ENV\"");
+
+                    captured_output->str("");
+                    captured_output->clear();
+                    require_nothrow([&] {
+                        slog << net::info("AFTER")
+                             << "still alive"
+                             << std::pair{"ok", 1}
+                             << net::flush;
+                    });
+                    check_contains(captured_output->str(), "\"ok\":1");
                     slog.redirect(std::clog);
                 };
             };
@@ -989,6 +1042,82 @@ auto register_structured_log_stream_tests()
                     [[maybe_unused]] auto& result = slog.flush();
                     // Just verify it compiles and returns reference
                 });
+            };
+        };
+    };
+
+    // Regression: operator<<(level) locks m_log_mutex and only flush() unlocked.
+    // A throw from human_message << or convert_to_value skipped flush() and left
+    // the mutex locked — http::server's catch-path slog then hung forever.
+    tester::bdd::scenario("Mid-entry throw releases slog mutex, [net]") = [] {
+        auto captured_output = std::make_shared<std::stringstream>();
+
+        tester::bdd::given("A slog stream at debug level") = [captured_output] {
+            slog.app_name("tester")
+                .log_level(syslog::severity::debug)
+                .format(log_format::jsonl)
+                .redirect(*captured_output);
+
+            tester::bdd::when("human_message insertion throws before flush") = [captured_output] {
+                auto threw = false;
+                try
+                {
+                    slog << net::info("MID_ENTRY_THROW")
+                         << "prefix "
+                         << throwing_log_value{}
+                         << net::flush;
+                }
+                catch(const std::runtime_error& e)
+                {
+                    threw = std::string_view{e.what()}.contains("mid-entry throw");
+                }
+
+                tester::bdd::then("A follow-up log still completes") = [captured_output, threw] {
+                    check_true(threw);
+                    slog << net::info("AFTER_MID_ENTRY_THROW")
+                         << "still works"
+                         << net::flush;
+                    const auto output = captured_output->str();
+                    check_contains(output, "AFTER_MID_ENTRY_THROW");
+                    check_contains(output, "still works");
+                    slog.redirect(std::clog);
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("Structured-field convert throw releases slog mutex, [net]") = [] {
+        auto captured_output = std::make_shared<std::stringstream>();
+
+        tester::bdd::given("A slog stream at debug level") = [captured_output] {
+            slog.app_name("tester")
+                .log_level(syslog::severity::debug)
+                .format(log_format::jsonl)
+                .redirect(*captured_output);
+
+            tester::bdd::when("convert_to_value via streamable field throws") = [captured_output] {
+                auto threw = false;
+                try
+                {
+                    slog << net::info("FIELD_CONVERT_THROW")
+                         << std::pair{"boom"sv, throwing_log_value{}}
+                         << net::flush;
+                }
+                catch(const std::runtime_error& e)
+                {
+                    threw = std::string_view{e.what()}.contains("mid-entry throw");
+                }
+
+                tester::bdd::then("A follow-up log still completes") = [captured_output, threw] {
+                    check_true(threw);
+                    slog << net::info("AFTER_FIELD_CONVERT_THROW")
+                         << "recovered"
+                         << net::flush;
+                    const auto output = captured_output->str();
+                    check_contains(output, "AFTER_FIELD_CONVERT_THROW");
+                    check_contains(output, "recovered");
+                    slog.redirect(std::clog);
+                };
             };
         };
     };
