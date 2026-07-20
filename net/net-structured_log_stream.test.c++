@@ -171,6 +171,47 @@ auto register_structured_log_stream_tests()
         };
     };
 
+    tester::bdd::scenario("Null C-string structured fields stay exception-safe, [net]") = [] {
+        auto captured_output = std::make_shared<std::stringstream>();
+
+        tester::bdd::given("A JSONL slog stream and a null const char* field") = [captured_output] {
+            slog.app_name("testapp")
+                .log_level(syslog::severity::debug)
+                .format(log_format::jsonl)
+                .sd_id("api")
+                .redirect(*captured_output);
+
+            tester::bdd::when("Logging getenv-style null pointers as structured fields") = [captured_output] {
+                const char* missing = nullptr;
+                require_nothrow([&] {
+                    slog << net::info("ENV")
+                         << "missing env"
+                         << std::pair{"HOME", missing}
+                         << std::pair{"unset", std::getenv("NET4CPP_SLOG_NULL_FIELD_TEST_UNSET")}
+                         << net::flush;
+                });
+
+                tester::bdd::then("Null fields render as JSON null and slog remains usable") = [captured_output] {
+                    std::string output = captured_output->str();
+                    check_contains(output, "\"HOME\":null");
+                    check_contains(output, "\"unset\":null");
+                    check_contains(output, "\"msg_id\":\"ENV\"");
+
+                    captured_output->str("");
+                    captured_output->clear();
+                    require_nothrow([&] {
+                        slog << net::info("AFTER")
+                             << "still alive"
+                             << std::pair{"ok", 1}
+                             << net::flush;
+                    });
+                    check_contains(captured_output->str(), "\"ok\":1");
+                    slog.redirect(std::clog);
+                };
+            };
+        };
+    };
+
     tester::bdd::scenario("Structured fields with error message output verification, [net]") = [] {
         auto captured_output = std::make_shared<std::stringstream>();
         

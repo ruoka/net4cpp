@@ -269,6 +269,12 @@ private:
     // concepts in the chain
     template<c_string_type T>
     static detail::value convert_to_value(T v) {
+        // getenv() and other C APIs return nullptr; std::string{nullptr} is UB and
+        // throws (libstdc++) or crashes (libc++). Map null to the variant's nullptr
+        // so the entry can finish and flush() can release m_log_mutex.
+        if (v == nullptr) {
+            return nullptr;
+        }
         return std::string{v};
     }
 
@@ -528,10 +534,15 @@ public:
 
     // Backward compatibility: flush() method - ONLY this unlocks (matches original syslogstream)
     structured_log_stream& flush() {
-        if (entry_enabled) {
-            output();
+        try {
+            if (entry_enabled) {
+                output();
+            }
+            m_log_mutex.unlock();  // Unlock at end (matches original syslogstream - only flush() unlocks)
+        } catch (...) {
+            m_log_mutex.unlock();
+            throw;
         }
-        m_log_mutex.unlock();  // Unlock at end (matches original syslogstream - only flush() unlocks)
         return *this;
     }
 };
