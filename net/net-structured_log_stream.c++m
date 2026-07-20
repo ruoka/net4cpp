@@ -465,11 +465,30 @@ public:
         return *this;
     }
 
+    // If work under the entry lock throws, unlock before rethrow. Otherwise
+    // flush() never runs and m_log_mutex stays locked forever — every later
+    // slog use (including http::server's catch-path logging) deadlocks.
+    // Concrete trigger: default debug logs the full request body; human_message
+    // << body can throw std::bad_alloc on a large POST.
+    template<class F>
+    void run_under_entry_lock(F&& f)
+    {
+        try
+        {
+            f();
+        }
+        catch(...)
+        {
+            m_log_mutex.unlock();
+            throw;
+        }
+    }
+
     // Streaming interface
     // Lock once at start of log entry (matches original syslogstream pattern)
     // Note: Manual lock/unlock pattern required because flush() unlocks, not scope exit
     structured_log_stream& operator<<(const level_manip& manip) {
-        m_log_mutex.lock();  // Lock at start (unlocked by flush())
+        m_log_mutex.lock();  // Lock at start (unlocked by flush() or on throw)
         entry_severity = manip.sev;
         entry_msg_id   = manip.msg_id;
         entry_enabled  = static_cast<int>(manip.sev) <= static_cast<int>(m_log_level);
@@ -478,10 +497,12 @@ public:
         if (not entry_enabled) {
             return *this;
         }
-        
-        structured_fields.clear();
-        human_message.str("");
-        human_message.clear();
+
+        run_under_entry_lock([&] {
+            structured_fields.clear();
+            human_message.str("");
+            human_message.clear();
+        });
 
         return *this;
     }
@@ -492,9 +513,11 @@ public:
     template<class K, class V>
     structured_log_stream& operator<<(std::pair<K, V>&& kv) {
         if (entry_enabled) {
-            structured_fields.emplace(std::piecewise_construct,
-                                      std::forward_as_tuple(kv.first),
-                                      std::forward_as_tuple(convert_to_value(std::forward<V>(kv.second))));
+            run_under_entry_lock([&] {
+                structured_fields.emplace(std::piecewise_construct,
+                                          std::forward_as_tuple(kv.first),
+                                          std::forward_as_tuple(convert_to_value(std::forward<V>(kv.second))));
+            });
         }
         return *this;
     }
@@ -502,16 +525,18 @@ public:
     // Source location support (C++20)
     structured_log_stream& operator<<(const std::source_location& loc) {
         if (entry_enabled) {
-            using namespace std::string_view_literals;
-            structured_fields.emplace(std::piecewise_construct,
-                                     std::forward_as_tuple("file"sv),
-                                     std::forward_as_tuple(convert_to_value(loc.file_name())));
-            structured_fields.emplace(std::piecewise_construct,
-                                     std::forward_as_tuple("line"sv),
-                                     std::forward_as_tuple(convert_to_value(loc.line())));
-            structured_fields.emplace(std::piecewise_construct,
-                                     std::forward_as_tuple("function"sv),
-                                     std::forward_as_tuple(convert_to_value(loc.function_name())));
+            run_under_entry_lock([&] {
+                using namespace std::string_view_literals;
+                structured_fields.emplace(std::piecewise_construct,
+                                         std::forward_as_tuple("file"sv),
+                                         std::forward_as_tuple(convert_to_value(loc.file_name())));
+                structured_fields.emplace(std::piecewise_construct,
+                                         std::forward_as_tuple("line"sv),
+                                         std::forward_as_tuple(convert_to_value(loc.line())));
+                structured_fields.emplace(std::piecewise_construct,
+                                         std::forward_as_tuple("function"sv),
+                                         std::forward_as_tuple(convert_to_value(loc.function_name())));
+            });
         }
         return *this;
     }
@@ -522,7 +547,11 @@ public:
               not std::is_same_v<std::remove_cvref_t<T>, syslog::severity> and
               not std::is_same_v<std::remove_cvref_t<T>, std::source_location>)
     structured_log_stream& operator<<(T&& t) {
-        if (entry_enabled) human_message << std::forward<T>(t);
+        if (entry_enabled) {
+            run_under_entry_lock([&] {
+                human_message << std::forward<T>(t);
+            });
+        }
         return *this;
     }
 
@@ -532,13 +561,14 @@ public:
         return flush();
     }
 
-    // Backward compatibility: flush() method - ONLY this unlocks (matches original syslogstream)
+    // Unlock on both success and output() failure. Mid-entry throws unlock via
+    // run_under_entry_lock before rethrow (flush is not reached in that case).
     structured_log_stream& flush() {
         try {
             if (entry_enabled) {
                 output();
             }
-            m_log_mutex.unlock();  // Unlock at end (matches original syslogstream - only flush() unlocks)
+            m_log_mutex.unlock();
         } catch (...) {
             m_log_mutex.unlock();
             throw;
