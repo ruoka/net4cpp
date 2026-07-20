@@ -265,4 +265,33 @@ tester::bdd::scenario("Bulk Data Transfer, [net]") = [] {
     return true;
 }
 
+// Ownership tests need only an unconnected SOCK_STREAM fd — run even when
+// NET_DISABLE_NETWORK_TESTS=1 (sandbox CI).
+auto register_endpointstream_ownership_tests()
+{
+    // Regression: close() used to delete the endpointbuf but leave iostream's
+    // rdbuf dangling (non-null). wait_for then null-dereferenced m_buf; flush/
+    // get used the freed streambuf. Move left the source rdbuf aliased to the
+    // destination buffer so post-move I/O on the source still hit the live socket.
+    tester::bdd::scenario("close clears rdbuf; move detaches source, [net]") = [] {
+        auto s1 = endpointstream{new tcp_endpointbuf{
+            socket{posix::af_inet, posix::sock_stream}}};
+        auto* owned = s1.rdbuf();
+        require_true(owned != nullptr);
+
+        auto s2 = std::move(s1);
+        check_true(s1.rdbuf() == nullptr);
+        check_true(s2.rdbuf() == owned);
+        check_true(s2.good());
+
+        s2.close();
+        check_true(s2.rdbuf() == nullptr);
+        check_true(not s2.wait_for(std::chrono::milliseconds{1}));
+        check_nothrow([&] { s2.flush(); });
+    };
+
+    return true;
+}
+
 const auto _ = register_endpointstream_tests();
+const auto _ownership = register_endpointstream_ownership_tests();
