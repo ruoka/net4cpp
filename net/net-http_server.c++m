@@ -369,13 +369,21 @@ private:
     // closed before a complete head arrived. Throws when max_bytes is hit so
     // a hostile client cannot grow memory without bound via request-line or
     // header fields (body size is capped separately).
+    //
+    // Terminate on CRLF or LF blank lines. RFC 7230 §3.5 allows recipients to
+    // recognize LF as a line terminator, and the pre-cap parser (operator>> /
+    // getline + net::crlf) accepted LF-only requests. Requiring "\r\n\r\n" only
+    // left a complete LF-only head waiting forever in blocking get() — one stuck
+    // detached handler thread per such client.
+    // Note: "\r\n\r\n" does not end with "\n\n", so both checks are required.
     static std::string read_request_head(std::istream& stream, std::size_t max_bytes)
     {
         auto head = ""s;
         head.reserve(std::min(max_bytes, std::size_t{256}));
         while(true)
         {
-            if(head.size() >= 4 and head.ends_with("\r\n\r\n"))
+            if((head.size() >= 4 and head.ends_with("\r\n\r\n"))
+               or (head.size() >= 2 and head.ends_with("\n\n")))
                 return head;
 
             if(head.size() >= max_bytes)
