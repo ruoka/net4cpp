@@ -192,7 +192,10 @@ inline std::string read_upgrade_response_head(
     head.reserve(256);
     while(true)
     {
-        if(head.size() >= 4 and head.ends_with("\r\n\r\n"))
+        // Same LF-tolerant blank line as http::server::read_request_head
+        // (RFC 7230 §3.5). "\r\n\r\n" does not end with "\n\n" — check both.
+        if((head.size() >= 4 and head.ends_with("\r\n\r\n"))
+           or (head.size() >= 2 and head.ends_with("\n\n")))
             return head;
 
         if(head.size() >= max_upgrade_response_bytes)
