@@ -1,3 +1,7 @@
+// Copyright (c) 2025-2026 Kaius Ruokonen. All rights reserved.
+// SPDX-License-Identifier: MIT
+// See the LICENSE file in the project root for full license text.
+
 // UUIDv4 (Version 4 UUID) generation module
 // UUIDv4 is a 128-bit universally unique identifier defined in RFC 4122 (now updated by RFC 9562).
 // It generates identifiers almost entirely from random or pseudo-random numbers, making them
