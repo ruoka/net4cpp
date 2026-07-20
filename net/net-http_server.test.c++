@@ -971,6 +971,80 @@ auto register_server_tests()
         };
     };
 
+    // Regression: read_request_head originally required "\r\n\r\n" only. LF-only
+    // clients (RFC 7230 §3.5 / netcat-style) then blocked forever in get().
+    tester::bdd::scenario("LF-only request line endings get a normal response, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server with a simple GET route") = [] {
+            auto server = std::make_shared<http::server>();
+            server->get("/lf").text("lf-ok");
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A GET uses bare LF line terminators") = [server] {
+                auto response_status = std::make_shared<std::string>("");
+                auto response_body = std::make_shared<std::string>("");
+
+                std::promise<void> started;
+                auto started_future = started.get_future();
+
+                std::thread server_thread{[server, &started]{
+                    try {
+                        started.set_value();
+                        server->listen("8096");
+                    } catch(...) {}
+                }};
+
+                using namespace std::chrono_literals;
+                if (started_future.wait_for(2s) == std::future_status::ready) {
+                    std::this_thread::sleep_for(200ms);
+
+                    try {
+                        auto stream = connect("127.0.0.1", "8096");
+                        // Bare LF (no CR) — must not hang the server handler thread.
+                        stream << "GET /lf HTTP/1.1\n"
+                               << "Host: 127.0.0.1:8096\n"
+                               << "Connection: close\n"
+                               << "\n"
+                               << std::flush;
+
+                        std::string line;
+                        if(stream and std::getline(stream, line)) {
+                            if(not line.empty() and line.back() == '\r')
+                                line.pop_back();
+                            auto space1 = line.find(' ');
+                            if(space1 != std::string::npos) {
+                                auto space2 = line.find(' ', space1 + 1);
+                                *response_status = space2 != std::string::npos
+                                    ? line.substr(space1 + 1, space2 - space1 - 1)
+                                    : line.substr(space1 + 1);
+                            }
+                        }
+                        // Drain headers, then body.
+                        while(stream and std::getline(stream, line)) {
+                            if(line.empty() or line == "\r")
+                                break;
+                        }
+                        if(stream)
+                            std::getline(stream, *response_body);
+                        if(not response_body->empty() and response_body->back() == '\r')
+                            response_body->pop_back();
+                    } catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if (server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("Response status is 200 and body is lf-ok") = [response_status, response_body] {
+                    check_eq(*response_status, "200");
+                    check_eq(*response_body, "lf-ok");
+                };
+            };
+        };
+    };
+
     tester::bdd::scenario("413 when Content-Length exceeds max_request_body_size before allocate, [net]") = [] {
         if(not network_tests_enabled()) return;
 
