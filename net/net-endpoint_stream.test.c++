@@ -212,6 +212,56 @@ tester::bdd::scenario("Bulk Data Transfer, [net]") = [] {
         check_eq(std::string_view{buf.data(), payload.size()}, std::string_view{payload});
     };
 
+    // Regression: endpointstream::wait_for peeks, which underflows a short
+    // datagram into the get area. A following read(udp_buffer_size) then had
+    // count < N after draining that residue, skipped the PR #37 path-2 gate,
+    // and assembled forever in the underflow loop.
+    tester::bdd::scenario("UDP max read after wait_for returns one datagram, [net]") = [] {
+        using namespace std::chrono_literals;
+        using namespace std::string_literals;
+
+        auto receiver = socket{posix::af_inet, posix::sock_dgram};
+        auto sender = socket{posix::af_inet, posix::sock_dgram};
+        require_true(static_cast<bool>(receiver));
+        require_true(static_cast<bool>(sender));
+
+        auto addr = posix::sockaddr_in{};
+        addr.sin_family = posix::af_inet;
+        addr.sin_addr.s_addr = posix::htonl(posix::inaddr_loopback);
+        addr.sin_port = posix::htons(0);
+        require_eq(posix::bind(receiver, reinterpret_cast<posix::sockaddr*>(&addr), sizeof addr), 0);
+        auto addrlen = posix::socklen_t{sizeof addr};
+        require_eq(posix::getsockname(receiver, reinterpret_cast<posix::sockaddr*>(&addr), &addrlen), 0);
+        require_eq(posix::connect(sender, reinterpret_cast<posix::sockaddr*>(&addr), sizeof addr), 0);
+
+        const auto payload = "udp-after-wait-for"s;
+        require_eq(
+            static_cast<std::size_t>(posix::send(sender, payload.data(), payload.size(), 0)),
+            payload.size());
+
+        endpointstream stream{new udp_endpointbuf{std::move(receiver)}};
+        require_true(stream.wait_for(500ms));
+
+        auto buf = std::vector<char>(udp_buffer_size);
+        auto gcount = std::streamsize{0};
+        auto done = std::atomic<bool>{false};
+        std::thread reader{[&] {
+            stream.read(buf.data(), static_cast<std::streamsize>(udp_buffer_size));
+            gcount = stream.gcount();
+            done = true;
+        }};
+        auto start = std::chrono::steady_clock::now();
+        while(not done.load() and (std::chrono::steady_clock::now() - start) < 2s)
+            std::this_thread::sleep_for(10ms);
+        check_true(done.load());
+        if(done.load())
+            reader.join();
+        else
+            reader.detach();
+        check_eq(gcount, static_cast<std::streamsize>(payload.size()));
+        check_eq(std::string_view{buf.data(), payload.size()}, std::string_view{payload});
+    };
+
     return true;
 }
 

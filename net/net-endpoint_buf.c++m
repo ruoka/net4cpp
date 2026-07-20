@@ -36,6 +36,12 @@ public:
 protected:
     std::streamsize xsgetn(char_type* dest, std::streamsize count) override {
         std::streamsize total = 0;
+        // SOCK_DGRAM: one recv is one message. Never assemble across datagrams —
+        // that hangs waiting for more bytes and merges distinct messages.
+        // Includes the buffered residue path: wait_for()/peek() underflow a short
+        // datagram first, then read(udp_buffer_size) would otherwise fall into
+        // path 3 with count < N and block forever (PR #37 only gated path 2).
+        const auto stream_oriented = is_stream_socket();
 
         // 1. Consume buffered data
         auto available = egptr() - gptr();
@@ -46,17 +52,16 @@ protected:
             dest += chunk;
             count -= chunk;
             total += chunk;
+            // Remainder of the current datagram only; next xsgetn is the next message.
+            if (not stream_oriented)
+                return total;
         }
 
         // 2. Large read: bypass the streambuf. For SOCK_STREAM, keep calling recv
         // until the request is satisfied or the peer closes — a single recv
         // commonly returns only one TCP segment; returning that short read makes
         // istream::read set failbit even though more bytes are still in flight.
-        // For SOCK_DGRAM, one recv is one message: assembling across datagrams
-        // would hang waiting for more bytes and merge distinct messages (the
-        // natural max-datagram read size is exactly udp_buffer_size == N).
         if (count >= static_cast<std::streamsize>(N)) {
-            const auto stream_oriented = is_stream_socket();
             while (count > 0) {
                 auto received = posix::recv(m_socket, dest, static_cast<std::size_t>(count), 0);
                 if (received > 0) {
@@ -94,6 +99,8 @@ protected:
             dest += chunk;
             count -= chunk;
             total += chunk;
+            if (not stream_oriented)
+                return total;
         }
         return total;
     }
