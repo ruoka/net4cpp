@@ -7,6 +7,7 @@ export module net;
 export import :acceptor;
 export import :connector;
 export import :endpointstream;
+export import :http_base64;
 export import :http_escape;
 export import :http_headers;
 export import :http_server;
