@@ -4,12 +4,8 @@
 
 module net;
 import :acceptor;
-import :posix;
 import tester;
 import std;
-
-#include <csignal>
-#include <pthread.h>
 
 using namespace net;
 
@@ -82,15 +78,13 @@ auto register_acceptor_tests()
 
     // select() EINTR must not treat pre-set listener bits as ready and block
     // forever in accept() — that bypasses timeout and http::server stop().
+    // Raise SIGUSR1 repeatedly while accept waits; with the bug, the first
+    // EINTR leaves wait() in an unbounded accept() and this never finishes.
     tester::bdd::scenario("Accept timeout survives EINTR, [net]") = [] {
         using namespace std::chrono_literals;
 
-        struct sigaction sa{};
-        sa.sa_handler = [](int) {};
-        sigemptyset(&sa.sa_mask);
-        sa.sa_flags = 0; // no SA_RESTART — select must surface EINTR
-        struct sigaction old_sa{};
-        check_eq(sigaction(SIGUSR1, &sa, &old_sa), 0);
+        const auto previous = std::signal(SIGUSR1, [](int) {});
+        check_true(previous != SIG_ERR);
 
         std::atomic<bool> finished{false};
         std::atomic<bool> timed_out{false};
@@ -120,17 +114,12 @@ auto register_acceptor_tests()
                 finished = true;
             }};
 
-            // Interrupt select while waiting with no pending connection.
-            std::this_thread::sleep_for(50ms);
-            for(int i = 0; i < 5 and not finished.load(); ++i)
-            {
-                (void)pthread_kill(acceptor_thread.native_handle(), SIGUSR1);
-                std::this_thread::sleep_for(50ms);
-            }
-
             const auto start = std::chrono::steady_clock::now();
             while(not finished.load() and std::chrono::steady_clock::now() - start < 3s)
+            {
+                std::raise(SIGUSR1);
                 std::this_thread::sleep_for(20ms);
+            }
 
             check_true(finished.load());
             check_true(timed_out.load());
@@ -138,13 +127,13 @@ auto register_acceptor_tests()
         }
         catch(...)
         {
-            sigaction(SIGUSR1, &old_sa, nullptr);
+            std::signal(SIGUSR1, previous);
             if(acceptor_thread.joinable())
                 acceptor_thread.join();
             throw;
         }
 
-        sigaction(SIGUSR1, &old_sa, nullptr);
+        std::signal(SIGUSR1, previous);
         if(acceptor_thread.joinable())
             acceptor_thread.join();
     };
