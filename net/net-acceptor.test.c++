@@ -4,8 +4,12 @@
 
 module net;
 import :acceptor;
+import :posix;
 import tester;
 import std;
+
+#include <csignal>
+#include <pthread.h>
 
 using namespace net;
 
@@ -57,6 +61,93 @@ auto register_acceptor_tests()
     };
 
     if(not network_tests_enabled()) return true;
+
+    tester::bdd::scenario("Accept times out with no client, [net]") = [] {
+        using namespace std::chrono_literals;
+        auto ator = net::acceptor{"127.0.0.1", "0"};
+        ator.timeout(200ms);
+        const auto start = std::chrono::steady_clock::now();
+        auto timed_out = false;
+        try
+        {
+            (void)ator.accept();
+        }
+        catch(const std::system_error& e)
+        {
+            timed_out = std::string_view{e.what()}.contains("timeout");
+        }
+        check_true(timed_out);
+        check_true(std::chrono::steady_clock::now() - start < 2s);
+    };
+
+    // select() EINTR must not treat pre-set listener bits as ready and block
+    // forever in accept() — that bypasses timeout and http::server stop().
+    tester::bdd::scenario("Accept timeout survives EINTR, [net]") = [] {
+        using namespace std::chrono_literals;
+
+        struct sigaction sa{};
+        sa.sa_handler = [](int) {};
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = 0; // no SA_RESTART — select must surface EINTR
+        struct sigaction old_sa{};
+        check_eq(sigaction(SIGUSR1, &sa, &old_sa), 0);
+
+        std::atomic<bool> finished{false};
+        std::atomic<bool> timed_out{false};
+        std::atomic<bool> unexpected{false};
+        std::thread acceptor_thread;
+
+        try
+        {
+            acceptor_thread = std::thread{[&] {
+                try
+                {
+                    auto ator = net::acceptor{"127.0.0.1", "0"};
+                    ator.timeout(800ms);
+                    (void)ator.accept();
+                    unexpected = true;
+                }
+                catch(const std::system_error& e)
+                {
+                    timed_out = std::string_view{e.what()}.contains("timeout");
+                    if(not timed_out)
+                        unexpected = true;
+                }
+                catch(...)
+                {
+                    unexpected = true;
+                }
+                finished = true;
+            }};
+
+            // Interrupt select while waiting with no pending connection.
+            std::this_thread::sleep_for(50ms);
+            for(int i = 0; i < 5 and not finished.load(); ++i)
+            {
+                (void)pthread_kill(acceptor_thread.native_handle(), SIGUSR1);
+                std::this_thread::sleep_for(50ms);
+            }
+
+            const auto start = std::chrono::steady_clock::now();
+            while(not finished.load() and std::chrono::steady_clock::now() - start < 3s)
+                std::this_thread::sleep_for(20ms);
+
+            check_true(finished.load());
+            check_true(timed_out.load());
+            check_true(not unexpected.load());
+        }
+        catch(...)
+        {
+            sigaction(SIGUSR1, &old_sa, nullptr);
+            if(acceptor_thread.joinable())
+                acceptor_thread.join();
+            throw;
+        }
+
+        sigaction(SIGUSR1, &old_sa, nullptr);
+        if(acceptor_thread.joinable())
+            acceptor_thread.join();
+    };
 
     tester::bdd::scenario("Basic construction, [net]") = [] {
         tester::bdd::given("An acceptor for localhost:54321") = [] {

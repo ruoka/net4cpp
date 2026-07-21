@@ -146,25 +146,59 @@ public:
 private:
     int wait()
     {
-        posix::fd_set fds{};
-        posix::fd_zero(&fds);
-        int max_fd = -1;
-        for(int fd : m_sockets) { posix::fd_set_bit(fd,&fds); if(fd > max_fd) max_fd = fd; }
+        // select() may return -1 (e.g. EINTR). On error the fd_set is left
+        // unmodified on Linux/macOS — still containing every listener we set —
+        // so treating any non-zero return as "ready" falsely wakes accept()
+        // and blocks forever with no pending connection (bypassing timeout /
+        // http::server stop polling). Retry EINTR; fail other errors; only
+        // inspect readiness bits when select reports ready > 0.
+        using clock = std::chrono::steady_clock;
+        const auto deadline = m_timeout.count()
+            ? clock::now() + m_timeout
+            : clock::time_point::max();
 
-        if(m_timeout.count())
+        for(;;)
         {
-            posix::timeval tv {
-                static_cast<decltype(tv.tv_sec)>(m_timeout.count() / 1000),
-                static_cast<decltype(tv.tv_usec)>(m_timeout.count() % 1000 * 1000)
-            };
-            if(not posix::select(max_fd+1, &fds, nullptr, nullptr, &tv))
-                throw std::system_error{posix::get_errno(), std::system_category(), "accept timeouted"};
-        }
-        else
-            posix::select(max_fd+1, &fds, nullptr, nullptr, nullptr);
+            posix::fd_set fds{};
+            posix::fd_zero(&fds);
+            int max_fd = -1;
+            for(int fd : m_sockets)
+            {
+                posix::fd_set_bit(fd, &fds);
+                if(fd > max_fd)
+                    max_fd = fd;
+            }
 
-        for(int fd : m_sockets) if(posix::fd_isset(fd,&fds)) return fd;
-        throw std::system_error{posix::get_errno(), std::system_category(), "accept failed"};
+            posix::timeval tv{};
+            posix::timeval* tv_ptr = nullptr;
+            if(m_timeout.count())
+            {
+                const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    deadline - clock::now());
+                if(remaining.count() <= 0)
+                    throw std::system_error{posix::etimedout, std::system_category(), "accept timeouted"};
+                tv = {
+                    static_cast<decltype(tv.tv_sec)>(remaining.count() / 1000),
+                    static_cast<decltype(tv.tv_usec)>((remaining.count() % 1000) * 1000)
+                };
+                tv_ptr = &tv;
+            }
+
+            const auto ready = posix::select(max_fd + 1, &fds, nullptr, nullptr, tv_ptr);
+            if(ready < 0)
+            {
+                if(posix::get_errno() == posix::eintr)
+                    continue;
+                throw std::system_error{posix::get_errno(), std::system_category(), "accept failed"};
+            }
+            if(ready == 0)
+                throw std::system_error{posix::etimedout, std::system_category(), "accept timeouted"};
+
+            for(int fd : m_sockets)
+                if(posix::fd_isset(fd, &fds))
+                    return fd;
+            throw std::system_error{posix::get_errno(), std::system_category(), "accept failed"};
+        }
     }
 
     std::string m_host;
