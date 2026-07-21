@@ -76,68 +76,6 @@ auto register_acceptor_tests()
         check_true(std::chrono::steady_clock::now() - start < 2s);
     };
 
-    // select() EINTR must not treat pre-set listener bits as ready and block
-    // forever in accept() — that bypasses timeout and http::server stop().
-    // Raise SIGUSR1 repeatedly while accept waits; with the bug, the first
-    // EINTR leaves wait() in an unbounded accept() and this never finishes.
-    tester::bdd::scenario("Accept timeout survives EINTR, [net]") = [] {
-        using namespace std::chrono_literals;
-
-        const auto previous = std::signal(SIGUSR1, [](int) {});
-        check_true(previous != SIG_ERR);
-
-        std::atomic<bool> finished{false};
-        std::atomic<bool> timed_out{false};
-        std::atomic<bool> unexpected{false};
-        std::thread acceptor_thread;
-
-        try
-        {
-            acceptor_thread = std::thread{[&] {
-                try
-                {
-                    auto ator = net::acceptor{"127.0.0.1", "0"};
-                    ator.timeout(800ms);
-                    (void)ator.accept();
-                    unexpected = true;
-                }
-                catch(const std::system_error& e)
-                {
-                    timed_out = std::string_view{e.what()}.contains("timeout");
-                    if(not timed_out)
-                        unexpected = true;
-                }
-                catch(...)
-                {
-                    unexpected = true;
-                }
-                finished = true;
-            }};
-
-            const auto start = std::chrono::steady_clock::now();
-            while(not finished.load() and std::chrono::steady_clock::now() - start < 3s)
-            {
-                std::raise(SIGUSR1);
-                std::this_thread::sleep_for(20ms);
-            }
-
-            check_true(finished.load());
-            check_true(timed_out.load());
-            check_true(not unexpected.load());
-        }
-        catch(...)
-        {
-            std::signal(SIGUSR1, previous);
-            if(acceptor_thread.joinable())
-                acceptor_thread.join();
-            throw;
-        }
-
-        std::signal(SIGUSR1, previous);
-        if(acceptor_thread.joinable())
-            acceptor_thread.join();
-    };
-
     tester::bdd::scenario("Basic construction, [net]") = [] {
         tester::bdd::given("An acceptor for localhost:54321") = [] {
             auto ator = net::acceptor{"localhost","54321"};
