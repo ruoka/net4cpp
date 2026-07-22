@@ -100,6 +100,39 @@ auto register_server_tests()
         };
     };
 
+    tester::bdd::scenario("stop wakes accept wait promptly with no client, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        using namespace std::chrono_literals;
+        auto server = std::make_shared<http::server>();
+        server->get("/").text("OK");
+        // Without listen-fd close, stop would wait up to this accept poll.
+        server->timeout(std::chrono::seconds{30});
+
+        std::promise<void> bound;
+        auto bound_future = bound.get_future();
+        std::thread t{[server, &bound] {
+            try
+            {
+                server->listen("127.0.0.1", "0", [&bound] { bound.set_value(); });
+            }
+            catch(...)
+            {
+            }
+        }};
+
+        check_true(bound_future.wait_for(2s) == std::future_status::ready);
+        std::this_thread::sleep_for(50ms);
+        const auto start = std::chrono::steady_clock::now();
+        server->stop();
+        if(t.joinable())
+            t.join();
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+
+        check_true(server->stopped());
+        check_true(elapsed < 500ms);
+    };
+
     tester::bdd::scenario("Structured logging fields in HTTP requests, [net]") = [] {
     if(not network_tests_enabled()) return;
 

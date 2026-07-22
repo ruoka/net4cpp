@@ -113,7 +113,13 @@ public:
         auto sas = posix::sockaddr_storage{};
         auto saslen = posix::socklen_t{sizeof sas};
         socket s = posix::accept(fd, reinterpret_cast<posix::sockaddr*>(&sas), &saslen);
-        if(not s) throw std::system_error{posix::get_errno(), std::system_category(),"accept failed"};
+        if(not s)
+        {
+            const auto err = posix::get_errno();
+            if(err == posix::ebadf or closed())
+                throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
+            throw std::system_error{err, std::system_category(), "accept failed"};
+        }
 
         char hbuf[posix::ni_maxhost];
         char sbuf[posix::ni_maxserv];
@@ -123,6 +129,24 @@ public:
         return {new endpointbuf<tcp_buffer_size>{std::move(s)}, hbuf, sbuf};
     }
 
+    // Close all listen sockets so a concurrent accept()/select wakes promptly.
+    // Thread-safe: intended to be called from another thread (e.g. http::server::stop).
+    // After close, accept() fails with EBADF / "acceptor closed" (and may surface as
+    // EINTR/EBADF from select while the close races the wait). Idempotent.
+    void close() noexcept
+    {
+        std::lock_guard lock{m_mutex};
+        m_closed = true;
+        for(auto& s : m_sockets)
+            s.close();
+    }
+
+    bool closed() const noexcept
+    {
+        std::lock_guard lock{m_mutex};
+        return m_closed;
+    }
+
     const auto& host() const { return m_host; }
     const auto& service_or_port() const { return m_service_or_port; }
     const auto& timeout() const { return m_timeout; }
@@ -130,15 +154,17 @@ public:
 
     std::uint16_t bound_port() const
     {
-        if (m_sockets.empty()) return 0;
+        std::lock_guard lock{m_mutex};
+        if(m_sockets.empty()) return 0;
         auto sas = posix::sockaddr_storage{};
         auto saslen = posix::socklen_t{sizeof sas};
-        if (posix::getsockname(m_sockets.front(), reinterpret_cast<posix::sockaddr*>(&sas), &saslen) == -1)
+        const int fd = m_sockets.front();
+        if(fd < 0 or posix::getsockname(fd, reinterpret_cast<posix::sockaddr*>(&sas), &saslen) == -1)
             return 0;
-        
-        if (sas.ss_family == posix::af_inet)
+
+        if(sas.ss_family == posix::af_inet)
             return posix::ntohs(reinterpret_cast<posix::sockaddr_in*>(&sas)->sin_port);
-        if (sas.ss_family == posix::af_inet6)
+        if(sas.ss_family == posix::af_inet6)
             return posix::ntohs(reinterpret_cast<posix::sockaddr_in6*>(&sas)->sin6_port);
         return 0;
     }
@@ -146,12 +172,13 @@ public:
 private:
     int wait()
     {
-        // select() may return -1 (e.g. EINTR). On error the fd_set is left
-        // unmodified on Linux/macOS — still containing every listener we set —
-        // so treating any non-zero return as "ready" falsely wakes accept()
+        // select() may return -1 (e.g. EINTR, EBADF after close()). On error the
+        // fd_set is left unmodified on Linux/macOS — still containing every listener
+        // we set — so treating any non-zero return as "ready" falsely wakes accept()
         // and blocks forever with no pending connection (bypassing timeout /
-        // http::server stop polling). Retry EINTR; fail other errors; only
-        // inspect readiness bits when select reports ready > 0.
+        // http::server stop polling). Retry EINTR while open; treat EBADF / closed
+        // as stop; fail other errors; only inspect readiness bits when select
+        // reports ready > 0.
         using clock = std::chrono::steady_clock;
         const auto deadline = m_timeout.count()
             ? clock::now() + m_timeout
@@ -159,12 +186,27 @@ private:
 
         for(;;)
         {
-            posix::fd_set fds{};
-            posix::fd_zero(&fds);
-            int max_fd = -1;
-            for(int fd : m_sockets)
+            std::vector<int> fds;
             {
-                posix::fd_set_bit(fd, &fds);
+                std::lock_guard lock{m_mutex};
+                if(m_closed)
+                    throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
+                fds.reserve(m_sockets.size());
+                for(int fd : m_sockets)
+                {
+                    if(fd >= 0)
+                        fds.push_back(fd);
+                }
+                if(fds.empty())
+                    throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
+            }
+
+            posix::fd_set set{};
+            posix::fd_zero(&set);
+            int max_fd = -1;
+            for(int fd : fds)
+            {
+                posix::fd_set_bit(fd, &set);
                 if(fd > max_fd)
                     max_fd = fd;
             }
@@ -184,19 +226,35 @@ private:
                 tv_ptr = &tv;
             }
 
-            const auto ready = posix::select(max_fd + 1, &fds, nullptr, nullptr, tv_ptr);
+            const auto ready = posix::select(max_fd + 1, &set, nullptr, nullptr, tv_ptr);
             if(ready < 0)
             {
-                if(posix::get_errno() == posix::eintr)
+                const auto err = posix::get_errno();
+                if(err == posix::eintr)
+                {
+                    // EINTR: retry unless stop closed the listeners (document as stop).
+                    if(closed())
+                        throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
                     continue;
-                throw std::system_error{posix::get_errno(), std::system_category(), "accept failed"};
+                }
+                if(err == posix::ebadf or closed())
+                    throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
+                throw std::system_error{err, std::system_category(), "accept failed"};
             }
             if(ready == 0)
+            {
+                if(closed())
+                    throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
                 throw std::system_error{posix::etimedout, std::system_category(), "accept timeouted"};
+            }
 
-            for(int fd : m_sockets)
-                if(posix::fd_isset(fd, &fds))
+            for(int fd : fds)
+            {
+                if(posix::fd_isset(fd, &set))
                     return fd;
+            }
+            if(closed())
+                throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
             throw std::system_error{posix::get_errno(), std::system_category(), "accept failed"};
         }
     }
@@ -205,6 +263,8 @@ private:
     std::string m_service_or_port;
     std::chrono::milliseconds m_timeout;
     std::list<socket> m_sockets;
+    mutable std::mutex m_mutex;
+    bool m_closed{false};
 };
 
 } // namespace net

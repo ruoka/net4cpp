@@ -32,9 +32,19 @@ public:
     }
 
     // Destructor — unchanged
-    ~socket() {
-        if (m_fd != native_handle_npos) {
+    ~socket()
+    {
+        close();
+    }
+
+    // Close the native fd if still open. Safe to call more than once; after
+    // close, conversions to bool are false and the handle is npos.
+    void close() noexcept
+    {
+        if(m_fd != native_handle_npos)
+        {
             posix::close(m_fd);
+            m_fd = native_handle_npos;
         }
     }
 
