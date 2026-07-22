@@ -264,29 +264,54 @@ public:
                   << net::flush;
         try
         {
-            auto endpoint = net::acceptor{host, service_or_port};
+            auto endpoint = std::make_shared<net::acceptor>(host, service_or_port);
+            {
+                std::lock_guard lock{m_acceptor_mutex};
+                m_acceptor = endpoint;
+            }
+            // Drop the shared slot when listen returns (normal stop or error),
+            // so a late stop() cannot close a recycled acceptor.
+            struct release_acceptor
+            {
+                server* self;
+                ~release_acceptor()
+                {
+                    std::lock_guard lock{self->m_acceptor_mutex};
+                    self->m_acceptor.reset();
+                }
+            } release{this};
+
             auto check_timeout = m_timeout.count() ? m_timeout : std::chrono::seconds{1};
-            endpoint.timeout(std::chrono::milliseconds{check_timeout.count() * 1000});
-            net::slog << net::notice("HTTP_SERVER_READY") << "started up at " << endpoint.host() << ":" << endpoint.service_or_port()
-                      << std::pair{"addr", endpoint.host()}
-                      << std::pair{"port", endpoint.service_or_port()}
+            endpoint->timeout(std::chrono::milliseconds{check_timeout.count() * 1000});
+            net::slog << net::notice("HTTP_SERVER_READY") << "started up at " << endpoint->host() << ":" << endpoint->service_or_port()
+                      << std::pair{"addr", endpoint->host()}
+                      << std::pair{"port", endpoint->service_or_port()}
                       << net::flush;
             if(on_bound)
                 on_bound();
-            
+
             while(not m_stop.load())
             {
                 try
                 {
                     using namespace std::string_view_literals;
-                    net::slog << net::debug("HTTP_ACCEPT_WAIT") 
+                    net::slog << net::debug("HTTP_ACCEPT_WAIT")
                               << std::pair{"protocol"sv, "http"sv}
                               << "waiting for HTTP connections" << net::flush;
-                    auto client = endpoint.accept();
+                    auto client = endpoint->accept();
                     std::thread{[client_data = std::move(client), this]() mutable { handle(client_data); }}.detach();
                 }
                 catch(const std::system_error& e)
                 {
+                    // stop() closes listen fds so select/accept wakes with
+                    // EBADF / "acceptor closed" (or EINTR racing close). Treat
+                    // post-stop accept errors as a clean exit, not fatal.
+                    if(m_stop.load()
+                        or e.code().value() == net::posix::ebadf
+                        or std::string_view{e.what()}.contains("acceptor closed"))
+                    {
+                        break;
+                    }
                     if(std::string_view{e.what()}.contains("timeout"))
                     {
                         continue;
@@ -298,6 +323,8 @@ public:
                 }
                 catch(const std::exception& e)
                 {
+                    if(m_stop.load())
+                        break;
                     net::slog << net::error("HTTP_ACCEPT_EXCEPTION") << "exception while accepting connection: " << e.what() << net::flush;
                     throw;
                 }
@@ -357,9 +384,18 @@ public:
         m_max_request_head_size = bytes;
     }
 
+    // Signal the listen loop to exit and close listen sockets so accept wait
+    // wakes immediately (Docker SIGTERM / join). Thread-safe vs listen().
     void stop()
     {
         m_stop.store(true);
+        std::shared_ptr<net::acceptor> acceptor;
+        {
+            std::lock_guard lock{m_acceptor_mutex};
+            acceptor = m_acceptor;
+        }
+        if(acceptor)
+            acceptor->close();
     }
 
     bool stopped() const
@@ -1130,6 +1166,8 @@ private:
     std::size_t m_max_request_body_size = std::numeric_limits<std::size_t>::max();
     std::size_t m_max_request_head_size = default_max_request_head_size;
     std::atomic<bool> m_stop{false};
+    std::mutex m_acceptor_mutex;
+    std::shared_ptr<net::acceptor> m_acceptor;
 };
 
 } // namespace http

@@ -44,6 +44,7 @@ using ::write;
 using ::recv;
 using ::send;
 using ::close;
+using ::shutdown;
 using ::fcntl;
 using ::socket;
 using ::inet_pton;
@@ -187,6 +188,7 @@ constexpr auto eagain           = EAGAIN;
 constexpr auto eagain           = EWOULDBLOCK; // EAGAIN and EWOULDBLOCK are often the same
 #endif
 constexpr auto eintr            = EINTR;
+constexpr auto ebadf            = EBADF;
 
 inline int get_errno() noexcept { return errno; }
 

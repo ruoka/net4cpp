@@ -76,6 +76,42 @@ auto register_acceptor_tests()
         check_true(std::chrono::steady_clock::now() - start < 2s);
     };
 
+    tester::bdd::scenario("close wakes accept wait promptly, [net]") = [] {
+        using namespace std::chrono_literals;
+        auto ator = std::make_shared<net::acceptor>("127.0.0.1", "0");
+        // Long timeout: without close()-wake this would sit ~30s.
+        ator->timeout(30s);
+        auto accept_error = std::make_shared<std::optional<std::system_error>>();
+        std::promise<void> entered;
+        auto entered_future = entered.get_future();
+
+        std::thread t{[ator, accept_error, &entered] {
+            entered.set_value();
+            try
+            {
+                (void)ator->accept();
+            }
+            catch(const std::system_error& e)
+            {
+                *accept_error = e;
+            }
+        }};
+
+        check_true(entered_future.wait_for(2s) == std::future_status::ready);
+        std::this_thread::sleep_for(50ms);
+        const auto start = std::chrono::steady_clock::now();
+        ator->close();
+        t.join();
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+
+        check_true(ator->closed());
+        check_true(accept_error->has_value());
+        check_true(
+            (*accept_error)->code() == std::errc::bad_file_descriptor
+            or std::string_view{(*accept_error)->what()}.contains("acceptor closed"));
+        check_true(elapsed < 500ms);
+    };
+
     tester::bdd::scenario("Basic construction, [net]") = [] {
         tester::bdd::given("An acceptor for localhost:54321") = [] {
             auto ator = net::acceptor{"localhost","54321"};
