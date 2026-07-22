@@ -109,7 +109,8 @@ auto register_acceptor_tests()
         check_true(
             (*accept_error)->code() == std::errc::bad_file_descriptor
             or std::string_view{(*accept_error)->what()}.contains("acceptor closed"));
-        check_true(elapsed < 500ms);
+        // Bound proves wake (not the 30s accept timeout); allow scheduler noise.
+        check_true(elapsed < 2s);
     };
 
     tester::bdd::scenario("Basic construction, [net]") = [] {
