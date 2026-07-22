@@ -102,6 +102,15 @@ public:
             m_sockets.push_back(std::move(s));
         }
         if(m_sockets.empty()) throw std::system_error{posix::get_errno(), std::system_category(), "socket could not be bound"};
+
+        // Self-pipe so close() can wake a blocked select(). Closing listen
+        // fds from another thread does not reliably wake select on Linux
+        // (behavior is unspecified; measured hang until timeout).
+        int wake[2]{-1, -1};
+        if(posix::pipe(wake) != 0)
+            throw std::system_error{posix::get_errno(), std::system_category(), "acceptor wake pipe failed"};
+        m_wake_r.emplace(wake[0]);
+        m_wake_w.emplace(wake[1]);
     }
 
     explicit acceptor(std::string_view service) : acceptor("localhost", service) {}
@@ -129,16 +138,20 @@ public:
         return {new endpointbuf<tcp_buffer_size>{std::move(s)}, hbuf, sbuf};
     }
 
-    // Close all listen sockets so a concurrent accept()/select wakes promptly.
+    // Close listen sockets and wake a concurrent accept()/select promptly.
     // Thread-safe: intended to be called from another thread (e.g. http::server::stop).
-    // After close, accept() fails with EBADF / "acceptor closed" (and may surface as
-    // EINTR/EBADF from select while the close races the wait). Idempotent.
+    // Wake is via closing the self-pipe write end (portable); closing listen fds
+    // alone does not reliably wake select on Linux. After close, accept() fails
+    // with EBADF / "acceptor closed". Idempotent.
     void close() noexcept
     {
         std::lock_guard lock{m_mutex};
         m_closed = true;
         for(auto& s : m_sockets)
             s.close();
+        // Closing the write end makes the read end readable (EOF) and wakes select.
+        if(m_wake_w)
+            m_wake_w->close();
     }
 
     bool closed() const noexcept
@@ -187,6 +200,7 @@ private:
         for(;;)
         {
             std::vector<int> fds;
+            int wake_fd = -1;
             {
                 std::lock_guard lock{m_mutex};
                 if(m_closed)
@@ -197,6 +211,8 @@ private:
                     if(fd >= 0)
                         fds.push_back(fd);
                 }
+                if(m_wake_r and *m_wake_r)
+                    wake_fd = *m_wake_r;
                 if(fds.empty())
                     throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
             }
@@ -209,6 +225,12 @@ private:
                 posix::fd_set_bit(fd, &set);
                 if(fd > max_fd)
                     max_fd = fd;
+            }
+            if(wake_fd >= 0)
+            {
+                posix::fd_set_bit(wake_fd, &set);
+                if(wake_fd > max_fd)
+                    max_fd = wake_fd;
             }
 
             posix::timeval tv{};
@@ -248,13 +270,17 @@ private:
                 throw std::system_error{posix::etimedout, std::system_category(), "accept timeouted"};
             }
 
+            // Prefer stop/wake over a concurrent listen-fd readiness bit.
+            if(wake_fd >= 0 and posix::fd_isset(wake_fd, &set))
+                throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
+            if(closed())
+                throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
+
             for(int fd : fds)
             {
                 if(posix::fd_isset(fd, &set))
                     return fd;
             }
-            if(closed())
-                throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
             throw std::system_error{posix::get_errno(), std::system_category(), "accept failed"};
         }
     }
@@ -263,6 +289,8 @@ private:
     std::string m_service_or_port;
     std::chrono::milliseconds m_timeout;
     std::list<socket> m_sockets;
+    std::optional<socket> m_wake_r;
+    std::optional<socket> m_wake_w;
     mutable std::mutex m_mutex;
     bool m_closed{false};
 };
