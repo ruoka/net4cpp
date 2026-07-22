@@ -130,7 +130,8 @@ auto register_server_tests()
         const auto elapsed = std::chrono::steady_clock::now() - start;
 
         check_true(server->stopped());
-        check_true(elapsed < 500ms);
+        // Bound proves wake (not the 30s accept timeout); allow scheduler noise.
+        check_true(elapsed < 2s);
     };
 
     tester::bdd::scenario("Structured logging fields in HTTP requests, [net]") = [] {

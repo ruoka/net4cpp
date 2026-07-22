@@ -45,6 +45,7 @@ using ::recv;
 using ::send;
 using ::close;
 using ::shutdown;
+using ::pipe;
 using ::fcntl;
 using ::socket;
 using ::inet_pton;
