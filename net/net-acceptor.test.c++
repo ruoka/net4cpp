@@ -58,6 +58,24 @@ auto register_acceptor_tests()
 
     if(not network_tests_enabled()) return true;
 
+    tester::bdd::scenario("Accept times out with no client, [net]") = [] {
+        using namespace std::chrono_literals;
+        auto ator = net::acceptor{"127.0.0.1", "0"};
+        ator.timeout(200ms);
+        const auto start = std::chrono::steady_clock::now();
+        auto timed_out = false;
+        try
+        {
+            (void)ator.accept();
+        }
+        catch(const std::system_error& e)
+        {
+            timed_out = std::string_view{e.what()}.contains("timeout");
+        }
+        check_true(timed_out);
+        check_true(std::chrono::steady_clock::now() - start < 2s);
+    };
+
     tester::bdd::scenario("Basic construction, [net]") = [] {
         tester::bdd::given("An acceptor for localhost:54321") = [] {
             auto ator = net::acceptor{"localhost","54321"};
