@@ -121,7 +121,11 @@ inline auto parse_rfc1123_date(std::string_view sv)
         throw std::invalid_argument{"Invalid year in RFC 1123 date"};
     sv.remove_prefix(5);
 
-    // Parse time (HH:MM:SS)
+    // Parse time (HH:MM:SS). Year parsing only requires a trailing space, so
+    // inputs like "Thu, 01 Jan 2026 " / "... 12" / "... 12:34:5" reach here with
+    // sv.size() < 8. Indexing sv[2]/sv[5] or from_chars past size() is UB.
+    if(sv.size() < 8)
+        throw std::invalid_argument{"Invalid RFC 1123 date format"};
     unsigned hh = 0u, mm = 0u, ss = 0u;
     res = std::from_chars(sv.data(), sv.data() + 2, hh);
     if(res.ec != std::errc{} or sv[2] != ':')

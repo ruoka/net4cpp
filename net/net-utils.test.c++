@@ -221,6 +221,19 @@ auto register_utils_tests()
                                     std::invalid_argument{""});
                 };
             };
+
+            // Truncation after a valid "YYYY " used to pass the year check and
+            // then read past sv.size() while parsing HH:MM:SS (OOB / UB).
+            tester::bdd::when("String has truncated time after year") = [] {
+                tester::bdd::then("Throws std::invalid_argument without reading past the view") = [] {
+                    check_throws_as([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026 "sv); },
+                                    std::invalid_argument{""});
+                    check_throws_as([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026 12"sv); },
+                                    std::invalid_argument{""});
+                    check_throws_as([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026 12:34:5"sv); },
+                                    std::invalid_argument{""});
+                };
+            };
         };
     };
 
