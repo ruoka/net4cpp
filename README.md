@@ -123,10 +123,44 @@ Use `html_escaped` for text nodes and attribute values. Use `url_encoded` for qu
 parameter values in `href` and `action` URLs. The HTTP server does not escape
 response bodies automatically.
 
-# SSE / MCP (planned)
+# Server-Sent Events (v1)
 
-Investigation and phased plan for Server-Sent Events and MCP HTTP/SSE on `http::server`:
-[`docs/sse-mcp-implementation-plan.md`](docs/sse-mcp-implementation-plan.md) (branch `feature/sse-mcp-server`).
+SSE is a connection takeover on `http::server`, parallel to WebSocket. Register with
+`server.sse(path).sse(handler)`; a matching `GET` returns `200` with
+`Content-Type: text/event-stream` (no `Content-Length`), then runs
+`http::sse::session` until the handler returns or the write path fails.
+
+```cpp
+import net;
+import std;
+
+auto server = http::server{};
+auto allow = [](std::string_view o) { return o == "http://localhost:3000"; };
+
+// Browser preflight (reuse cors_middleware). Reflect the same Origin allowlist
+// on the SSE response head via .cors(...).
+server.options("/events").response("text/plain",
+    http::middleware::cors_middleware(allow, [](auto&&, auto&&, auto&&) {
+        return http::make_response(http::status_no_content, "");
+    }));
+server.sse("/events").cors(allow).sse([](http::sse::session& session, auto, http::headers& hdr) {
+    if(hdr.contains("last-event-id"))
+    {
+        // resume policy is application-defined
+    }
+    session.send_comment("ok");
+    session.send_event("tick", "1", "1");
+});
+server.listen("127.0.0.1", "8080");
+```
+
+Notes:
+
+- Flush after each event/comment (session does this). Proxies that buffer SSE may
+  need `X-Accel-Buffering: no` (optional app header — not set by default).
+- After the SSE stream ends, the connection is closed (no keep-alive reuse).
+- MCP over SSE is planned separately; see
+  [`docs/sse-mcp-implementation-plan.md`](docs/sse-mcp-implementation-plan.md).
 
 # WebSocket (v1 spike)
 

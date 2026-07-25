@@ -1579,6 +1579,209 @@ auto register_server_tests()
         };
     };
 
+    tester::bdd::scenario("SSE route streams events without Content-Length, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server with an SSE endpoint and a JSON route") = [] {
+            auto server = std::make_shared<http::server>();
+            auto last_event_id = std::make_shared<std::string>();
+
+            server->get("/json").json(R"({"ok":true})");
+            server->sse("/events").cors([](std::string_view o) {
+                return o == "http://localhost:3000";
+            }).sse([last_event_id](http::sse::session& session, auto, http::headers& hdr) {
+                if(hdr.contains("last-event-id"s))
+                    *last_event_id = hdr["last-event-id"s];
+                session.send_comment("ok");
+                session.send_event("tick", "1", "1");
+                session.send_event("tick", "2", "2");
+            });
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A client GETs /events with Last-Event-ID") = [server, last_event_id] {
+                auto status = std::make_shared<std::string>();
+                auto headers_raw = std::make_shared<std::string>();
+                auto body = std::make_shared<std::string>();
+                auto json_response = std::make_shared<std::string>();
+
+                std::promise<void> started;
+                auto started_future = started.get_future();
+                std::thread server_thread{[server, &started] {
+                    try
+                    {
+                        started.set_value();
+                        server->listen("8098");
+                    }
+                    catch(...)
+                    {
+                    }
+                }};
+
+                using namespace std::chrono_literals;
+                if(started_future.wait_for(2s) == std::future_status::ready)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    try
+                    {
+                        {
+                            auto stream = connect("127.0.0.1", "8098");
+                            stream << "GET /events HTTP/1.1" << net::crlf
+                                   << "Host: 127.0.0.1:8098" << net::crlf
+                                   << "Accept: text/event-stream" << net::crlf
+                                   << "Last-Event-ID: 7" << net::crlf
+                                   << "Origin: http://localhost:3000" << net::crlf
+                                   << "Connection: close" << net::crlf
+                                   << net::crlf
+                                   << net::flush;
+
+                            std::string line;
+                            if(stream and std::getline(stream, line))
+                            {
+                                if(not line.empty() and line.back() == '\r')
+                                    line.pop_back();
+                                *status = line;
+                            }
+                            while(stream and std::getline(stream, line))
+                            {
+                                if(not line.empty() and line.back() == '\r')
+                                    line.pop_back();
+                                if(line.empty())
+                                    break;
+                                *headers_raw += line;
+                                *headers_raw += '\n';
+                            }
+                            *body = std::string{
+                                std::istreambuf_iterator<char>{stream},
+                                std::istreambuf_iterator<char>{}};
+                        }
+
+                        // Normal JSON route still uses Content-Length + keep-alive path.
+                        {
+                            auto stream = connect("127.0.0.1", "8098");
+                            stream << "GET /json HTTP/1.1" << net::crlf
+                                   << "Host: 127.0.0.1:8098" << net::crlf
+                                   << "Connection: close" << net::crlf
+                                   << net::crlf
+                                   << net::flush;
+                            *json_response = std::string{
+                                std::istreambuf_iterator<char>{stream},
+                                std::istreambuf_iterator<char>{}};
+                        }
+                    }
+                    catch(...)
+                    {
+                    }
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if(server_thread.joinable())
+                    server_thread.join();
+
+                tester::bdd::then("SSE headers, framing, Last-Event-ID, and JSON Content-Length work") =
+                    [status, headers_raw, body, json_response, last_event_id] {
+                        check_contains(*status, "200");
+                        check_contains(*headers_raw, "Content-Type: text/event-stream");
+                        check_contains(*headers_raw, "Cache-Control: no-cache");
+                        check_contains(*headers_raw, "Access-Control-Allow-Origin: http://localhost:3000");
+                        check_false(headers_raw->contains("Content-Length:"sv));
+                        check_contains(*body, ": ok\n");
+                        check_contains(*body, "event: tick\ndata: 1\nid: 1\n\n");
+                        check_contains(*body, "event: tick\ndata: 2\nid: 2\n\n");
+                        check_eq(*last_event_id, "7"s);
+                        check_contains(*json_response, "Content-Length:");
+                        check_contains(*json_response, R"({"ok":true})");
+                    };
+            };
+        };
+    };
+
+    tester::bdd::scenario("SSE session ends when the client disconnects, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An SSE handler that streams until closed") = [] {
+            auto server = std::make_shared<http::server>();
+            auto stopped_cleanly = std::make_shared<std::atomic<bool>>(false);
+
+            server->sse("/stream").sse([stopped_cleanly](http::sse::session& session, auto, auto&) {
+                session.send_event("start", "1");
+                for(auto i = 0; i < 200 and not session.closed(); ++i)
+                {
+                    if(not session.send_comment("hb"))
+                        break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds{10});
+                }
+                stopped_cleanly->store(true);
+            });
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("The client reads one event and closes") = [server, stopped_cleanly] {
+                auto got_start = std::make_shared<std::atomic<bool>>(false);
+
+                std::promise<void> started;
+                auto started_future = started.get_future();
+                std::thread server_thread{[server, &started] {
+                    try
+                    {
+                        started.set_value();
+                        server->listen("8099");
+                    }
+                    catch(...)
+                    {
+                    }
+                }};
+
+                using namespace std::chrono_literals;
+                if(started_future.wait_for(2s) == std::future_status::ready)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    try
+                    {
+                        auto stream = connect("127.0.0.1", "8099");
+                        stream << "GET /stream HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:8099" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+
+                        std::string all;
+                        char ch{};
+                        while(stream.get(ch))
+                        {
+                            all.push_back(ch);
+                            if(all.contains("event: start\ndata: 1\n\n"))
+                            {
+                                got_start->store(true);
+                                break;
+                            }
+                            if(all.size() > 4096)
+                                break;
+                        }
+                        stream.close();
+                    }
+                    catch(...)
+                    {
+                    }
+
+                    // Allow the writer to observe the closed peer and exit.
+                    for(auto i = 0; i < 100 and not stopped_cleanly->load(); ++i)
+                        std::this_thread::sleep_for(20ms);
+                    server->stop();
+                }
+
+                if(server_thread.joinable())
+                    server_thread.join();
+
+                tester::bdd::then("Client saw the start event and the server session exited") =
+                    [got_start, stopped_cleanly] {
+                        check_true(got_start->load());
+                        check_true(stopped_cleanly->load());
+                    };
+            };
+        };
+    };
+
     // Regression: custom response headers used to be written after the server's
     // Content-Length / Connection. Echoing the request Content-Length (copy-all
     // headers) produced two CL values — proxies that prefer the last desync.
@@ -1606,7 +1809,7 @@ auto register_server_tests()
                 std::thread server_thread{[server, &started]{
                     try {
                         started.set_value();
-                        server->listen("8097");
+                        server->listen("8100");
                     } catch(...) {}
                 }};
 
@@ -1615,9 +1818,9 @@ auto register_server_tests()
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8097");
+                        auto stream = connect("127.0.0.1", "8100");
                         stream << "GET /echo-hdrs HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8097" << net::crlf
+                               << "Host: 127.0.0.1:8100" << net::crlf
                                << "Content-Length: 0" << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf
@@ -1675,7 +1878,7 @@ auto register_server_tests()
                 std::thread server_thread{[server, &started]{
                     try {
                         started.set_value();
-                        server->listen("8098");
+                        server->listen("8101");
                     } catch(...) {}
                 }};
 
@@ -1684,9 +1887,9 @@ auto register_server_tests()
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8098");
+                        auto stream = connect("127.0.0.1", "8101");
                         stream << "GET /split HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8098" << net::crlf
+                               << "Host: 127.0.0.1:8101" << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf
                                << net::flush;
@@ -1748,7 +1951,7 @@ auto register_server_tests()
                 std::thread server_thread{[server, &started]{
                     try {
                         started.set_value();
-                        server->listen("8099");
+                        server->listen("8102");
                     } catch(...) {}
                 }};
 
@@ -1757,9 +1960,9 @@ auto register_server_tests()
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8099");
+                        auto stream = connect("127.0.0.1", "8102");
                         stream << "GET /hop HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8099" << net::crlf
+                               << "Host: 127.0.0.1:8102" << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf
                                << net::flush;

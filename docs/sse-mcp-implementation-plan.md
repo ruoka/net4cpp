@@ -2,7 +2,7 @@
 
 **Branch:** `feature/sse-mcp-server`  
 **Repo:** [ruoka/net4cpp](https://github.com/ruoka/net4cpp)  
-**Status:** Investigation / design (no protocol code yet)  
+**Status:** M1–M2 implemented (`net:sse` + `server.sse` takeover); MCP not started  
 **Date:** 2026-07-25
 
 ## Goal
@@ -307,4 +307,4 @@ None for M1–M2 kickoff. Revisit chunked TE (decision #3) only if a concrete re
 
 ## Next step
 
-Implement **M1–M2** on this branch: `net:sse` framing + `http::server` takeover path with tests. MCP work waits until SSE streams are solid.
+**M3** (heartbeats polish / docs refinements as needed) or proceed to **M4** MCP session table once M1–M2 is merged.

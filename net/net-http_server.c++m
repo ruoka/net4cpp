@@ -8,6 +8,7 @@ import :posix;
 import :structured_log_stream;
 import :http_headers;
 import :endpointstream;
+import :sse;
 import :utils;
 import :uuid;
 import :websocket;
@@ -27,6 +28,7 @@ constexpr auto method_patch = "PATCH"sv;
 constexpr auto method_delete = "DELETE"sv;
 constexpr auto method_options = "OPTIONS"sv;
 constexpr auto method_ws = "WS"sv;
+constexpr auto method_sse = "SSE"sv;
 
 // HTTP status constants
 const auto status_switching_protocols = "101 Switching Protocols"s;
@@ -96,6 +98,7 @@ public:
 
     using callback = std::function<::http::response_with_headers(request_view, body_view, headers&)>;
     using websocket_callback = net::websocket::text_handler;
+    using sse_callback = std::function<void(::http::sse::session&, request_view, headers&)>;
 
     void text(const content& c)
     {
@@ -184,11 +187,48 @@ public:
         return m_ws_callback;
     }
 
+    // Server-Sent Events handler: connection takeover after SSE response head.
+    controller& sse(sse_callback cb)
+    {
+        m_sse_callback = std::move(cb);
+        return *this;
+    }
+
+    [[nodiscard]] bool has_sse() const noexcept
+    {
+        return static_cast<bool>(m_sse_callback);
+    }
+
+    [[nodiscard]] const sse_callback& sse_handler() const noexcept
+    {
+        return m_sse_callback;
+    }
+
+    // Same Origin allowlist predicate used with cors_middleware for OPTIONS.
+    // When set, a permitted Origin is reflected on the SSE response head.
+    controller& cors(std::function<bool(std::string_view)> allowed_origin)
+    {
+        m_cors_origin = std::move(allowed_origin);
+        return *this;
+    }
+
+    [[nodiscard]] bool has_cors_origin() const noexcept
+    {
+        return static_cast<bool>(m_cors_origin);
+    }
+
+    [[nodiscard]] const std::function<bool(std::string_view)>& cors_origin() const noexcept
+    {
+        return m_cors_origin;
+    }
+
 private:
 
     content_type m_content_type = "*/*";
     callback m_callback = [](request_view, body_view, headers&) -> ::http::response_with_headers { return make_response(status_ok, "Not Found"s); };
     websocket_callback m_ws_callback;
+    sse_callback m_sse_callback;
+    std::function<bool(std::string_view)> m_cors_origin;
 };
 
 class server
@@ -244,6 +284,12 @@ public:
     controller& ws(std::string_view path)
     {
         return m_router[std::string{path}][method_ws];
+    }
+
+    // Register a Server-Sent Events endpoint (takeover from GET). Chain `.sse(handler)`.
+    controller& sse(std::string_view path)
+    {
+        return m_router[std::string{path}][method_sse];
     }
 
     void listen(std::string_view service_or_port = "http")
@@ -755,6 +801,95 @@ private:
                     const auto ws_handler = m_router.at(*matched_path).at(method_ws).websocket_handler();
                     net::websocket::run_text_session(stream, ws_handler);
                     break;
+                }
+
+                // SSE takeover: GET matching an SSE route streams without Content-Length.
+                if(method == method_get)
+                {
+                    const auto path_only = std::string{uri.substr(0, uri.find('?'))};
+                    auto matched_path = std::optional<std::string>{};
+                    for(const auto& [path, methods_map] : m_router)
+                    {
+                        if(not std::regex_match(path_only, std::regex{path}))
+                            continue;
+                        if(methods_map.contains(method_sse) and methods_map.at(method_sse).has_sse())
+                        {
+                            matched_path = path;
+                            break;
+                        }
+                    }
+
+                    if(matched_path)
+                    {
+                        const auto sse_open = system_clock::now();
+                        net::slog << net::notice("HTTP_SSE_OPEN") << "opening SSE stream"
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"uri", std::string{uri}}
+                                  << std::pair{"request_id", request_id}
+                                  << net::flush;
+
+                        // CORS: browser EventSource preflight uses options() +
+                        // cors_middleware. ACAO on the SSE response head is applied
+                        // when the controller has a CORS origin predicate (same
+                        // allowlist as cors_middleware; helpers live here to avoid
+                        // a http_server ↔ middlewares import cycle).
+                        stream << "HTTP/1.1 " << status_ok << net::crlf
+                               << "Date: " << date() << net::crlf
+                               << "Server: " << host() << net::crlf
+                               << "Content-Type: text/event-stream" << net::crlf
+                               << "Cache-Control: no-cache" << net::crlf
+                               << "Connection: keep-alive" << net::crlf;
+                        {
+                            const auto& sse_ctrl = m_router.at(*matched_path).at(method_sse);
+                            if(sse_ctrl.has_cors_origin() and hs.contains("origin"s))
+                            {
+                                const auto origin = hs["origin"s];
+                                if(sse_ctrl.cors_origin()(origin))
+                                {
+                                    stream << "Access-Control-Allow-Origin: " << origin << net::crlf
+                                           << "Access-Control-Allow-Credentials: true" << net::crlf;
+                                }
+                            }
+                        }
+                        stream << net::crlf << net::flush;
+
+                        const auto sse_handler = m_router.at(*matched_path).at(method_sse).sse_handler();
+                        auto session = ::http::sse::session{stream};
+                        try
+                        {
+                            sse_handler(session, uri, hs);
+                        }
+                        catch(const std::exception& e)
+                        {
+                            net::slog << net::error("HTTP_SSE_HANDLER_EXCEPTION") << e.what()
+                                      << std::pair{"ip"sv, endpoint}
+                                      << std::pair{"port", port}
+                                      << std::pair{"uri", std::string{uri}}
+                                      << std::pair{"request_id", request_id}
+                                      << net::flush;
+                        }
+                        catch(...)
+                        {
+                            net::slog << net::error("HTTP_SSE_HANDLER_EXCEPTION") << "unknown exception in SSE handler"
+                                      << std::pair{"ip"sv, endpoint}
+                                      << std::pair{"port", port}
+                                      << std::pair{"uri", std::string{uri}}
+                                      << std::pair{"request_id", request_id}
+                                      << net::flush;
+                        }
+
+                        const auto sse_duration = duration_cast<milliseconds>(system_clock::now() - sse_open).count();
+                        net::slog << net::notice("HTTP_SSE_CLOSE") << "closing SSE stream"
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"uri", std::string{uri}}
+                                  << std::pair{"request_id", request_id}
+                                  << std::pair{"duration_ms", sse_duration}
+                                  << std::pair{"bytes_out", static_cast<long long>(session.bytes_out())}
+                                  << net::flush;
+                        break;
+                    }
                 }
 
                 auto close_connection = false;

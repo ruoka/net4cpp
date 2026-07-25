@@ -1,0 +1,164 @@
+// Copyright (c) 2025-2026 Kaius Ruokonen. All rights reserved.
+// SPDX-License-Identifier: MIT
+// See the LICENSE file in the project root for full license text.
+
+export module net:sse;
+import :endpointstream;
+import std;
+
+export namespace http::sse
+{
+
+using namespace std::string_literals;
+using namespace std::string_view_literals;
+
+// Append one SSE field line (`name: value\n`). Values must not contain CR/LF;
+// multi-line payloads use multiple `data:` fields via format_event / session.
+inline void append_field(std::string& out, std::string_view name, std::string_view value)
+{
+    out.append(name);
+    out.append(": "sv);
+    out.append(value);
+    out.push_back('\n');
+}
+
+// Comment line (`: text\n`). Empty text yields `:\n` (valid heartbeat).
+inline std::string format_comment(std::string_view text = {})
+{
+    auto out = ":"s;
+    if(not text.empty())
+    {
+        out.push_back(' ');
+        out.append(text);
+    }
+    out.push_back('\n');
+    return out;
+}
+
+// Full event block ending with a blank line (dispatches to the client).
+// `data` may contain `\n`; each segment becomes its own `data:` field.
+// `event` / `id` are omitted when empty. `retry_ms` omitted when nullopt.
+inline std::string format_event(
+    std::string_view data,
+    std::string_view event = {},
+    std::string_view id = {},
+    std::optional<std::chrono::milliseconds> retry_ms = std::nullopt)
+{
+    auto out = ""s;
+    if(not event.empty())
+        append_field(out, "event"sv, event);
+
+    if(data.empty())
+        append_field(out, "data"sv, ""sv);
+    else
+    {
+        auto rest = data;
+        while(not rest.empty())
+        {
+            const auto pos = rest.find('\n');
+            if(pos == std::string_view::npos)
+            {
+                append_field(out, "data"sv, rest);
+                break;
+            }
+            append_field(out, "data"sv, rest.substr(0, pos));
+            rest.remove_prefix(pos + 1);
+            if(rest.empty())
+                append_field(out, "data"sv, ""sv);
+        }
+    }
+
+    if(not id.empty())
+        append_field(out, "id"sv, id);
+
+    if(retry_ms.has_value())
+        append_field(out, "retry"sv, std::to_string(retry_ms->count()));
+
+    out.push_back('\n');
+    return out;
+}
+
+// Writer over an already-opened SSE response (headers already sent by http::server).
+class session
+{
+public:
+
+    explicit session(std::ostream& stream) noexcept
+        : m_stream{stream}
+    {
+    }
+
+    session(const session&) = delete;
+    session& operator=(const session&) = delete;
+
+    // Returns false after a write/flush failure; further sends are no-ops.
+    bool send_event(
+        std::string_view event,
+        std::string_view data,
+        std::string_view id = {},
+        std::optional<std::chrono::milliseconds> retry_ms = std::nullopt)
+    {
+        return write_raw(format_event(data, event, id, retry_ms));
+    }
+
+    bool send_data(
+        std::string_view data,
+        std::string_view id = {},
+        std::optional<std::chrono::milliseconds> retry_ms = std::nullopt)
+    {
+        return write_raw(format_event(data, ""sv, id, retry_ms));
+    }
+
+    bool send_comment(std::string_view text = {})
+    {
+        return write_raw(format_comment(text));
+    }
+
+    bool flush()
+    {
+        if(m_closed)
+            return false;
+        m_stream << net::flush;
+        if(not m_stream.good())
+        {
+            m_closed = true;
+            return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool closed() const noexcept
+    {
+        return m_closed or not m_stream.good();
+    }
+
+    [[nodiscard]] std::size_t bytes_out() const noexcept
+    {
+        return m_bytes_out;
+    }
+
+private:
+
+    bool write_raw(std::string_view chunk)
+    {
+        if(m_closed or not m_stream.good())
+        {
+            m_closed = true;
+            return false;
+        }
+        m_stream.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+        if(not m_stream.good())
+        {
+            m_closed = true;
+            return false;
+        }
+        m_bytes_out += chunk.size();
+        return flush();
+    }
+
+    std::ostream& m_stream;
+    bool m_closed = false;
+    std::size_t m_bytes_out = 0;
+};
+
+} // namespace http::sse
