@@ -103,7 +103,7 @@ Suggested types (new module e.g. `net:sse` / `net-sse.c++m`):
    Connection: keep-alive
    ```
 
-   plus Date/Server; optional CORS headers if we decide SSE is covered by existing CORS middleware (likely **special-case** ACAO on the SSE head using the same allowlist helpers).
+   plus Date/Server. **CORS:** reuse `cors_middleware` (same allowlist / ACAO behavior as normal routes). Ensure the SSE takeover path still runs the middleware chain for the opening `GET` (or applies equivalent CORS header injection from the shared helpers) so browser EventSource clients are not special-cased with a second policy.
 3. Disable keep-alive request loop for that connection after the stream ends (`break` out of the read loop), matching WebSocket.
 4. Logging: `HTTP_SSE_OPEN` / `HTTP_SSE_CLOSE` with `request_id`, duration, bytes_out.
 
@@ -207,9 +207,9 @@ Deferred: resources, prompts, sampling, elicitation.
 ### Adoption path (YarDB, later)
 
 1. net lands SSE + MCP transport.  
-2. YarDB adds thin C++ tool registration wrapping engine/HTTP semantics **or** keeps Python bridge until parity.  
-3. `.cursor/mcp.json` can point at native `http://127.0.0.1:…/sse` without uvicorn.  
-4. Retire or shrink `tools/yardb_mcp_sse.py` once feature-complete.
+2. YarDB adds **native C++** tool registration first (engine/HTTP semantics as MCP tools).  
+3. Keep Python `tools/*_mcp.py` (stdio + SSE) as a **reference client/server** and smoke oracle until native parity is proven — do not delete early.  
+4. `.cursor/mcp.json` can point at native `http://127.0.0.1:…/sse` once ready; Python remains available for comparison.
 
 **Exit criteria Phase 2:** MCP SSE session works against a reference client (Python `mcp` SSE client or Cursor); `[net]` tests cover transport; security defaults documented.
 
@@ -223,8 +223,8 @@ Keep existing `callback` API stable. Add parallel registration (`sse` / later `m
 
 ### 2. Chunked transfer encoding
 
-- **SSE v1:** omit `Content-Length`, stream until close (widely used).  
-- **Later:** optional `Transfer-Encoding: chunked` for proxies that demand it.  
+- **SSE v1:** omit `Content-Length`, stream until close (widely used). **No chunked response TE yet** (decision #3).  
+- **Later:** optional `Transfer-Encoding: chunked` only if a supported proxy requires it.  
 - **Requests:** keep rejecting chunked request bodies until a dedicated project decides otherwise (current fail-closed stance is good).
 
 ### 3. Threading model
@@ -233,17 +233,18 @@ Today: one thread per accepted connection. SSE fits that model (handler blocks i
 
 ### 4. Middleware
 
-- Apply auth/CORS-like checks **at SSE open** and on MCP POSTs explicitly.  
+- **CORS:** reuse `cors_middleware` for SSE open and MCP `POST` (no parallel allowlist).  
+- Apply other auth checks **at SSE open** and on MCP POSTs explicitly where needed.  
 - Metrics: count stream opens/closes; do not treat multi-hour streams as a single “request duration” histogram without care (use separate SSE metrics or cap).
 
-### 5. Module layout (proposed)
+### 5. Module layout (decided)
 
 | Module | Responsibility |
 |--------|----------------|
 | `net:sse` | Framing + `session` writer |
-| `net:http_server` | Route registration + takeover wiring |
-| `net:mcp` (new) | Sessions, JSON-RPC, tool callbacks, Host/Origin helpers |
-| App | Tool implementations |
+| `net:http_server` | `server.sse(path).sse(cb)` registration + takeover wiring |
+| `net:mcp` (new, in-tree) | Sessions, JSON-RPC, tool callbacks, Host/Origin helpers — **start in net**; extract to a separate repo only if it grows beyond transport/dispatch |
+| App (YarDB) | Tool implementations; Python `*_mcp.py` kept as reference |
 
 Follow existing snake_case / modules-only / Allman style; co-locate `*.test.c++`.
 
@@ -259,7 +260,7 @@ Follow existing snake_case / modules-only / Allman style; co-locate `*.test.c++`
 | **M3** | Heartbeats, `Last-Event-ID`, docs/README | M2 |
 | **M4** | MCP session table + `endpoint` event + POST path | M2 |
 | **M5** | JSON-RPC `initialize` / `tools/*` + security defaults | M4 |
-| **M6** | Reference smoke (Python client or small C++ client) + YarDB spike issue | M5 |
+| **M6** | YarDB native MCP spike + keep Python `*_mcp.py` as reference smoke/oracle | M5 |
 
 Do not start M4 until M2 is merged or clearly stable: MCP debugging on a half-baked stream is expensive.
 
@@ -277,13 +278,21 @@ Do not start M4 until M2 is merged or clearly stable: MCP debugging on a half-ba
 
 ---
 
-## Open questions (resolve during M1–M2)
+## Decisions (resolved 2026-07-25)
 
-1. Should SSE registration be `server.sse(path).sse(cb)` (WebSocket-like) or `get(path).sse(cb)`?  
-2. CORS: reuse `cors_middleware` or dedicated SSE header injection?  
-3. Is chunked response TE required for any supported reverse proxy in this ecosystem?  
-4. MCP module in net vs separate `mcp4cpp` repo? (**Lean: start in net**, extract if it grows.)  
-5. Native C++ MCP first for YarDB vs keep Python SSE until Streamable HTTP is chosen?
+| # | Question | Decision |
+|---|----------|----------|
+| 1 | SSE registration API | **`server.sse(path).sse(cb)`** — WebSocket-like, not `get(path).sse(cb)` |
+| 2 | CORS | **Reuse `cors_middleware`** — same policy for SSE open / MCP POST; no dedicated parallel allowlist |
+| 3 | Chunked response `Transfer-Encoding` | **Not yet** — v1 streams without `Content-Length` until a proxy requirement appears |
+| 4 | Where MCP lives | **Start as `net:mcp` in net4cpp**; extract only if the module outgrows transport/dispatch |
+| 5 | YarDB adoption | **Native C++ MCP first**; keep Python `*_mcp.py` (stdio + SSE) as **reference** / oracle, not deleted early |
+
+---
+
+## Open questions (remaining)
+
+None for M1–M2 kickoff. Revisit chunked TE (decision #3) only if a concrete reverse-proxy failure shows up in integration.
 
 ---
 
