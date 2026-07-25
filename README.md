@@ -163,34 +163,39 @@ Notes:
   `feature/mcp-sse-transport`; see
   [`docs/sse-mcp-implementation-plan.md`](docs/sse-mcp-implementation-plan.md).
 
-# MCP SSE transport (v1 session layer)
+# MCP SSE (v1 protocol)
 
-Legacy MCP HTTP+SSE wire format (compatible with `mcp.server.sse.SseServerTransport`):
+Legacy MCP HTTP+SSE (compatible with `mcp.server.sse.SseServerTransport`):
 
-1. Client `GET`s the SSE path → server emits `event: endpoint` with
-   `/messages/?session_id=<uuid4 hex>`
-2. Client `POST`s JSON-RPC to that URI → `202 Accepted`; body is queued for the
-   session handler
-3. Handler replies on the SSE stream with `event: message`
+1. `GET /sse` → `event: endpoint` with `/messages/?session_id=<uuid4 hex>`
+2. `POST` JSON-RPC to that URI → `202 Accepted`
+3. Replies as SSE `event: message`
+
+`http::mcp::server` runs `initialize` / `ping` / `tools/list` / `tools/call` and
+applies Host/Origin allowlists (localhost defaults; disable with
+`dns_rebinding_protection(false)`). Apps supply tool callbacks only.
 
 ```cpp
 import net;
 import std;
 
-auto server = http::server{};
-auto mcp = http::mcp::sse_transport{"/messages/"};
-mcp.attach(server, "/sse", [](http::mcp::session& session) {
-    while(auto msg = session.recv(std::chrono::seconds{30}))
-    {
-        // M5 will dispatch JSON-RPC; for now apps handle the payload.
-        session.send_message(*msg);
-    }
-});
-server.listen("127.0.0.1", "8080");
+auto http = http::server{};
+auto mcp = http::mcp::server{"/messages/"};
+mcp.info({.name = "demo", .version = "1.0.0"})
+    .list_tools([] {
+        return std::vector<http::mcp::tool_spec>{
+            {.name = "health", .description = "liveness"},
+        };
+    })
+    .call_tool([](std::string_view, std::string_view) {
+        return http::mcp::tool_result{.text = "ok"};
+    })
+    .attach(http, "/sse");
+http.listen("127.0.0.1", "8080");
 ```
 
-JSON-RPC `initialize` / `tools/*` is **M5** (not in this layer). Keep the transport
-alive for the lifetime of `server.listen`.
+Low-level `sse_transport` remains available for custom session loops. Keep the
+`mcp` / transport object alive for the lifetime of `listen`.
 
 # WebSocket (v1 spike)
 

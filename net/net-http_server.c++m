@@ -223,6 +223,26 @@ public:
         return m_cors_origin;
     }
 
+    // Optional pre-check before the SSE response head is written. Returning a
+    // response rejects the stream (e.g. Host/Origin DNS-rebinding guards).
+    using sse_gate = std::function<std::optional<::http::response_with_headers>(request_view, headers&)>;
+
+    controller& gate(sse_gate g)
+    {
+        m_sse_gate = std::move(g);
+        return *this;
+    }
+
+    [[nodiscard]] bool has_gate() const noexcept
+    {
+        return static_cast<bool>(m_sse_gate);
+    }
+
+    [[nodiscard]] const sse_gate& sse_gate_fn() const noexcept
+    {
+        return m_sse_gate;
+    }
+
 private:
 
     content_type m_content_type = "*/*";
@@ -230,6 +250,7 @@ private:
     websocket_callback m_ws_callback;
     sse_callback m_sse_callback;
     std::function<bool(std::string_view)> m_cors_origin;
+    sse_gate m_sse_gate;
 };
 
 class server
@@ -822,6 +843,25 @@ private:
 
                     if(matched_path)
                     {
+                        const auto& sse_ctrl = m_router.at(*matched_path).at(method_sse);
+                        if(sse_ctrl.has_gate())
+                        {
+                            if(auto denied = sse_ctrl.sse_gate_fn()(uri, hs))
+                            {
+                                auto [st, body, custom_h] = std::move(*denied);
+                                stream << "HTTP/1.1 " << st << net::crlf
+                                       << "Date: " << date() << net::crlf
+                                       << "Server: " << host() << net::crlf
+                                       << "Content-Type: " << m_content_type << net::crlf
+                                       << "Content-Length: " << body.size() << net::crlf
+                                       << "Connection: close" << net::crlf;
+                                if(custom_h.has_value())
+                                    stream << custom_h.value();
+                                stream << net::crlf << body << net::flush;
+                                break;
+                            }
+                        }
+
                         const auto sse_open = system_clock::now();
                         net::slog << net::notice("HTTP_SSE_OPEN") << "opening SSE stream"
                                   << std::pair{"ip"sv, endpoint}
@@ -841,21 +881,18 @@ private:
                                << "Content-Type: text/event-stream" << net::crlf
                                << "Cache-Control: no-cache" << net::crlf
                                << "Connection: keep-alive" << net::crlf;
+                        if(sse_ctrl.has_cors_origin() and hs.contains("origin"s))
                         {
-                            const auto& sse_ctrl = m_router.at(*matched_path).at(method_sse);
-                            if(sse_ctrl.has_cors_origin() and hs.contains("origin"s))
+                            const auto origin = hs["origin"s];
+                            if(sse_ctrl.cors_origin()(origin))
                             {
-                                const auto origin = hs["origin"s];
-                                if(sse_ctrl.cors_origin()(origin))
-                                {
-                                    stream << "Access-Control-Allow-Origin: " << origin << net::crlf
-                                           << "Access-Control-Allow-Credentials: true" << net::crlf;
-                                }
+                                stream << "Access-Control-Allow-Origin: " << origin << net::crlf
+                                       << "Access-Control-Allow-Credentials: true" << net::crlf;
                             }
                         }
                         stream << net::crlf << net::flush;
 
-                        const auto sse_handler = m_router.at(*matched_path).at(method_sse).sse_handler();
+                        const auto sse_handler = sse_ctrl.sse_handler();
                         auto session = ::http::sse::session{stream};
                         try
                         {

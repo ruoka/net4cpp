@@ -2,7 +2,7 @@
 
 **Branch:** `feature/sse-mcp-server`  
 **Repo:** [ruoka/net4cpp](https://github.com/ruoka/net4cpp)  
-**Status:** M1–M3 complete (SSE v1); M4 session transport on `feature/mcp-sse-transport`  
+**Status:** M1–M5 on `feature/mcp-sse-transport` (SSE + MCP session + JSON-RPC); M6 is YarDB  
 **Date:** 2026-07-25
 
 ## Goal
@@ -259,7 +259,7 @@ Follow existing snake_case / modules-only / Allman style; co-locate `*.test.c++`
 | **M2** | `http::server` SSE route + integration test | M1 |
 | **M3** | Heartbeats, `Last-Event-ID`, docs/README | M2 — **done** (shipped with M1–M2) |
 | **M4** | MCP session table + `endpoint` event + POST path | M2 — **done** on `feature/mcp-sse-transport` |
-| **M5** | JSON-RPC `initialize` / `tools/*` + security defaults | M4 |
+| **M5** | JSON-RPC `initialize` / `tools/*` + security defaults | M4 — **done** on `feature/mcp-sse-transport` |
 | **M6** | YarDB native MCP spike + keep Python `*_mcp.py` as reference smoke/oracle | M5 |
 
 Do not start M4 until M2 is merged or clearly stable: MCP debugging on a half-baked stream is expensive.
@@ -307,4 +307,4 @@ None for M1–M2 kickoff. Revisit chunked TE (decision #3) only if a concrete re
 
 ## Next step
 
-Implement **M5** on `feature/mcp-sse-transport`: JSON-RPC `initialize` / `ping` / `tools/list` / `tools/call` + Host/Origin security defaults.
+Merge stacked PRs (#48 SSE, #49 MCP). **M6** is YarDB native MCP adoption (keep Python `*_mcp.py` as reference).
