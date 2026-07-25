@@ -159,8 +159,38 @@ Notes:
 - Flush after each event/comment (session does this). Proxies that buffer SSE may
   need `X-Accel-Buffering: no` (optional app header — not set by default).
 - After the SSE stream ends, the connection is closed (no keep-alive reuse).
-- MCP over SSE is planned separately; see
+- MCP over SSE transport (`http::mcp::sse_transport`) is on branch
+  `feature/mcp-sse-transport`; see
   [`docs/sse-mcp-implementation-plan.md`](docs/sse-mcp-implementation-plan.md).
+
+# MCP SSE transport (v1 session layer)
+
+Legacy MCP HTTP+SSE wire format (compatible with `mcp.server.sse.SseServerTransport`):
+
+1. Client `GET`s the SSE path → server emits `event: endpoint` with
+   `/messages/?session_id=<uuid4 hex>`
+2. Client `POST`s JSON-RPC to that URI → `202 Accepted`; body is queued for the
+   session handler
+3. Handler replies on the SSE stream with `event: message`
+
+```cpp
+import net;
+import std;
+
+auto server = http::server{};
+auto mcp = http::mcp::sse_transport{"/messages/"};
+mcp.attach(server, "/sse", [](http::mcp::session& session) {
+    while(auto msg = session.recv(std::chrono::seconds{30}))
+    {
+        // M5 will dispatch JSON-RPC; for now apps handle the payload.
+        session.send_message(*msg);
+    }
+});
+server.listen("127.0.0.1", "8080");
+```
+
+JSON-RPC `initialize` / `tools/*` is **M5** (not in this layer). Keep the transport
+alive for the lifetime of `server.listen`.
 
 # WebSocket (v1 spike)
 

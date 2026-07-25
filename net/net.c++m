@@ -13,6 +13,7 @@ export import :http_headers;
 export import :http_server;
 export import :http_server_middlewares;
 export import :http_uri;
+export import :mcp;
 export import :receiver;
 export import :sender;
 export import :sse;

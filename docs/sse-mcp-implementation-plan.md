@@ -2,7 +2,7 @@
 
 **Branch:** `feature/sse-mcp-server`  
 **Repo:** [ruoka/net4cpp](https://github.com/ruoka/net4cpp)  
-**Status:** M1–M2 implemented (`net:sse` + `server.sse` takeover); MCP not started  
+**Status:** M1–M3 complete (SSE v1); M4 session transport on `feature/mcp-sse-transport`  
 **Date:** 2026-07-25
 
 ## Goal
@@ -257,8 +257,8 @@ Follow existing snake_case / modules-only / Allman style; co-locate `*.test.c++`
 | **M0** | This plan on `feature/sse-mcp-server` | — |
 | **M1** | `net:sse` writer + unit framing tests | M0 |
 | **M2** | `http::server` SSE route + integration test | M1 |
-| **M3** | Heartbeats, `Last-Event-ID`, docs/README | M2 |
-| **M4** | MCP session table + `endpoint` event + POST path | M2 |
+| **M3** | Heartbeats, `Last-Event-ID`, docs/README | M2 — **done** (shipped with M1–M2) |
+| **M4** | MCP session table + `endpoint` event + POST path | M2 — **done** on `feature/mcp-sse-transport` |
 | **M5** | JSON-RPC `initialize` / `tools/*` + security defaults | M4 |
 | **M6** | YarDB native MCP spike + keep Python `*_mcp.py` as reference smoke/oracle | M5 |
 
@@ -307,4 +307,4 @@ None for M1–M2 kickoff. Revisit chunked TE (decision #3) only if a concrete re
 
 ## Next step
 
-**M3** (heartbeats polish / docs refinements as needed) or proceed to **M4** MCP session table once M1–M2 is merged.
+Implement **M5** on `feature/mcp-sse-transport`: JSON-RPC `initialize` / `ping` / `tools/list` / `tools/call` + Host/Origin security defaults.

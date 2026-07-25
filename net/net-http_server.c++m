@@ -34,6 +34,7 @@ constexpr auto method_sse = "SSE"sv;
 const auto status_switching_protocols = "101 Switching Protocols"s;
 const auto status_ok = "200 OK"s;
 const auto status_created = "201 Created"s;
+const auto status_accepted = "202 Accepted"s;
 const auto status_no_content = "204 No Content"s;
 const auto status_not_modified = "304 Not Modified"s;
 const auto status_bad_request = "400 Bad Request"s;

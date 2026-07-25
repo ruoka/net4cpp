@@ -1,0 +1,257 @@
+// Copyright (c) 2025-2026 Kaius Ruokonen. All rights reserved.
+// SPDX-License-Identifier: MIT
+// See the LICENSE file in the project root for full license text.
+
+export module net:mcp;
+import :http_server;
+import :sse;
+import :uuid;
+import std;
+
+export namespace http::mcp
+{
+
+using namespace std::string_literals;
+using namespace std::string_view_literals;
+
+// Extract `key` from a request-target query string (`path?a=1&b=2`).
+inline std::optional<std::string> query_param(std::string_view request_target, std::string_view key)
+{
+    const auto qpos = request_target.find('?');
+    if(qpos == std::string_view::npos)
+        return std::nullopt;
+
+    auto query = request_target.substr(qpos + 1);
+    while(not query.empty())
+    {
+        const auto amp = query.find('&');
+        const auto part = amp == std::string_view::npos ? query : query.substr(0, amp);
+        const auto eq = part.find('=');
+        const auto name = eq == std::string_view::npos ? part : part.substr(0, eq);
+        if(name == key)
+        {
+            if(eq == std::string_view::npos)
+                return ""s;
+            return std::string{part.substr(eq + 1)};
+        }
+        if(amp == std::string_view::npos)
+            break;
+        query.remove_prefix(amp + 1);
+    }
+    return std::nullopt;
+}
+
+// MCP Python SDK uses uuid4().hex (32 lowercase hex chars, no dashes).
+inline std::string make_session_id()
+{
+    auto id = net::generate_uuid_v4();
+    id.erase(std::remove(id.begin(), id.end(), '-'), id.end());
+    return id;
+}
+
+namespace detail
+{
+
+struct session_state
+{
+    explicit session_state(std::string id)
+        : id{std::move(id)}
+    {
+    }
+
+    std::string id;
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::deque<std::string> inbound;
+    bool closed = false;
+};
+
+} // namespace detail
+
+// Per-connection MCP SSE session. Lives on the SSE thread; POSTs enqueue here.
+class session
+{
+public:
+
+    session(std::shared_ptr<detail::session_state> state, sse::session& stream) noexcept
+        : m_state{std::move(state)}
+        , m_stream{stream}
+    {
+    }
+
+    [[nodiscard]] std::string_view id() const noexcept
+    {
+        return m_state->id;
+    }
+
+    // SSE `event: message` with JSON-RPC (or opaque JSON) payload.
+    bool send_message(std::string_view json)
+    {
+        return m_stream.send_event("message"sv, json);
+    }
+
+    bool send_comment(std::string_view text = {})
+    {
+        return m_stream.send_comment(text);
+    }
+
+    [[nodiscard]] bool closed() const
+    {
+        if(m_stream.closed())
+            return true;
+        std::lock_guard lock{m_state->mutex};
+        return m_state->closed;
+    }
+
+    // Wait for the next POST body. Returns nullopt on timeout or session close.
+    // `timeout == 0` waits indefinitely.
+    std::optional<std::string> recv(std::chrono::milliseconds timeout = std::chrono::milliseconds{0})
+    {
+        std::unique_lock lock{m_state->mutex};
+        auto ready = [this]
+        {
+            return m_state->closed or not m_state->inbound.empty() or m_stream.closed();
+        };
+
+        if(timeout.count() <= 0)
+            m_state->cv.wait(lock, ready);
+        else if(not m_state->cv.wait_for(lock, timeout, ready))
+            return std::nullopt;
+
+        if(m_state->inbound.empty())
+            return std::nullopt;
+
+        auto msg = std::move(m_state->inbound.front());
+        m_state->inbound.pop_front();
+        return msg;
+    }
+
+private:
+
+    std::shared_ptr<detail::session_state> m_state;
+    sse::session& m_stream;
+};
+
+// Legacy MCP HTTP+SSE transport (GET SSE + POST messages), matching
+// `mcp.server.sse.SseServerTransport` wire behaviour for the session layer.
+class sse_transport
+{
+public:
+
+    using session_handler = std::function<void(session&)>;
+
+    explicit sse_transport(std::string messages_path = "/messages/")
+        : m_messages_path{normalize_messages_path(std::move(messages_path))}
+    {
+    }
+
+    [[nodiscard]] std::string_view messages_path() const noexcept
+    {
+        return m_messages_path;
+    }
+
+    // Register SSE + POST routes. `*this` must outlive `server` listen/stop.
+    void attach(http::server& server, std::string_view sse_path, session_handler on_session)
+    {
+        // http::server matches the full request-target (path + query). Allow an
+        // optional trailing slash and an optional `?...` query (session_id).
+        // Path without trailing slash: drop final `/` then make it optional.
+        auto post_pattern = m_messages_path;
+        if(post_pattern.size() > 1 and post_pattern.back() == '/')
+            post_pattern.pop_back();
+        post_pattern += "/?(\\?.*)?"s;
+
+        server.sse(sse_path).sse(
+            [this, on_session = std::move(on_session)](sse::session& stream, request_view, headers&)
+            {
+                const auto id = make_session_id();
+                auto state = std::make_shared<detail::session_state>(id);
+                {
+                    std::lock_guard lock{m_mutex};
+                    m_sessions[id] = state;
+                }
+
+                const auto endpoint = m_messages_path + "?session_id="s + id;
+                if(not stream.send_event("endpoint"sv, endpoint))
+                {
+                    erase_session(id, state);
+                    return;
+                }
+
+                auto sess = session{state, stream};
+                try
+                {
+                    on_session(sess);
+                }
+                catch(...)
+                {
+                    erase_session(id, state);
+                    throw;
+                }
+                erase_session(id, state);
+            });
+
+        server.post(post_pattern).response(
+            "text/plain"sv,
+            [this](request_view req, body_view body, headers& hdr) -> response_with_headers
+            {
+                (void)hdr;
+                const auto sid = query_param(req, "session_id"sv);
+                if(not sid.has_value() or sid->empty())
+                    return make_error_response(status_bad_request, "session_id is required"sv);
+
+                std::shared_ptr<detail::session_state> state;
+                {
+                    std::lock_guard lock{m_mutex};
+                    const auto it = m_sessions.find(*sid);
+                    if(it == m_sessions.end())
+                        return make_error_response(status_not_found, "Could not find session"sv);
+                    state = it->second;
+                }
+
+                {
+                    std::lock_guard lock{state->mutex};
+                    if(state->closed)
+                        return make_error_response(status_not_found, "Could not find session"sv);
+                    state->inbound.emplace_back(body);
+                }
+                state->cv.notify_one();
+                return make_response(status_accepted, "Accepted"s);
+            });
+    }
+
+    [[nodiscard]] std::size_t active_sessions() const
+    {
+        std::lock_guard lock{m_mutex};
+        return m_sessions.size();
+    }
+
+private:
+
+    static std::string normalize_messages_path(std::string path)
+    {
+        if(path.empty() or path.front() != '/')
+            path.insert(path.begin(), '/');
+        if(path.back() != '/')
+            path.push_back('/');
+        return path;
+    }
+
+    void erase_session(const std::string& id, const std::shared_ptr<detail::session_state>& state)
+    {
+        {
+            std::lock_guard lock{state->mutex};
+            state->closed = true;
+            state->inbound.clear();
+        }
+        state->cv.notify_all();
+        std::lock_guard lock{m_mutex};
+        m_sessions.erase(id);
+    }
+
+    std::string m_messages_path;
+    mutable std::mutex m_mutex;
+    std::flat_map<std::string, std::shared_ptr<detail::session_state>> m_sessions;
+};
+
+} // namespace http::mcp
