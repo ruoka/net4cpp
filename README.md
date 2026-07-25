@@ -123,6 +123,11 @@ Use `html_escaped` for text nodes and attribute values. Use `url_encoded` for qu
 parameter values in `href` and `action` URLs. The HTTP server does not escape
 response bodies automatically.
 
+# SSE / MCP (planned)
+
+Investigation and phased plan for Server-Sent Events and MCP HTTP/SSE on `http::server`:
+[`docs/sse-mcp-implementation-plan.md`](docs/sse-mcp-implementation-plan.md) (branch `feature/sse-mcp-server`).
+
 # WebSocket (v1 spike)
 
 Upgrade is handled inside `http::server` (not as response middleware). Register a path
