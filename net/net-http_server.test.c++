@@ -2000,6 +2000,93 @@ auto register_server_tests()
         };
     };
 
+    // Regression: SSE CORS reflected Origin directly onto the wire, bypassing
+    // write_custom_response_headers (#50). Default MCP-style `http://host:*`
+    // allowlists still match after an embedded CR, enabling header injection.
+    tester::bdd::scenario("SSE CORS omits Origin values with CR/LF/NUL, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An SSE endpoint with a port-wildcard Origin allowlist") = [] {
+            auto server = std::make_shared<http::server>();
+            server->sse("/events").cors([](std::string_view origin) {
+                // Same shape as http::mcp::match_allow_pattern("http://127.0.0.1:*").
+                constexpr auto prefix = "http://127.0.0.1"sv;
+                if(origin == prefix)
+                    return true;
+                return origin.starts_with(prefix)
+                    and origin.size() > prefix.size()
+                    and origin[prefix.size()] == ':';
+            }).sse([](http::sse::session& session, auto, auto&) {
+                session.send_comment("ok");
+            });
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A client sends Origin with an embedded CR") = [server] {
+                auto headers_raw = std::make_shared<std::string>();
+
+                std::promise<void> started;
+                auto started_future = started.get_future();
+                std::thread server_thread{[server, &started] {
+                    try
+                    {
+                        started.set_value();
+                        server->listen("8104");
+                    }
+                    catch(...)
+                    {
+                    }
+                }};
+
+                using namespace std::chrono_literals;
+                if(started_future.wait_for(2s) == std::future_status::ready)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    try
+                    {
+                        auto stream = connect("127.0.0.1", "8104");
+                        // Embedded CR after a matching port suffix: allowlist
+                        // would accept this, but reflecting it splits headers.
+                        stream << "GET /events HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:8104" << net::crlf
+                               << "Accept: text/event-stream" << net::crlf
+                               << "Origin: http://127.0.0.1:8104\rX-Evil: 1" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+
+                        std::string line;
+                        auto line_count = 0;
+                        while(line_count < 40 and stream and std::getline(stream, line))
+                        {
+                            *headers_raw += line;
+                            *headers_raw += '\n';
+                            ++line_count;
+                            if(line.empty() or line == "\r")
+                                break;
+                        }
+                    }
+                    catch(...)
+                    {
+                    }
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if(server_thread.joinable())
+                    server_thread.join();
+
+                tester::bdd::then("ACAO is omitted and no injected header appears") =
+                    [headers_raw] {
+                        check_contains(*headers_raw, "Content-Type: text/event-stream");
+                        check_false(headers_raw->contains("Access-Control-Allow-Origin"sv));
+                        check_false(headers_raw->contains("X-Evil"sv));
+                        check_false(headers_raw->contains("x-evil"sv));
+                    };
+            };
+        };
+    };
+
     return true;
 }
 
