@@ -1579,6 +1579,224 @@ auto register_server_tests()
         };
     };
 
+    // Regression: custom response headers used to be written after the server's
+    // Content-Length / Connection. Echoing the request Content-Length (copy-all
+    // headers) produced two CL values — proxies that prefer the last desync.
+    tester::bdd::scenario("Custom response headers omit echoed Content-Length, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("A handler that copies request headers into the response") = [] {
+            auto server = std::make_shared<http::server>();
+            server->get("/echo-hdrs").response_handler("text/plain",
+                [](std::string_view, std::string_view, http::headers& hdr) {
+                    auto out = http::headers{};
+                    for(const auto& [name, value] : hdr)
+                        out.set(name, value);
+                    out.set("x-ok"s, "1"s);
+                    return http::make_response(http::status_ok, "OK"s, std::make_optional(out));
+                });
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A GET declares Content-Length: 0") = [server] {
+                auto response_headers = std::make_shared<std::string>("");
+
+                std::promise<void> started;
+                auto started_future = started.get_future();
+
+                std::thread server_thread{[server, &started]{
+                    try {
+                        started.set_value();
+                        server->listen("8097");
+                    } catch(...) {}
+                }};
+
+                using namespace std::chrono_literals;
+                if (started_future.wait_for(2s) == std::future_status::ready) {
+                    std::this_thread::sleep_for(200ms);
+
+                    try {
+                        auto stream = connect("127.0.0.1", "8097");
+                        stream << "GET /echo-hdrs HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:8097" << net::crlf
+                               << "Content-Length: 0" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+
+                        std::string line;
+                        int line_count = 0;
+                        while(line_count < 40 and stream and std::getline(stream, line)) {
+                            *response_headers += line + "\n";
+                            line_count++;
+                            if(line.empty() or line == "\r") break;
+                        }
+                    } catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if (server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("Response has a single Content-Length and keeps safe custom headers") =
+                    [response_headers] {
+                        check_contains(*response_headers, "Content-Length: 2");
+                        check_contains(*response_headers, "x-ok: 1");
+                        // Must not re-emit the request's content-length: 0.
+                        check_false(response_headers->contains("content-length: 0"));
+                        check_false(response_headers->contains("Content-Length: 0"));
+                    };
+            };
+        };
+    };
+
+    // Regression: CR/LF/NUL in custom header values used to be written verbatim
+    // (response splitting). Includes CORS Origin bare-CR reflection paths.
+    tester::bdd::scenario("Custom response headers omit CR/LF values, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("A handler that returns a header value containing CR") = [] {
+            auto server = std::make_shared<http::server>();
+            server->get("/split").response_handler("text/plain",
+                [](std::string_view, std::string_view, http::headers&) {
+                    auto out = http::headers{};
+                    out.set("x-injected"s, "ok\rX-Evil: 1"s);
+                    out.set("x-safe"s, "yes"s);
+                    return http::make_response(http::status_ok, "OK"s, std::make_optional(out));
+                });
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A GET hits the route") = [server] {
+                auto response_headers = std::make_shared<std::string>("");
+
+                std::promise<void> started;
+                auto started_future = started.get_future();
+
+                std::thread server_thread{[server, &started]{
+                    try {
+                        started.set_value();
+                        server->listen("8098");
+                    } catch(...) {}
+                }};
+
+                using namespace std::chrono_literals;
+                if (started_future.wait_for(2s) == std::future_status::ready) {
+                    std::this_thread::sleep_for(200ms);
+
+                    try {
+                        auto stream = connect("127.0.0.1", "8098");
+                        stream << "GET /split HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:8098" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+
+                        std::string line;
+                        int line_count = 0;
+                        while(line_count < 40 and stream and std::getline(stream, line)) {
+                            *response_headers += line + "\n";
+                            line_count++;
+                            if(line.empty() or line == "\r") break;
+                        }
+                    } catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if (server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("Unsafe header is omitted and safe custom header remains") =
+                    [response_headers] {
+                        check_contains(*response_headers, "x-safe: yes");
+                        check_false(response_headers->contains("x-injected"));
+                        check_false(response_headers->contains("X-Evil"));
+                    };
+            };
+        };
+    };
+
+    // Regression: other hop-by-hop / framing-adjacent names must not be echoed
+    // into the response either (Upgrade, Keep-Alive, TE, Trailer, proxy-*).
+    tester::bdd::scenario("Custom response headers omit hop-by-hop names, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("A handler that returns hop-by-hop custom headers") = [] {
+            auto server = std::make_shared<http::server>();
+            server->get("/hop").response_handler("text/plain",
+                [](std::string_view, std::string_view, http::headers&) {
+                    auto out = http::headers{};
+                    out.set("Upgrade"s, "websocket"s);
+                    out.set("Keep-Alive"s, "timeout=5"s);
+                    out.set("TE"s, "trailers"s);
+                    out.set("Trailer"s, "Expires"s);
+                    out.set("Proxy-Connection"s, "keep-alive"s);
+                    out.set("Proxy-Authenticate"s, "Basic"s);
+                    out.set("Proxy-Authorization"s, "Basic abc"s);
+                    out.set("Transfer-Encoding"s, "chunked"s);
+                    out.set("x-ok"s, "1"s);
+                    return http::make_response(http::status_ok, "OK"s, std::make_optional(out));
+                });
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A GET hits the route") = [server] {
+                auto response_headers = std::make_shared<std::string>("");
+
+                std::promise<void> started;
+                auto started_future = started.get_future();
+
+                std::thread server_thread{[server, &started]{
+                    try {
+                        started.set_value();
+                        server->listen("8099");
+                    } catch(...) {}
+                }};
+
+                using namespace std::chrono_literals;
+                if (started_future.wait_for(2s) == std::future_status::ready) {
+                    std::this_thread::sleep_for(200ms);
+
+                    try {
+                        auto stream = connect("127.0.0.1", "8099");
+                        stream << "GET /hop HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:8099" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+
+                        std::string line;
+                        int line_count = 0;
+                        while(line_count < 40 and stream and std::getline(stream, line)) {
+                            *response_headers += line + "\n";
+                            line_count++;
+                            if(line.empty() or line == "\r") break;
+                        }
+                    } catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if (server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("Hop-by-hop names are omitted and safe custom header remains") =
+                    [response_headers] {
+                        check_contains(*response_headers, "x-ok: 1");
+                        check_contains(*response_headers, "Content-Length: 2");
+                        check_false(response_headers->contains("Upgrade"));
+                        check_false(response_headers->contains("Keep-Alive"));
+                        check_false(response_headers->contains("TE:"));
+                        check_false(response_headers->contains("Trailer"));
+                        check_false(response_headers->contains("Proxy-Connection"));
+                        check_false(response_headers->contains("Proxy-Authenticate"));
+                        check_false(response_headers->contains("Proxy-Authorization"));
+                        check_false(response_headers->contains("Transfer-Encoding"));
+                        check_false(response_headers->contains("chunked"));
+                    };
+            };
+        };
+    };
+
     return true;
 }
 
