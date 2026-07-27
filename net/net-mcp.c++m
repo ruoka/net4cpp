@@ -726,11 +726,20 @@ private:
 
     void run_session(session& sess)
     {
+        // recv(0) waits forever on the inbound CV and is not woken by a TCP
+        // half-close. Without a periodic write probe, every client disconnect
+        // leaks the handler thread and leaves the session_id in m_sessions
+        // until an unrelated POST happens to arrive.
+        constexpr auto heartbeat = std::chrono::seconds{1};
         while(not sess.closed())
         {
-            auto msg = sess.recv(std::chrono::seconds{0});
+            auto msg = sess.recv(heartbeat);
             if(not msg)
-                break;
+            {
+                if(not sess.send_comment())
+                    break;
+                continue;
+            }
             if(auto reply = handle_json_rpc(*msg, m_info, m_list_tools, m_call_tool))
             {
                 if(not sess.send_message(*reply))

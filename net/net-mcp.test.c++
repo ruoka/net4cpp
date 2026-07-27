@@ -354,6 +354,94 @@ auto register_mcp_tests()
         };
     };
 
+    test_case("MCP protocol server tears down session on SSE disconnect, [net]") = []
+    {
+        if(not network_tests_enabled())
+            return;
+
+        section("client close without POST releases session within heartbeat") = []
+        {
+            using namespace std::chrono_literals;
+
+            auto http = std::make_shared<http::server>();
+            auto mcp = std::make_shared<server>("/messages/");
+            mcp->attach(*http, "/sse");
+            http->timeout(std::chrono::seconds{1});
+
+            std::promise<void> started;
+            auto started_future = started.get_future();
+            std::thread server_thread{[http, &started] {
+                try
+                {
+                    started.set_value();
+                    http->listen("8103");
+                }
+                catch(...)
+                {
+                }
+            }};
+
+            auto saw_endpoint = false;
+            if(started_future.wait_for(2s) == std::future_status::ready)
+            {
+                std::this_thread::sleep_for(200ms);
+                try
+                {
+                    auto stream = net::connect("127.0.0.1", "8103");
+                    stream << "GET /sse HTTP/1.1" << net::crlf
+                           << "Host: 127.0.0.1:8103" << net::crlf
+                           << "Accept: text/event-stream" << net::crlf
+                           << "Connection: close" << net::crlf
+                           << net::crlf
+                           << net::flush;
+
+                    std::string line;
+                    while(stream and std::getline(stream, line))
+                    {
+                        if(not line.empty() and line.back() == '\r')
+                            line.pop_back();
+                        if(line.empty())
+                            break;
+                    }
+
+                    auto body = ""s;
+                    char ch{};
+                    while(stream.get(ch))
+                    {
+                        body.push_back(ch);
+                        for(const auto& [ev, data] : parse_sse_events(body))
+                        {
+                            if(ev == "endpoint")
+                            {
+                                saw_endpoint = true;
+                                break;
+                            }
+                        }
+                        if(saw_endpoint)
+                            break;
+                        if(body.size() > 4096)
+                            break;
+                    }
+                    stream.close();
+                }
+                catch(...)
+                {
+                }
+
+                // Heartbeat is 1s; allow a few intervals for write-fail + erase.
+                for(auto i = 0; i < 50 and mcp->transport().active_sessions() != 0; ++i)
+                    std::this_thread::sleep_for(100ms);
+                http->stop();
+            }
+
+            if(server_thread.joinable())
+                server_thread.join();
+
+            check_true(saw_endpoint);
+            check_eq(mcp->transport().active_sessions(), 0u);
+        };
+    };
+
     test_case("MCP protocol server initialize and tools/list over SSE, [net]") = []
     {
         if(not network_tests_enabled())
