@@ -600,12 +600,12 @@ auto register_mcp_tests()
 
             auto http = std::make_shared<http::server>();
             auto mcp = std::make_shared<server>("/messages/");
-            mcp->request_guard([](request_view, headers& hdr) -> std::optional<response_with_headers>
+            mcp->request_guard([](http::request_view, http::headers& hdr) -> std::optional<http::response_with_headers>
                 {
                     if(not hdr.contains("authorization"s)
                         or hdr["authorization"s] != "Bearer secret")
                     {
-                        return make_error_response(status_unauthorized, "Unauthorized"sv);
+                        return http::make_error_response(http::status_unauthorized, "Unauthorized"sv);
                     }
                     return std::nullopt;
                 })
