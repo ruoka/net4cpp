@@ -452,19 +452,28 @@ private:
     }
 
     // Custom response headers are appended after the server's own Content-Length /
-    // Connection lines. Echoing request Content-Length (a common "copy headers to
-    // response" pattern) or allowing CR/LF/NUL in values yields duplicate framing
-    // or response splitting — proxies that prefer the last CL desync from the body.
+    // Connection lines. Echoing request framing/hop-by-hop headers (a common "copy
+    // headers to response" pattern) or allowing CR/LF/NUL in values yields duplicate
+    // framing or response splitting — proxies that prefer the last CL desync from
+    // the body.
     static bool is_unsafe_response_header(std::string_view name, std::string_view value)
     {
         auto lower = std::string{name};
         utils::ascii_to_lower(lower);
+        // Framing + RFC 9110 hop-by-hop names (and legacy Keep-Alive / Proxy-Connection).
         if(lower == "content-length"sv or lower == "transfer-encoding"sv
-           or lower == "connection"sv)
+           or lower == "connection"sv or lower == "keep-alive"sv
+           or lower == "upgrade"sv or lower == "te"sv
+           or lower == "trailer"sv or lower == "trailers"sv
+           or lower == "proxy-connection"sv
+           or lower == "proxy-authenticate"sv
+           or lower == "proxy-authorization"sv)
             return true;
 
-        const auto has_ctl = [](std::string_view s) {
-            return std::ranges::any_of(s, [](char c) {
+        const auto has_ctl = [](std::string_view s)
+        {
+            return std::ranges::any_of(s, [](char c)
+            {
                 return c == '\r' or c == '\n' or c == '\0';
             });
         };
