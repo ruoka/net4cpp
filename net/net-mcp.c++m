@@ -671,6 +671,15 @@ public:
         return *this;
     }
 
+    // Optional pre-check on GET /sse and POST /messages/ (before Host/Origin).
+    // Use for Bearer PAT / application auth so MCP is not an unauthenticated
+    // side door when the HTTP API otherwise requires credentials.
+    server& request_guard(request_gate guard)
+    {
+        m_request_guard = std::move(guard);
+        return *this;
+    }
+
     // Register SSE + POST on `http`. `*this` must outlive listen/stop.
     void attach(http::server& http, std::string_view sse_path = "/sse")
     {
@@ -682,8 +691,14 @@ public:
                 m_allowed_origins = default_allowed_origins();
         }
 
-        auto gate = [this](request_view, headers& hdr) -> std::optional<response_with_headers>
+        auto gate = [this](request_view req, headers& hdr) -> std::optional<response_with_headers>
         {
+            if(m_request_guard)
+            {
+                if(auto denied = m_request_guard(req, hdr))
+                    return denied;
+            }
+
             if(not m_dns_rebinding_protection)
                 return std::nullopt;
 
@@ -754,6 +769,7 @@ private:
     call_tool_fn m_call_tool;
     std::vector<std::string> m_allowed_hosts;
     std::vector<std::string> m_allowed_origins;
+    request_gate m_request_guard;
     bool m_dns_rebinding_protection = true;
 };
 

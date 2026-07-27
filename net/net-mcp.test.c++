@@ -589,6 +589,124 @@ auto register_mcp_tests()
         };
     };
 
+    test_case("MCP protocol server request_guard runs before Host checks, [net]") = []
+    {
+        if(not network_tests_enabled())
+            return;
+
+        section("missing Authorization is rejected with 401") = []
+        {
+            using namespace std::chrono_literals;
+
+            auto http = std::make_shared<http::server>();
+            auto mcp = std::make_shared<server>("/messages/");
+            mcp->request_guard([](request_view, headers& hdr) -> std::optional<response_with_headers>
+                {
+                    if(not hdr.contains("authorization"s)
+                        or hdr["authorization"s] != "Bearer secret")
+                    {
+                        return make_error_response(status_unauthorized, "Unauthorized"sv);
+                    }
+                    return std::nullopt;
+                })
+                .attach(*http, "/sse");
+            http->timeout(std::chrono::seconds{1});
+
+            std::promise<void> started;
+            auto started_future = started.get_future();
+            std::thread server_thread{[http, &started] {
+                try
+                {
+                    started.set_value();
+                    http->listen("8104");
+                }
+                catch(...)
+                {
+                }
+            }};
+
+            auto denied_status = ""s;
+            auto allowed_status = ""s;
+            auto saw_endpoint = false;
+
+            if(started_future.wait_for(2s) == std::future_status::ready)
+            {
+                std::this_thread::sleep_for(200ms);
+                try
+                {
+                    {
+                        auto denied = net::connect("127.0.0.1", "8104");
+                        denied << "GET /sse HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:8104" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+                        std::string line;
+                        if(std::getline(denied, line))
+                        {
+                            if(not line.empty() and line.back() == '\r')
+                                line.pop_back();
+                            denied_status = line;
+                        }
+                    }
+
+                    auto stream = net::connect("127.0.0.1", "8104");
+                    stream << "GET /sse HTTP/1.1" << net::crlf
+                           << "Host: 127.0.0.1:8104" << net::crlf
+                           << "Authorization: Bearer secret" << net::crlf
+                           << "Accept: text/event-stream" << net::crlf
+                           << "Connection: close" << net::crlf
+                           << net::crlf
+                           << net::flush;
+
+                    std::string line;
+                    if(std::getline(stream, line))
+                    {
+                        if(not line.empty() and line.back() == '\r')
+                            line.pop_back();
+                        allowed_status = line;
+                    }
+                    while(stream and std::getline(stream, line))
+                    {
+                        if(not line.empty() and line.back() == '\r')
+                            line.pop_back();
+                        if(line.empty())
+                            break;
+                    }
+
+                    auto body = ""s;
+                    char ch{};
+                    while(stream.get(ch))
+                    {
+                        body.push_back(ch);
+                        if(body.find("event: endpoint") != std::string::npos
+                            or body.find("event:endpoint") != std::string::npos)
+                        {
+                            saw_endpoint = true;
+                            break;
+                        }
+                        if(body.size() > 4096)
+                            break;
+                    }
+                    stream.close();
+                }
+                catch(...)
+                {
+                }
+
+                std::this_thread::sleep_for(200ms);
+                http->stop();
+            }
+
+            if(server_thread.joinable())
+                server_thread.join();
+
+            check_contains(denied_status, "401");
+            check_contains(allowed_status, "200");
+            check_true(saw_endpoint);
+        };
+    };
+
     return true;
 }
 
