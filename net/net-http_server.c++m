@@ -451,6 +451,36 @@ private:
 #endif
     }
 
+    // Custom response headers are appended after the server's own Content-Length /
+    // Connection lines. Echoing request Content-Length (a common "copy headers to
+    // response" pattern) or allowing CR/LF/NUL in values yields duplicate framing
+    // or response splitting — proxies that prefer the last CL desync from the body.
+    static bool is_unsafe_response_header(std::string_view name, std::string_view value)
+    {
+        auto lower = std::string{name};
+        utils::ascii_to_lower(lower);
+        if(lower == "content-length"sv or lower == "transfer-encoding"sv
+           or lower == "connection"sv)
+            return true;
+
+        const auto has_ctl = [](std::string_view s) {
+            return std::ranges::any_of(s, [](char c) {
+                return c == '\r' or c == '\n' or c == '\0';
+            });
+        };
+        return has_ctl(name) or has_ctl(value);
+    }
+
+    static void write_custom_response_headers(std::ostream& os, const headers& hdrs)
+    {
+        for(const auto& [name, value] : hdrs)
+        {
+            if(is_unsafe_response_header(name, value))
+                continue;
+            os << name << ": " << value << net::crlf;
+        }
+    }
+
     const auto& host() const
     {
         static auto s_host = []() {
@@ -1028,7 +1058,7 @@ private:
                                << "Connection: " << (close_connection ? "close"sv : "keep-alive"sv) << net::crlf;
 
                         if(custom_headers.has_value())
-                            stream << custom_headers.value();
+                            write_custom_response_headers(stream, custom_headers.value());
 
                         stream << "Cache-Control: private"                                    << net::crlf
                                << net::crlf
