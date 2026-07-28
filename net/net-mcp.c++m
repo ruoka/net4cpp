@@ -177,6 +177,15 @@ inline std::optional<std::string> unescape_json_string(std::string_view body)
 // from the escaped spelling while this scanner still dispatches the earlier
 // ASCII `"name":"delete_all"`.
 //
+// Only strings in key position (after `{` or `,` at depth 1) are members.
+// Treating any depth-1 `"…":` as a key made invalid
+// `{"x":"method":"tools/call",…}` invent a method that `json.loads` rejects.
+//
+// Trailing non-whitespace after the first top-level value fails closed:
+// `{"id":1}{"method":"tools/call",…}` is one message to this scanner but two
+// values to Python `raw_decode` / nlohmann `operator>>`. Auth that only sees
+// the prefix would allow while dispatch still invoked the later call.
+//
 // Deliberately not using xson/json4cpp: MCP needs only a JSON-RPC field
 // subset, and net4cpp should stay free of a JSON library dependency.
 inline std::optional<std::size_t> find_key(std::string_view json, std::string_view key)
@@ -185,6 +194,10 @@ inline std::optional<std::size_t> find_key(std::string_view json, std::string_vi
     auto in_string = false;
     auto escape = false;
     auto found = std::optional<std::size_t>{};
+    // Last structural delimiter that puts depth-1 in key position (`{` or `,`).
+    // Cleared to `:` after accepting a member name so the value string is not
+    // itself treated as a key when invalid JSON continues with another `:`.
+    auto key_pos_delim = '\0';
     for(std::size_t i = 0; i < json.size(); ++i)
     {
         const auto ch = json[i];
@@ -200,7 +213,7 @@ inline std::optional<std::size_t> find_key(std::string_view json, std::string_vi
         }
         if(ch == '"')
         {
-            if(depth == 1)
+            if(depth == 1 and (key_pos_delim == '{' or key_pos_delim == ','))
             {
                 // Member name if this string is followed by `:`. Compare the
                 // unescaped name to `key` so `\u006e`-aliases count as dups.
@@ -219,29 +232,43 @@ inline std::optional<std::size_t> find_key(std::string_view json, std::string_vi
                 if(j >= json.size())
                     return std::nullopt;
                 auto after = trim_ws(json.substr(j + 1));
-                if(not after.empty() and after.front() == ':')
+                if(after.empty() or after.front() != ':')
+                    return std::nullopt;
+                auto decoded = unescape_json_string(json.substr(i + 1, j - (i + 1)));
+                if(not decoded)
+                    return std::nullopt;
+                if(*decoded == key)
                 {
-                    auto decoded = unescape_json_string(json.substr(i + 1, j - (i + 1)));
-                    if(not decoded)
+                    if(found.has_value())
                         return std::nullopt;
-                    if(*decoded == key)
-                    {
-                        if(found.has_value())
-                            return std::nullopt;
-                        found = i;
-                    }
+                    found = i;
                 }
+                key_pos_delim = ':';
             }
             in_string = true;
             continue;
         }
         if(ch == '{' or ch == '[')
+        {
             ++depth;
+            if(depth == 1 and ch == '{')
+                key_pos_delim = '{';
+        }
         else if(ch == '}' or ch == ']')
         {
             if(depth > 0)
                 --depth;
+            if(depth == 0)
+            {
+                // One JSON-RPC value per message; reject concatenated twins.
+                auto rest = trim_ws(json.substr(i + 1));
+                if(not rest.empty())
+                    return std::nullopt;
+                break;
+            }
         }
+        else if(depth == 1 and ch == ',')
+            key_pos_delim = ',';
     }
     return found;
 }
