@@ -102,17 +102,50 @@ inline std::string_view trim_ws(std::string_view s)
     return s;
 }
 
+// Locate `"key"` as a top-level object member only (depth == 1). Nested
+// objects must not contribute keys: for tools/call, `arguments.name` must
+// not shadow `params.name` when clients serialize `arguments` before `name`
+// (alphabetical / BTreeMap key order).
+//
+// Deliberately not using xson/json4cpp: MCP needs only a JSON-RPC field
+// subset, and net4cpp should stay free of a JSON library dependency.
 inline std::optional<std::size_t> find_key(std::string_view json, std::string_view key)
 {
     const auto needle = "\""s + std::string{key} + "\"";
-    auto pos = json.find(needle);
-    while(pos != std::string_view::npos)
+    auto depth = 0;
+    auto in_string = false;
+    auto escape = false;
+    for(std::size_t i = 0; i < json.size(); ++i)
     {
-        // Avoid matching inside other strings by requiring a preceding structural char.
-        if(pos == 0 or json[pos - 1] == '{' or json[pos - 1] == ',' or json[pos - 1] == ' '
-           or json[pos - 1] == '\n' or json[pos - 1] == '\r' or json[pos - 1] == '\t')
-            return pos;
-        pos = json.find(needle, pos + 1);
+        const auto ch = json[i];
+        if(in_string)
+        {
+            if(escape)
+                escape = false;
+            else if(ch == '\\')
+                escape = true;
+            else if(ch == '"')
+                in_string = false;
+            continue;
+        }
+        if(ch == '"')
+        {
+            if(depth == 1 and json.substr(i).starts_with(needle))
+            {
+                auto after = trim_ws(json.substr(i + needle.size()));
+                if(not after.empty() and after.front() == ':')
+                    return i;
+            }
+            in_string = true;
+            continue;
+        }
+        if(ch == '{' or ch == '[')
+            ++depth;
+        else if(ch == '}' or ch == ']')
+        {
+            if(depth > 0)
+                --depth;
+        }
     }
     return std::nullopt;
 }

@@ -159,8 +159,7 @@ Notes:
 - Flush after each event/comment (session does this). Proxies that buffer SSE may
   need `X-Accel-Buffering: no` (optional app header — not set by default).
 - After the SSE stream ends, the connection is closed (no keep-alive reuse).
-- MCP over SSE transport (`http::mcp::sse_transport`) is on branch
-  `feature/mcp-sse-transport`; see
+- MCP over SSE: see `# MCP SSE (v1 protocol)` below and
   [`docs/sse-mcp-implementation-plan.md`](docs/sse-mcp-implementation-plan.md).
 
 # MCP SSE (v1 protocol)
@@ -174,6 +173,14 @@ Legacy MCP HTTP+SSE (compatible with `mcp.server.sse.SseServerTransport`):
 `http::mcp::server` runs `initialize` / `ping` / `tools/list` / `tools/call` and
 applies Host/Origin allowlists (localhost defaults; disable with
 `dns_rebinding_protection(false)`). Apps supply tool callbacks only.
+
+JSON-RPC dispatch uses a small in-module scanner (`find_key` / field helpers), not
+an external JSON library. Keys are matched only as top-level object members
+(depth-aware) so nested fields such as `params.arguments.name` cannot shadow
+`params.name` when clients serialize maps alphabetically. Keeping this
+self-contained avoids pulling json4cpp/`xson` into net4cpp — net stays
+network-only (plus `tester`); apps like YarDB already depend on `xson` and can
+parse richer payloads in tool callbacks if needed.
 
 ```cpp
 import net;

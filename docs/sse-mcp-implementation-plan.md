@@ -243,7 +243,7 @@ Today: one thread per accepted connection. SSE fits that model (handler blocks i
 |--------|----------------|
 | `net:sse` | Framing + `session` writer |
 | `net:http_server` | `server.sse(path).sse(cb)` registration + takeover wiring |
-| `net:mcp` (new, in-tree) | Sessions, JSON-RPC, tool callbacks, Host/Origin helpers — **start in net**; extract to a separate repo only if it grows beyond transport/dispatch |
+| `net:mcp` (new, in-tree) | Sessions, JSON-RPC, tool callbacks, Host/Origin helpers — **start in net**; extract to a separate repo only if it grows beyond transport/dispatch. JSON-RPC uses a minimal in-module scanner (no `xson`/json4cpp dependency): keep net standalone; apps that already use `xson` can parse tool arguments themselves. |
 | App (YarDB) | Tool implementations; Python `*_mcp.py` kept as reference |
 
 Follow existing snake_case / modules-only / Allman style; co-locate `*.test.c++`.
