@@ -627,12 +627,14 @@ auto register_mcp_tests()
 
             auto http = std::make_shared<http::server>();
             auto mcp = std::make_shared<server>("/messages/");
-            mcp->authorize([](request_view, headers& hdr) -> std::optional<response_with_headers> {
+            mcp->authorize([](::http::request_view, ::http::headers& hdr)
+                -> std::optional<::http::response_with_headers>
+            {
                 std::string_view authorization{};
                 if(hdr.contains("authorization"s))
                     authorization = hdr["authorization"s];
                 if(authorization != "Bearer secret"sv)
-                    return make_error_response(status_unauthorized, "Unauthorized"sv);
+                    return ::http::make_error_response(::http::status_unauthorized, "Unauthorized"sv);
                 return std::nullopt;
             });
             mcp->attach(*http, "/sse");
