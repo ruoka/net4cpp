@@ -372,6 +372,44 @@ auto register_mcp_tests()
             check_false(reply->contains("Unknown tool"sv));
         };
 
+        section("tools/call rejects duplicate params.name (authorize/dispatch confusion)") = [info]
+        {
+            // First-wins scan + last-wins library parsers disagree on duplicate
+            // keys. Body-aware authorize (#55) often uses Python/nlohmann
+            // (last-wins); without reject, auth can allow "ping" while dispatch
+            // invokes earlier "delete_all". Fail closed: no tool call.
+            auto called = std::make_shared<std::string>();
+            const auto list_both = [] {
+                return std::vector<tool_spec>{
+                    {.name = "ping"s, .description = "Safe"s},
+                    {.name = "delete_all"s, .description = "Dangerous"s},
+                };
+            };
+            const auto call = [called](std::string_view name, std::string_view) -> tool_result {
+                *called = std::string{name};
+                return {.text = "ok"s};
+            };
+
+            const auto dup_name = handle_json_rpc(
+                R"({"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"delete_all","name":"ping","arguments":{}}})",
+                info,
+                list_both,
+                call);
+            require_true(dup_name.has_value());
+            check_true(called->empty());
+            check_contains(*dup_name, R"("code":-32602)");
+            check_contains(*dup_name, "Missing tool name");
+
+            const auto dup_params = handle_json_rpc(
+                R"({"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"delete_all"},"params":{"name":"ping","arguments":{}}})",
+                info,
+                list_both,
+                call);
+            require_true(dup_params.has_value());
+            check_true(called->empty());
+            check_contains(*dup_params, R"("code":-32602)");
+        };
+
         section("Host/Origin allow patterns") = []
         {
             check_true(match_allow_pattern("127.0.0.1:8101", "127.0.0.1:*"));
