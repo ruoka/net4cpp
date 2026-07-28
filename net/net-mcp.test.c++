@@ -410,6 +410,47 @@ auto register_mcp_tests()
             check_contains(*dup_params, R"("code":-32602)");
         };
 
+        section("tools/call rejects \\u-escaped key aliases (authorize/dispatch confusion)") = [info]
+        {
+            // Python/nlohmann unescape keys before dedupe: "\u006eame" == "name"
+            // (last-wins → ping). A literal-only scanner still saw ASCII
+            // "name":"delete_all" and would invoke the privileged tool after
+            // body-aware authorize allowed ping. Fail closed: no tool call.
+            auto called = std::make_shared<std::string>();
+            const auto list_both = [] {
+                return std::vector<tool_spec>{
+                    {.name = "ping"s, .description = "Safe"s},
+                    {.name = "delete_all"s, .description = "Dangerous"s},
+                };
+            };
+            const auto call = [called](std::string_view name, std::string_view) -> tool_result {
+                *called = std::string{name};
+                return {.text = "ok"s};
+            };
+
+            const auto alias_name = handle_json_rpc(
+                "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"tools/call\","
+                "\"params\":{\"name\":\"delete_all\",\"\\u006eame\":\"ping\",\"arguments\":{}}}",
+                info,
+                list_both,
+                call);
+            require_true(alias_name.has_value());
+            check_true(called->empty());
+            check_contains(*alias_name, R"("code":-32602)");
+
+            // Same confusion on method: last-wins authorize sees "ping",
+            // literal-first dispatch would still run tools/call.
+            const auto alias_method = handle_json_rpc(
+                "{\"jsonrpc\":\"2.0\",\"id\":12,\"method\":\"tools/call\","
+                "\"\\u006dethod\":\"ping\",\"params\":{\"name\":\"delete_all\",\"arguments\":{}}}",
+                info,
+                list_both,
+                call);
+            require_true(alias_method.has_value());
+            check_true(called->empty());
+            check_contains(*alias_method, R"("code":-32600)");
+        };
+
         section("Host/Origin allow patterns") = []
         {
             check_true(match_allow_pattern("127.0.0.1:8101", "127.0.0.1:*"));
