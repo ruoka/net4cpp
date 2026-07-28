@@ -855,8 +855,10 @@ private:
                                        << "Content-Type: " << m_content_type << net::crlf
                                        << "Content-Length: " << body.size() << net::crlf
                                        << "Connection: close" << net::crlf;
+                                // Same filter as normal responses (#50): gate deny
+                                // must not emit framing/hop-by-hop names or CR/LF/NUL.
                                 if(custom_h.has_value())
-                                    stream << custom_h.value();
+                                    write_custom_response_headers(stream, custom_h.value());
                                 stream << net::crlf << body << net::flush;
                                 break;
                             }
@@ -875,6 +877,10 @@ private:
                         // when the controller has a CORS origin predicate (same
                         // allowlist as cors_middleware; helpers live here to avoid
                         // a http_server ↔ middlewares import cycle).
+                        // Reflect Origin only when the value is free of CR/LF/NUL —
+                        // otherwise this bypasses write_custom_response_headers (#50)
+                        // and default MCP `host:*` / `http://host:*` patterns still
+                        // match after an embedded CR (response header injection).
                         stream << "HTTP/1.1 " << status_ok << net::crlf
                                << "Date: " << date() << net::crlf
                                << "Server: " << host() << net::crlf
@@ -884,7 +890,8 @@ private:
                         if(sse_ctrl.has_cors_origin() and hs.contains("origin"s))
                         {
                             const auto origin = hs["origin"s];
-                            if(sse_ctrl.cors_origin()(origin))
+                            if(not is_unsafe_response_header("access-control-allow-origin"sv, origin)
+                               and sse_ctrl.cors_origin()(origin))
                             {
                                 stream << "Access-Control-Allow-Origin: " << origin << net::crlf
                                        << "Access-Control-Allow-Credentials: true" << net::crlf;
