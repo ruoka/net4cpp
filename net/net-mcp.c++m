@@ -704,6 +704,15 @@ public:
         return *this;
     }
 
+    // Optional app auth (e.g. Bearer PAT). Runs after Host/Origin on SSE open and
+    // every POST /messages/. Net does not invent a second PAT system — apps supply
+    // the same check they use on ordinary HTTP routes.
+    server& authorize(request_gate gate)
+    {
+        m_authorize = std::move(gate);
+        return *this;
+    }
+
     // Register SSE + POST on `http`. `*this` must outlive listen/stop.
     void attach(http::server& http, std::string_view sse_path = "/sse")
     {
@@ -715,17 +724,23 @@ public:
                 m_allowed_origins = default_allowed_origins();
         }
 
-        auto gate = [this](request_view, headers& hdr) -> std::optional<response_with_headers>
+        auto gate = [this](request_view req, headers& hdr) -> std::optional<response_with_headers>
         {
-            if(not m_dns_rebinding_protection)
-                return std::nullopt;
+            if(m_dns_rebinding_protection)
+            {
+                if(not hdr.contains("host"s) or not value_allowed(hdr["host"s], m_allowed_hosts))
+                    return make_error_response(status_forbidden, "Invalid Host header"sv);
 
-            if(not hdr.contains("host"s) or not value_allowed(hdr["host"s], m_allowed_hosts))
-                return make_error_response(status_forbidden, "Invalid Host header"sv);
+                // Origin is optional (non-browser clients); when present it must match.
+                if(hdr.contains("origin"s) and not value_allowed(hdr["origin"s], m_allowed_origins))
+                    return make_error_response(status_forbidden, "Invalid Origin header"sv);
+            }
 
-            // Origin is optional (non-browser clients); when present it must match.
-            if(hdr.contains("origin"s) and not value_allowed(hdr["origin"s], m_allowed_origins))
-                return make_error_response(status_forbidden, "Invalid Origin header"sv);
+            if(m_authorize)
+            {
+                if(auto denied = m_authorize(req, hdr))
+                    return denied;
+            }
 
             return std::nullopt;
         };
@@ -788,6 +803,7 @@ private:
     std::vector<std::string> m_allowed_hosts;
     std::vector<std::string> m_allowed_origins;
     bool m_dns_rebinding_protection = true;
+    request_gate m_authorize;
 };
 
 } // namespace http::mcp
