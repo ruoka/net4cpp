@@ -384,15 +384,20 @@ public:
                     {
                         continue;
                     }
-                    // FD/memory pressure is transient: once handlers release
-                    // sockets, accept can succeed again. Rethrowing here used to
-                    // permanently stop the server after a single EMFILE.
+                    // FD/memory/thread pressure is transient: once handlers
+                    // release sockets/threads, accept + spawn can succeed again.
+                    // Rethrowing here used to permanently stop the server after
+                    // a single EMFILE. EAGAIN also covers std::thread failing to
+                    // start (errc::resource_unavailable_try_again) after accept
+                    // already succeeded — same permanent-stop footgun as EMFILE.
                     const auto err = e.code().value();
                     if(err == net::posix::emfile
                        or err == net::posix::enfile
                        or err == net::posix::enobufs
                        or err == net::posix::enomem
-                       or err == net::posix::econnaborted)
+                       or err == net::posix::econnaborted
+                       or err == net::posix::eagain
+                       or err == net::posix::ewouldblock)
                     {
                         net::slog << net::warning("HTTP_ACCEPT_TRANSIENT") << "transient accept failure, retrying: " << e.what()
                                   << std::pair{"errno", err}
@@ -404,6 +409,19 @@ public:
                               << std::pair{"errno", e.code().value()}
                               << net::flush;
                     throw;
+                }
+                catch(const std::bad_alloc& e)
+                {
+                    // accept() can succeed then fail allocating endpointbuf /
+                    // client strings under heap pressure. ENOMEM from the
+                    // syscall is soft-retried above; bad_alloc must be too or
+                    // memory pressure still kills listen permanently.
+                    if(m_stop.load())
+                        break;
+                    net::slog << net::warning("HTTP_ACCEPT_TRANSIENT") << "transient accept allocation failure, retrying: " << e.what()
+                              << net::flush;
+                    std::this_thread::sleep_for(std::chrono::milliseconds{10});
+                    continue;
                 }
                 catch(const std::exception& e)
                 {

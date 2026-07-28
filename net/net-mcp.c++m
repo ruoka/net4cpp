@@ -102,6 +102,64 @@ inline std::string_view trim_ws(std::string_view s)
     return s;
 }
 
+// Decode one JSON string body (content between quotes) per RFC 8259.
+// Returns nullopt on truncated/invalid escapes — fail closed.
+inline std::optional<std::string> unescape_json_string(std::string_view body)
+{
+    auto out = ""s;
+    out.reserve(body.size());
+    for(std::size_t i = 0; i < body.size(); ++i)
+    {
+        const auto ch = body[i];
+        if(ch != '\\')
+        {
+            out.push_back(ch);
+            continue;
+        }
+        if(i + 1 >= body.size())
+            return std::nullopt;
+        const auto esc = body[++i];
+        switch(esc)
+        {
+            case '"': case '\\': case '/': out.push_back(esc); break;
+            case 'b': out.push_back('\b'); break;
+            case 'f': out.push_back('\f'); break;
+            case 'n': out.push_back('\n'); break;
+            case 'r': out.push_back('\r'); break;
+            case 't': out.push_back('\t'); break;
+            case 'u':
+            {
+                if(i + 4 >= body.size())
+                    return std::nullopt;
+                auto code = 0u;
+                for(auto n = 0; n < 4; ++n)
+                {
+                    const auto h = body[++i];
+                    code <<= 4;
+                    if(h >= '0' and h <= '9')
+                        code |= static_cast<unsigned>(h - '0');
+                    else if(h >= 'a' and h <= 'f')
+                        code |= static_cast<unsigned>(h - 'a' + 10);
+                    else if(h >= 'A' and h <= 'F')
+                        code |= static_cast<unsigned>(h - 'A' + 10);
+                    else
+                        return std::nullopt;
+                }
+                // MCP keys are ASCII; non-ASCII / surrogates are rejected so
+                // authorize (full JSON) and this scanner cannot diverge on
+                // exotic key spellings.
+                if(code > 0x7F)
+                    return std::nullopt;
+                out.push_back(static_cast<char>(code));
+                break;
+            }
+            default:
+                return std::nullopt;
+        }
+    }
+    return out;
+}
+
 // Locate `"key"` as a top-level object member only (depth == 1). Nested
 // objects must not contribute keys: for tools/call, `arguments.name` must
 // not shadow `params.name` when clients serialize `arguments` before `name`
@@ -114,11 +172,15 @@ inline std::string_view trim_ws(std::string_view s)
 // invokes an earlier privileged `name` (or the reverse with last-wins
 // dispatch). Rejecting duplicates keeps authorize and JSON-RPC aligned.
 //
+// Keys are compared after JSON unescaping: `"\u006eame"` is the same member
+// as `"name"`. Without that, a last-wins authorize parser can allow `ping`
+// from the escaped spelling while this scanner still dispatches the earlier
+// ASCII `"name":"delete_all"`.
+//
 // Deliberately not using xson/json4cpp: MCP needs only a JSON-RPC field
 // subset, and net4cpp should stay free of a JSON library dependency.
 inline std::optional<std::size_t> find_key(std::string_view json, std::string_view key)
 {
-    const auto needle = "\""s + std::string{key} + "\"";
     auto depth = 0;
     auto in_string = false;
     auto escape = false;
@@ -138,14 +200,36 @@ inline std::optional<std::size_t> find_key(std::string_view json, std::string_vi
         }
         if(ch == '"')
         {
-            if(depth == 1 and json.substr(i).starts_with(needle))
+            if(depth == 1)
             {
-                auto after = trim_ws(json.substr(i + needle.size()));
+                // Member name if this string is followed by `:`. Compare the
+                // unescaped name to `key` so `\u006e`-aliases count as dups.
+                auto j = i + 1;
+                auto esc = false;
+                while(j < json.size())
+                {
+                    if(esc)
+                        esc = false;
+                    else if(json[j] == '\\')
+                        esc = true;
+                    else if(json[j] == '"')
+                        break;
+                    ++j;
+                }
+                if(j >= json.size())
+                    return std::nullopt;
+                auto after = trim_ws(json.substr(j + 1));
                 if(not after.empty() and after.front() == ':')
                 {
-                    if(found.has_value())
+                    auto decoded = unescape_json_string(json.substr(i + 1, j - (i + 1)));
+                    if(not decoded)
                         return std::nullopt;
-                    found = i;
+                    if(*decoded == key)
+                    {
+                        if(found.has_value())
+                            return std::nullopt;
+                        found = i;
+                    }
                 }
             }
             in_string = true;
@@ -162,13 +246,32 @@ inline std::optional<std::size_t> find_key(std::string_view json, std::string_vi
     return found;
 }
 
+inline std::optional<std::string_view> after_json_string(std::string_view json, std::size_t open_quote)
+{
+    if(open_quote >= json.size() or json[open_quote] != '"')
+        return std::nullopt;
+    auto escape = false;
+    for(auto i = open_quote + 1; i < json.size(); ++i)
+    {
+        if(escape)
+            escape = false;
+        else if(json[i] == '\\')
+            escape = true;
+        else if(json[i] == '"')
+            return json.substr(i + 1);
+    }
+    return std::nullopt;
+}
+
 inline std::optional<std::string_view> json_string_field(std::string_view json, std::string_view key)
 {
     const auto key_pos = find_key(json, key);
     if(not key_pos)
         return std::nullopt;
-    auto rest = json.substr(*key_pos + key.size() + 2);
-    rest = trim_ws(rest);
+    const auto after_key = after_json_string(json, *key_pos);
+    if(not after_key)
+        return std::nullopt;
+    auto rest = trim_ws(*after_key);
     if(rest.empty() or rest.front() != ':')
         return std::nullopt;
     rest.remove_prefix(1);
@@ -198,7 +301,10 @@ inline std::optional<std::string> json_id_field(std::string_view json)
     const auto key_pos = find_key(json, "id"sv);
     if(not key_pos)
         return std::nullopt;
-    auto rest = trim_ws(json.substr(*key_pos + 4));
+    const auto after_key = after_json_string(json, *key_pos);
+    if(not after_key)
+        return std::nullopt;
+    auto rest = trim_ws(*after_key);
     if(rest.empty() or rest.front() != ':')
         return std::nullopt;
     rest = trim_ws(rest.substr(1));
@@ -235,7 +341,10 @@ inline std::optional<std::string_view> json_object_field(std::string_view json, 
     const auto key_pos = find_key(json, key);
     if(not key_pos)
         return std::nullopt;
-    auto rest = trim_ws(json.substr(*key_pos + key.size() + 2));
+    const auto after_key = after_json_string(json, *key_pos);
+    if(not after_key)
+        return std::nullopt;
+    auto rest = trim_ws(*after_key);
     if(rest.empty() or rest.front() != ':')
         return std::nullopt;
     rest = trim_ws(rest.substr(1));
