@@ -12,6 +12,7 @@ module;
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/time.h>
+#include <sys/resource.h>
 #include <cerrno>
 
 export module net:posix;
@@ -55,6 +56,8 @@ using ::freeaddrinfo;
 using ::gai_strerror;
 using ::gethostname;
 using ::getpid;
+using ::getrlimit;
+using ::setrlimit;
 
 // Clean up any potential macro pollution from system headers
 #undef ntohs
@@ -90,6 +93,7 @@ inline constexpr uint64_t ntohll(uint64_t net) noexcept { return ntoh(net); }
 
 // Type aliases (clean, consistent naming)
 using timeval         = ::timeval;
+using rlimit          = ::rlimit;
 using fd_set          = ::fd_set;
 using addrinfo        = ::addrinfo;
 using sockaddr        = ::sockaddr;
@@ -177,6 +181,7 @@ constexpr auto ni_maxhost       = NI_MAXHOST;
 constexpr auto ni_maxserv       = NI_MAXSERV;
 
 constexpr auto msg_nosignal     = MSG_NOSIGNAL;
+constexpr auto rlimit_nofile    = RLIMIT_NOFILE;
 
 // Common errno values
 constexpr auto econnrefused     = ECONNREFUSED;
@@ -190,6 +195,27 @@ constexpr auto eagain           = EWOULDBLOCK; // EAGAIN and EWOULDBLOCK are oft
 #endif
 constexpr auto eintr            = EINTR;
 constexpr auto ebadf            = EBADF;
+constexpr auto econnaborted     = ECONNABORTED;
+#ifdef EMFILE
+constexpr auto emfile           = EMFILE;
+#else
+constexpr auto emfile           = 0;
+#endif
+#ifdef ENFILE
+constexpr auto enfile           = ENFILE;
+#else
+constexpr auto enfile           = 0;
+#endif
+#ifdef ENOBUFS
+constexpr auto enobufs          = ENOBUFS;
+#else
+constexpr auto enobufs          = 0;
+#endif
+#ifdef ENOMEM
+constexpr auto enomem           = ENOMEM;
+#else
+constexpr auto enomem           = 0;
+#endif
 
 inline int get_errno() noexcept { return errno; }
 

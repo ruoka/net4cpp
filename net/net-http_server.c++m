@@ -384,6 +384,22 @@ public:
                     {
                         continue;
                     }
+                    // FD/memory pressure is transient: once handlers release
+                    // sockets, accept can succeed again. Rethrowing here used to
+                    // permanently stop the server after a single EMFILE.
+                    const auto err = e.code().value();
+                    if(err == net::posix::emfile
+                       or err == net::posix::enfile
+                       or err == net::posix::enobufs
+                       or err == net::posix::enomem
+                       or err == net::posix::econnaborted)
+                    {
+                        net::slog << net::warning("HTTP_ACCEPT_TRANSIENT") << "transient accept failure, retrying: " << e.what()
+                                  << std::pair{"errno", err}
+                                  << net::flush;
+                        std::this_thread::sleep_for(std::chrono::milliseconds{10});
+                        continue;
+                    }
                     net::slog << net::error("HTTP_ACCEPT_ERROR") << "failed to accept connection: " << e.what() << " (code: " << e.code() << ")"
                               << std::pair{"errno", e.code().value()}
                               << net::flush;
@@ -469,6 +485,18 @@ public:
     bool stopped() const
     {
         return m_stop.load();
+    }
+
+    // Port the listen socket is bound to (0 before listen / after stop). Useful
+    // when listen(..., "0") asks the OS for an ephemeral port.
+    std::uint16_t bound_port()
+    {
+        std::shared_ptr<net::acceptor> acceptor;
+        {
+            std::lock_guard lock{m_acceptor_mutex};
+            acceptor = m_acceptor;
+        }
+        return acceptor ? acceptor->bound_port() : 0;
     }
 
 private:

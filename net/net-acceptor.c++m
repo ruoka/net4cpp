@@ -118,24 +118,50 @@ public:
 
     std::tuple<stream,client,port> accept()
     {
-        const auto fd = wait();
-        auto sas = posix::sockaddr_storage{};
-        auto saslen = posix::socklen_t{sizeof sas};
-        socket s = posix::accept(fd, reinterpret_cast<posix::sockaddr*>(&sas), &saslen);
-        if(not s)
+        // Transient accept() failures must not abort the listen loop. Linux can
+        // return ECONNABORTED when a client RSTs while still in the backlog, and
+        // EAGAIN after a select false-wake. Retry those. Resource exhaustion
+        // (EMFILE/ENFILE/…) is thrown so callers can back off without treating
+        // it as a fatal bind/listen failure.
+        for(;;)
         {
-            const auto err = posix::get_errno();
-            if(err == posix::ebadf or closed())
-                throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
-            throw std::system_error{err, std::system_category(), "accept failed"};
+            const auto fd = wait();
+            auto sas = posix::sockaddr_storage{};
+            auto saslen = posix::socklen_t{sizeof sas};
+            socket s = posix::accept(fd, reinterpret_cast<posix::sockaddr*>(&sas), &saslen);
+            if(not s)
+            {
+                const auto err = posix::get_errno();
+                if(err == posix::ebadf or closed())
+                    throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
+                if(err == posix::eintr
+                   or err == posix::econnaborted
+                   or err == posix::eagain
+                   or err == posix::ewouldblock)
+                    continue;
+                throw std::system_error{err, std::system_category(), "accept failed"};
+            }
+
+            char hbuf[posix::ni_maxhost];
+            char sbuf[posix::ni_maxserv];
+            // NI_NUMERICHOST almost never fails; do not tear down the server if it does.
+            if(posix::getnameinfo(
+                   reinterpret_cast<posix::sockaddr*>(&sas),
+                   saslen,
+                   hbuf,
+                   sizeof hbuf,
+                   sbuf,
+                   sizeof sbuf,
+                   posix::ni_numerichost | posix::ni_numericserv))
+            {
+                static constexpr char unknown[] = "unknown";
+                static constexpr char zero[] = "0";
+                std::char_traits<char>::copy(hbuf, unknown, sizeof unknown);
+                std::char_traits<char>::copy(sbuf, zero, sizeof zero);
+            }
+
+            return {new endpointbuf<tcp_buffer_size>{std::move(s)}, hbuf, sbuf};
         }
-
-        char hbuf[posix::ni_maxhost];
-        char sbuf[posix::ni_maxserv];
-        if(posix::getnameinfo(reinterpret_cast<posix::sockaddr*>(&sas), saslen, hbuf, sizeof hbuf, sbuf, sizeof sbuf, posix::ni_numerichost))
-            throw std::system_error{posix::get_errno(), std::system_category(),"getnameinfo failed"};
-
-        return {new endpointbuf<tcp_buffer_size>{std::move(s)}, hbuf, sbuf};
     }
 
     // Close listen sockets and wake a concurrent accept()/select promptly.
