@@ -627,7 +627,7 @@ auto register_mcp_tests()
 
             auto http = std::make_shared<http::server>();
             auto mcp = std::make_shared<server>("/messages/");
-            mcp->authorize([](::http::request_view, ::http::headers& hdr)
+            mcp->authorize([](::http::request_view, ::http::headers& hdr, ::http::body_view)
                 -> std::optional<::http::response_with_headers>
             {
                 std::string_view authorization{};

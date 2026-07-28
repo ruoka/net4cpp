@@ -517,7 +517,11 @@ private:
 };
 
 using session_handler = std::function<void(session&)>;
-using request_gate = std::function<std::optional<response_with_headers>(request_view, headers&)>;
+// `body` is empty on SSE open and the JSON-RPC payload on POST /messages/.
+// Apps that need method/tool-aware auth (e.g. separate data vs admin PATs) inspect
+// the body on POST; Host/Origin and simple Bearer checks ignore it.
+using request_gate = std::function<
+    std::optional<response_with_headers>(request_view, headers&, body_view)>;
 
 // Legacy MCP HTTP+SSE transport (session layer).
 class sse_transport
@@ -548,7 +552,12 @@ public:
 
         auto& sse_ctrl = server.sse(sse_path);
         if(gate)
-            sse_ctrl.gate(gate);
+        {
+            // SSE controller gate has no body; pass an empty view.
+            sse_ctrl.gate([gate](request_view req, headers& hdr) {
+                return gate(req, hdr, body_view{});
+            });
+        }
         if(cors_origin)
             sse_ctrl.cors(std::move(cors_origin));
 
@@ -588,7 +597,7 @@ public:
             {
                 if(gate)
                 {
-                    if(auto denied = gate(req, hdr))
+                    if(auto denied = gate(req, hdr, body))
                         return *denied;
                 }
 
@@ -724,7 +733,7 @@ public:
                 m_allowed_origins = default_allowed_origins();
         }
 
-        auto gate = [this](request_view req, headers& hdr) -> std::optional<response_with_headers>
+        auto gate = [this](request_view req, headers& hdr, body_view body) -> std::optional<response_with_headers>
         {
             if(m_dns_rebinding_protection)
             {
@@ -738,7 +747,7 @@ public:
 
             if(m_authorize)
             {
-                if(auto denied = m_authorize(req, hdr))
+                if(auto denied = m_authorize(req, hdr, body))
                     return denied;
             }
 
