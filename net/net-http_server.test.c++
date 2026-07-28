@@ -137,6 +137,8 @@ auto register_server_tests()
 
     // Regression: accept() EMFILE used to rethrow out of listen() and permanently
     // stop the server. After FD pressure clears, the server must accept again.
+    // Soft-retry also covers post-accept std::thread EAGAIN and bad_alloc (same
+    // permanent-stop class; harder to force reliably in CI than EMFILE).
     tester::bdd::scenario("listen survives transient accept EMFILE, [net]") = [] {
         if(not network_tests_enabled()) return;
 
