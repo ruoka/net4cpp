@@ -106,6 +106,9 @@ inline std::string_view trim_ws(std::string_view s)
 // objects must not contribute keys: for tools/call, `arguments.name` must
 // not shadow `params.name` when clients serialize `arguments` before `name`
 // (alphabetical / BTreeMap key order).
+//
+// Deliberately not using xson/json4cpp: MCP needs only a JSON-RPC field
+// subset, and net4cpp should stay free of a JSON library dependency.
 inline std::optional<std::size_t> find_key(std::string_view json, std::string_view key)
 {
     const auto needle = "\""s + std::string{key} + "\"";
