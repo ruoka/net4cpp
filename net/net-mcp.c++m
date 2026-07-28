@@ -107,6 +107,13 @@ inline std::string_view trim_ws(std::string_view s)
 // not shadow `params.name` when clients serialize `arguments` before `name`
 // (alphabetical / BTreeMap key order).
 //
+// Duplicate keys at the same depth return nullopt (fail closed). RFC 8259
+// says names SHOULD be unique; common libraries (Python json, nlohmann) are
+// last-wins while a first-wins scan disagrees. After body-aware `authorize`,
+// that mismatch lets a last-wins auth check allow `ping` while dispatch
+// invokes an earlier privileged `name` (or the reverse with last-wins
+// dispatch). Rejecting duplicates keeps authorize and JSON-RPC aligned.
+//
 // Deliberately not using xson/json4cpp: MCP needs only a JSON-RPC field
 // subset, and net4cpp should stay free of a JSON library dependency.
 inline std::optional<std::size_t> find_key(std::string_view json, std::string_view key)
@@ -115,6 +122,7 @@ inline std::optional<std::size_t> find_key(std::string_view json, std::string_vi
     auto depth = 0;
     auto in_string = false;
     auto escape = false;
+    auto found = std::optional<std::size_t>{};
     for(std::size_t i = 0; i < json.size(); ++i)
     {
         const auto ch = json[i];
@@ -134,7 +142,11 @@ inline std::optional<std::size_t> find_key(std::string_view json, std::string_vi
             {
                 auto after = trim_ws(json.substr(i + needle.size()));
                 if(not after.empty() and after.front() == ':')
-                    return i;
+                {
+                    if(found.has_value())
+                        return std::nullopt;
+                    found = i;
+                }
             }
             in_string = true;
             continue;
@@ -147,7 +159,7 @@ inline std::optional<std::size_t> find_key(std::string_view json, std::string_vi
                 --depth;
         }
     }
-    return std::nullopt;
+    return found;
 }
 
 inline std::optional<std::string_view> json_string_field(std::string_view json, std::string_view key)
