@@ -3,6 +3,7 @@
 // See the LICENSE file in the project root for full license text.
 
 module net;
+import :posix;
 import tester;
 import std;
 
@@ -132,6 +133,99 @@ auto register_server_tests()
         check_true(server->stopped());
         // Bound proves wake (not the 30s accept timeout); allow scheduler noise.
         check_true(elapsed < 2s);
+    };
+
+    // Regression: accept() EMFILE used to rethrow out of listen() and permanently
+    // stop the server. After FD pressure clears, the server must accept again.
+    tester::bdd::scenario("listen survives transient accept EMFILE, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        using namespace std::chrono_literals;
+        auto server = std::make_shared<http::server>();
+        server->get("/").text("alive");
+        server->timeout(std::chrono::seconds{1});
+
+        std::uint16_t port = 0;
+        std::promise<void> bound;
+        auto bound_future = bound.get_future();
+        std::exception_ptr listen_error;
+        std::mutex listen_error_mutex;
+
+        std::thread t{[server, &bound, &port, &listen_error, &listen_error_mutex] {
+            try
+            {
+                server->listen("127.0.0.1", "0", [server, &bound, &port] {
+                    port = server->bound_port();
+                    bound.set_value();
+                });
+            }
+            catch(...)
+            {
+                {
+                    std::lock_guard lock{listen_error_mutex};
+                    listen_error = std::current_exception();
+                }
+                try { bound.set_value(); } catch(...) {}
+            }
+        }};
+
+        check_true(bound_future.wait_for(2s) == std::future_status::ready);
+        check_true(port != 0);
+
+        auto previous = net::posix::rlimit{};
+        check_true(net::posix::getrlimit(net::posix::rlimit_nofile, &previous) == 0);
+        auto limited = previous;
+        limited.rlim_cur = 32;
+        check_true(net::posix::setrlimit(net::posix::rlimit_nofile, &limited) == 0);
+
+        auto held = std::vector<int>{};
+        held.reserve(64);
+        while(held.size() < 64)
+        {
+            const auto fd = net::posix::socket(net::posix::af_inet, net::posix::sock_stream, 0);
+            if(fd < 0)
+                break;
+            held.push_back(fd);
+        }
+
+        // Pending connect while accept is starved of FDs → EMFILE in the listen loop.
+        {
+            const auto client = net::posix::socket(net::posix::af_inet, net::posix::sock_stream, 0);
+            if(client >= 0)
+            {
+                net::posix::sockaddr_in addr{};
+                addr.sin_family = net::posix::af_inet;
+                addr.sin_port = net::posix::htons(port);
+                addr.sin_addr.s_addr = net::posix::htonl(net::posix::inaddr_loopback);
+                (void)net::posix::connect(
+                    client, reinterpret_cast<net::posix::sockaddr*>(&addr), sizeof addr);
+                std::this_thread::sleep_for(50ms);
+                net::posix::close(client);
+            }
+        }
+
+        for(auto fd : held)
+            net::posix::close(fd);
+        held.clear();
+        check_true(net::posix::setrlimit(net::posix::rlimit_nofile, &previous) == 0);
+        std::this_thread::sleep_for(150ms);
+
+        {
+            std::lock_guard lock{listen_error_mutex};
+            check_true(listen_error == nullptr);
+        }
+        check_true(not server->stopped());
+
+        auto stream = net::connect("127.0.0.1", std::to_string(port));
+        stream << "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n" << net::flush;
+        auto status_line = std::string{};
+        std::getline(stream, status_line);
+        check_contains(status_line, "200");
+
+        server->stop();
+        if(t.joinable())
+            t.join();
+        check_true(server->stopped());
     };
 
     tester::bdd::scenario("Structured logging fields in HTTP requests, [net]") = [] {
