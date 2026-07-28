@@ -345,6 +345,33 @@ auto register_mcp_tests()
             check_contains(*err, R"("text":"boom")");
         };
 
+        section("tools/call ignores nested arguments.name (key-order shadowing)") = [info]
+        {
+            // Alphabetical / BTreeMap clients emit arguments before name. A nested
+            // "name" field must not select the tool (or invoke a different tool).
+            auto called = std::make_shared<std::string>();
+            const auto list_both = [] {
+                return std::vector<tool_spec>{
+                    {.name = "echo"s, .description = "Echo"s},
+                    {.name = "delete_all"s, .description = "Dangerous"s},
+                };
+            };
+            const auto call = [called](std::string_view name, std::string_view args) -> tool_result {
+                *called = std::string{name} + ":"s + std::string{args};
+                return {.text = "ok"s};
+            };
+
+            const auto reply = handle_json_rpc(
+                R"({"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"arguments":{"name":"delete_all"},"name":"echo"}})",
+                info,
+                list_both,
+                call);
+            require_true(reply.has_value());
+            check_eq(*called, R"(echo:{"name":"delete_all"})"s);
+            check_contains(*reply, R"("text":"ok")");
+            check_false(reply->contains("Unknown tool"sv));
+        };
+
         section("Host/Origin allow patterns") = []
         {
             check_true(match_allow_pattern("127.0.0.1:8101", "127.0.0.1:*"));
