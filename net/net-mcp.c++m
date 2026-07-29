@@ -177,15 +177,28 @@ inline std::optional<std::string> unescape_json_string(std::string_view body)
 // from the escaped spelling while this scanner still dispatches the earlier
 // ASCII `"name":"delete_all"`.
 //
+// JSON-RPC messages are objects. A leading top-level primitive before the
+// object (`null{"method":"tools/call",…}`) is skipped by a brace-oriented
+// scan while Python `raw_decode` / nlohmann `operator>>` only see the
+// prefix. Body-aware authorize then allows (no method) while dispatch still
+// invokes the trailing call. Fail closed unless the first non-whitespace
+// character is `{`.
+//
 // Deliberately not using xson/json4cpp: MCP needs only a JSON-RPC field
 // subset, and net4cpp should stay free of a JSON library dependency.
 inline std::optional<std::size_t> find_key(std::string_view json, std::string_view key)
 {
+    const auto start = trim_ws(json);
+    if(start.empty() or start.front() != '{')
+        return std::nullopt;
+
     auto depth = 0;
     auto in_string = false;
     auto escape = false;
     auto found = std::optional<std::size_t>{};
-    for(std::size_t i = 0; i < json.size(); ++i)
+    // Scan from the first non-whitespace so depth tracks the required object.
+    const auto base = static_cast<std::size_t>(start.data() - json.data());
+    for(std::size_t i = base; i < json.size(); ++i)
     {
         const auto ch = json[i];
         if(in_string)
