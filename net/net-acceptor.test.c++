@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 // See the LICENSE file in the project root for full license text.
 
+module;
+#include <csignal>
 module net;
 import :acceptor;
 import tester;
@@ -22,6 +24,14 @@ inline bool network_tests_enabled()
     if(const auto* v = std::getenv("NET_DISABLE_NETWORK_TESTS"))
         return std::string_view{v} != "1";
     return true;
+}
+
+// Counts SIGPIPE deliveries so a write-after-peer-close must not kill the process.
+std::atomic<int> g_sigpipe_count{0};
+
+void on_sigpipe(int) noexcept
+{
+    g_sigpipe_count.fetch_add(1, std::memory_order_relaxed);
 }
 }
 
@@ -185,6 +195,64 @@ auto register_acceptor_tests()
             }
         };
     };
+
+    // Regression: on macOS MSG_NOSIGNAL is 0, so accepted sockets without
+    // SO_NOSIGPIPE raise SIGPIPE (process death) when writing after the peer
+    // closes. Linux is covered by MSG_NOSIGNAL; macOS needs the accept-path
+    // setsockopt that connector already applies on outbound sockets.
+    tester::bdd::scenario("accepted write after peer close does not raise SIGPIPE, [net]") = [] {
+        using namespace std::chrono_literals;
+        g_sigpipe_count.store(0, std::memory_order_relaxed);
+        const auto previous = std::signal(SIGPIPE, on_sigpipe);
+
+        auto ator = net::acceptor{"127.0.0.1", "0"};
+        ator.timeout(2s);
+        const auto port = ator.bound_port();
+        check_true(port != 0);
+
+        std::promise<void> peer_closed;
+        auto peer_closed_future = peer_closed.get_future();
+        std::atomic<bool> accept_failed{false};
+        std::atomic<bool> wrote{false};
+
+        std::thread server{[&] {
+            try
+            {
+                auto [stream, host, client_port] = ator.accept();
+                (void)host;
+                (void)client_port;
+                check_true(peer_closed_future.wait_for(2s) == std::future_status::ready);
+                stream << "hello" << std::flush;
+                wrote = true;
+            }
+            catch(...)
+            {
+                accept_failed = true;
+                try { peer_closed.set_value(); } catch(...) {}
+            }
+        }};
+
+        std::this_thread::sleep_for(50ms);
+        try
+        {
+            auto client = net::connect("127.0.0.1", std::to_string(port));
+            client.close();
+            peer_closed.set_value();
+        }
+        catch(...)
+        {
+            accept_failed = true;
+            try { peer_closed.set_value(); } catch(...) {}
+        }
+
+        server.join();
+        std::signal(SIGPIPE, previous);
+
+        check_true(not accept_failed);
+        check_true(wrote);
+        check_eq(g_sigpipe_count.load(std::memory_order_relaxed), 0);
+    };
+
     return true;
 }
 

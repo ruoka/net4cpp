@@ -142,6 +142,17 @@ public:
                 throw std::system_error{err, std::system_category(), "accept failed"};
             }
 
+            if(posix::so_nosigpipe > 0)
+            {
+                // macOS: MSG_NOSIGNAL is unavailable (net-posix defines it as 0), so
+                // send() on a reset peer raises SIGPIPE and terminates the process.
+                // connector already sets SO_NOSIGPIPE on outbound sockets; accepted
+                // sockets used by http::server / SSE / WebSocket need the same.
+                auto yes = 1;
+                if(posix::setsockopt(s, posix::sol_socket, posix::so_nosigpipe, &yes, sizeof yes) < 0)
+                    continue; // drop rather than return a process-killing socket
+            }
+
             char hbuf[posix::ni_maxhost];
             char sbuf[posix::ni_maxserv];
             // NI_NUMERICHOST almost never fails; do not tear down the server if it does.
