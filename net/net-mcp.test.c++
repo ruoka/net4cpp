@@ -27,6 +27,17 @@ inline bool network_tests_enabled()
     return true;
 }
 
+inline std::optional<std::string> handle_json_rpc(
+    std::string_view message,
+    const server_info& info,
+    const list_tools_fn& list_tools,
+    const call_tool_fn& call_tool)
+{
+    auto dispatcher = http::mcp::dispatcher{};
+    dispatcher.info(info).list_tools(list_tools).call_tool(call_tool);
+    return dispatcher.handle(message);
+}
+
 // Parse `event:` / `data:` pairs from an SSE body (v1 subset).
 inline std::vector<std::pair<std::string, std::string>> parse_sse_events(std::string_view body)
 {
@@ -87,16 +98,16 @@ auto register_mcp_tests()
     {
         section("query_param extracts session_id") = []
         {
-            const auto sid = query_param("/messages/?session_id=abc123&x=1", "session_id");
+            const auto sid = http::mcp::detail::query_param("/messages/?session_id=abc123&x=1", "session_id");
             require_true(sid.has_value());
             check_eq(*sid, "abc123"s);
-            check_false(query_param("/messages/", "session_id").has_value());
-            check_false(query_param("/messages/?foo=1", "session_id").has_value());
+            check_false(http::mcp::detail::query_param("/messages/", "session_id").has_value());
+            check_false(http::mcp::detail::query_param("/messages/?foo=1", "session_id").has_value());
         };
 
         section("make_session_id is 32 hex chars") = []
         {
-            const auto id = make_session_id();
+            const auto id = session::make_id();
             check_eq(id.size(), 32u);
             check_true(std::ranges::all_of(id, [](char c) {
                 return (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
@@ -397,8 +408,7 @@ auto register_mcp_tests()
                 call);
             require_true(dup_name.has_value());
             check_true(called->empty());
-            check_contains(*dup_name, R"("code":-32602)");
-            check_contains(*dup_name, "Missing tool name");
+            check_contains(*dup_name, R"("code":-32700)");
 
             const auto dup_params = handle_json_rpc(
                 R"({"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"delete_all"},"params":{"name":"ping","arguments":{}}})",
@@ -407,7 +417,7 @@ auto register_mcp_tests()
                 call);
             require_true(dup_params.has_value());
             check_true(called->empty());
-            check_contains(*dup_params, R"("code":-32602)");
+            check_contains(*dup_params, R"("code":-32700)");
         };
 
         section("tools/call rejects \\u-escaped key aliases (authorize/dispatch confusion)") = [info]
@@ -436,7 +446,7 @@ auto register_mcp_tests()
                 call);
             require_true(alias_name.has_value());
             check_true(called->empty());
-            check_contains(*alias_name, R"("code":-32602)");
+            check_contains(*alias_name, R"("code":-32700)");
 
             // Same confusion on method: last-wins authorize sees "ping",
             // literal-first dispatch would still run tools/call.
@@ -448,15 +458,57 @@ auto register_mcp_tests()
                 call);
             require_true(alias_method.has_value());
             check_true(called->empty());
-            check_contains(*alias_method, R"("code":-32600)");
+            check_contains(*alias_method, R"("code":-32700)");
+        };
+
+        section("strict JSON-RPC validation and normalized arguments") = [info, list]
+        {
+            auto called = false;
+            const auto call = [&called](std::string_view, std::string_view arguments) -> tool_result {
+                called = true;
+                check_eq(arguments, R"({"a":1,"z":2})"sv);
+                return {.text = "ok"s};
+            };
+
+            const auto malformed = handle_json_rpc(
+                R"({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{}}])",
+                info, list, call);
+            require_true(malformed.has_value());
+            check_contains(*malformed, R"("code":-32700)");
+            check_false(called);
+
+            const auto scalar = handle_json_rpc(R"([])", info, list, call);
+            require_true(scalar.has_value());
+            check_contains(*scalar, R"("code":-32600)");
+
+            const auto invalid_id = handle_json_rpc(
+                R"({"jsonrpc":"2.0","id":true,"method":"ping"})", info, list, call);
+            require_true(invalid_id.has_value());
+            check_contains(*invalid_id, R"("code":-32600)");
+
+            const auto missing_version = handle_json_rpc(
+                R"({"id":1,"method":"ping"})", info, list, call);
+            require_true(missing_version.has_value());
+            check_contains(*missing_version, R"("code":-32600)");
+
+            const auto valid = handle_json_rpc(
+                R"({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"z":2,"a":1}}})",
+                info, list, call);
+            require_true(valid.has_value());
+            check_true(called);
+
+            const auto surrogate = http::mcp::detail::json::parse(R"("\uD83D\uDE00")");
+            require_true(surrogate.has_value());
+            check_eq(surrogate->leaf, "\xF0\x9F\x98\x80"s);
+            check_false(http::mcp::detail::json::parse(std::string{"\"\xC0\x80\""}).has_value());
         };
 
         section("Host/Origin allow patterns") = []
         {
-            check_true(match_allow_pattern("127.0.0.1:8101", "127.0.0.1:*"));
-            check_true(match_allow_pattern("localhost", "localhost:*"));
-            check_false(match_allow_pattern("evil.example", "127.0.0.1:*"));
-            check_true(match_allow_pattern("http://localhost:3000", "http://localhost:*"));
+            check_true(server::host_pattern_matches("127.0.0.1:8101", "127.0.0.1:*"));
+            check_true(server::host_pattern_matches("localhost", "localhost:*"));
+            check_false(server::host_pattern_matches("evil.example", "127.0.0.1:*"));
+            check_true(server::host_pattern_matches("http://localhost:3000", "http://localhost:*"));
         };
     };
 

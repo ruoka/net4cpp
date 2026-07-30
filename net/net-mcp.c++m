@@ -7,6 +7,7 @@ import :http_server;
 import :sse;
 import :uuid;
 import :utils;
+import :http_uri;
 import std;
 
 export namespace http::mcp
@@ -17,548 +18,657 @@ using namespace std::string_view_literals;
 
 inline constexpr auto default_protocol_version = "2024-11-05"sv;
 
-// Extract `key` from a request-target query string (`path?a=1&b=2`).
-inline std::optional<std::string> query_param(std::string_view request_target, std::string_view key)
-{
-    const auto qpos = request_target.find('?');
-    if(qpos == std::string_view::npos)
-        return std::nullopt;
+// Max JSON-RPC messages queued per SSE session (DoS bound for authenticated POSTs).
+inline constexpr std::size_t max_session_inbound = 32;
+// Cap total queued body bytes per session (in addition to message count).
+inline constexpr std::size_t max_session_inbound_bytes = 1 * 1024 * 1024;
+// Default HTTP request-body cap applied in server::attach (single POST allocation).
+inline constexpr std::size_t max_request_body_bytes = 1 * 1024 * 1024;
+// Reject deeper nesting (stack / resource bound for the recursive parser).
+inline constexpr std::size_t max_json_depth = 64;
 
-    auto query = request_target.substr(qpos + 1);
-    while(not query.empty())
+} // namespace http::mcp
+
+// Implementation mechanics remain module-private by living outside the
+// exported namespace definition.
+namespace http::mcp::detail
+{
+
+// Minimal strict JSON value (RFC 8259).
+//
+// Leaf types store content as std::string:
+//   null    → kind null_, empty leaf
+//   boolean → "true" / "false"
+//   number  → original number text (validated)
+//   string  → unescaped content (UTF-8; supports \uXXXX and surrogate pairs)
+//
+// Objects reject duplicate keys. Parse requires one top-level value and no
+// trailing non-whitespace. Nesting deeper than max_json_depth fails.
+//
+// dump() re-serializes with sorted object keys (std::map) and normalized
+// escaping/whitespace — semantically equivalent JSON, not a byte-identical
+// copy of the input substring.
+class json
+{
+public:
+
+    enum class type { null_, boolean, number, string, array, object };
+
+    type kind = type::null_;
+    std::string leaf;
+    std::vector<json> items;
+    std::map<std::string, json, std::less<>> members;
+
+    [[nodiscard]] bool is_null() const noexcept { return kind == type::null_; }
+    [[nodiscard]] bool is_object() const noexcept { return kind == type::object; }
+    [[nodiscard]] bool is_array() const noexcept { return kind == type::array; }
+    [[nodiscard]] bool is_string() const noexcept { return kind == type::string; }
+    [[nodiscard]] bool is_number() const noexcept { return kind == type::number; }
+    [[nodiscard]] bool is_boolean() const noexcept { return kind == type::boolean; }
+
+    [[nodiscard]] const json* member(std::string_view key) const
     {
-        const auto amp = query.find('&');
-        const auto part = amp == std::string_view::npos ? query : query.substr(0, amp);
-        const auto eq = part.find('=');
-        const auto name = eq == std::string_view::npos ? part : part.substr(0, eq);
-        if(name == key)
-        {
-            if(eq == std::string_view::npos)
-                return ""s;
-            return std::string{part.substr(eq + 1)};
-        }
-        if(amp == std::string_view::npos)
-            break;
-        query.remove_prefix(amp + 1);
+        if(kind != type::object)
+            return nullptr;
+        const auto it = members.find(key);
+        return it == members.end() ? nullptr : &it->second;
     }
-    return std::nullopt;
-}
 
-// MCP Python SDK uses uuid4().hex (32 lowercase hex chars, no dashes).
-inline std::string make_session_id()
-{
-    auto id = net::generate_uuid_v4();
-    id.erase(std::remove(id.begin(), id.end(), '-'), id.end());
-    return id;
-}
-
-// --- Minimal JSON helpers (MCP v1 surface only; no full JSON library) ---
-
-inline std::string json_escape(std::string_view text)
-{
-    auto out = ""s;
-    out.reserve(text.size() + 8);
-    for(const auto ch : text)
+    [[nodiscard]] std::optional<std::string_view> string_member(std::string_view key) const
     {
-        switch(ch)
-        {
-            case '"': out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\b': out += "\\b"; break;
-            case '\f': out += "\\f"; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            default:
-                if(static_cast<unsigned char>(ch) < 0x20)
-                {
-                    constexpr auto hex = "0123456789abcdef";
-                    out += "\\u00";
-                    out.push_back(hex[(static_cast<unsigned char>(ch) >> 4) & 0xF]);
-                    out.push_back(hex[static_cast<unsigned char>(ch) & 0xF]);
-                }
-                else
-                    out.push_back(ch);
-                break;
-        }
-    }
-    return out;
-}
-
-inline std::string json_quote(std::string_view text)
-{
-    return "\""s + json_escape(text) + "\"";
-}
-
-namespace detail
-{
-
-inline std::string_view trim_ws(std::string_view s)
-{
-    while(not s.empty() and (s.front() == ' ' or s.front() == '\t' or s.front() == '\n' or s.front() == '\r'))
-        s.remove_prefix(1);
-    while(not s.empty() and (s.back() == ' ' or s.back() == '\t' or s.back() == '\n' or s.back() == '\r'))
-        s.remove_suffix(1);
-    return s;
-}
-
-// Decode one JSON string body (content between quotes) per RFC 8259.
-// Returns nullopt on truncated/invalid escapes — fail closed.
-inline std::optional<std::string> unescape_json_string(std::string_view body)
-{
-    auto out = ""s;
-    out.reserve(body.size());
-    for(std::size_t i = 0; i < body.size(); ++i)
-    {
-        const auto ch = body[i];
-        if(ch != '\\')
-        {
-            out.push_back(ch);
-            continue;
-        }
-        if(i + 1 >= body.size())
+        const auto* v = member(key);
+        if(not v or v->kind != type::string)
             return std::nullopt;
-        const auto esc = body[++i];
-        switch(esc)
+        return std::string_view{v->leaf};
+    }
+
+    enum class id_kind { absent, valid, invalid };
+
+    struct id_info
+    {
+        id_kind kind = id_kind::absent;
+        std::string token; // response-ready when kind == valid
+    };
+
+    [[nodiscard]] id_info id() const
+    {
+        const auto* v = member("id"sv);
+        if(not v)
+            return {id_kind::absent, {}};
+        switch(v->kind)
         {
-            case '"': case '\\': case '/': out.push_back(esc); break;
-            case 'b': out.push_back('\b'); break;
-            case 'f': out.push_back('\f'); break;
-            case 'n': out.push_back('\n'); break;
-            case 'r': out.push_back('\r'); break;
-            case 't': out.push_back('\t'); break;
-            case 'u':
+            case type::null_:
+                return {id_kind::valid, "null"s};
+            case type::number:
+                return {id_kind::valid, v->leaf};
+            case type::string:
+                return {id_kind::valid, quote(v->leaf)};
+            default:
+                return {id_kind::invalid, {}};
+        }
+    }
+
+    // Normalized re-serialization (sorted keys, canonical escapes).
+    [[nodiscard]] std::string dump() const
+    {
+        switch(kind)
+        {
+            case type::null_:
+                return "null"s;
+            case type::boolean:
+            case type::number:
+                return leaf;
+            case type::string:
+                return quote(leaf);
+            case type::array:
             {
-                if(i + 4 >= body.size())
-                    return std::nullopt;
-                auto code = 0u;
-                for(auto n = 0; n < 4; ++n)
+                auto out = "["s;
+                auto first = true;
+                for(const auto& e : items)
                 {
-                    const auto h = body[++i];
-                    code <<= 4;
-                    if(h >= '0' and h <= '9')
-                        code |= static_cast<unsigned>(h - '0');
-                    else if(h >= 'a' and h <= 'f')
-                        code |= static_cast<unsigned>(h - 'a' + 10);
-                    else if(h >= 'A' and h <= 'F')
-                        code |= static_cast<unsigned>(h - 'A' + 10);
+                    if(not first)
+                        out.push_back(',');
+                    first = false;
+                    out += e.dump();
+                }
+                out.push_back(']');
+                return out;
+            }
+            case type::object:
+            {
+                auto out = "{"s;
+                auto first = true;
+                for(const auto& [k, val] : members)
+                {
+                    if(not first)
+                        out.push_back(',');
+                    first = false;
+                    out += quote(k);
+                    out.push_back(':');
+                    out += val.dump();
+                }
+                out.push_back('}');
+                return out;
+            }
+        }
+        return "null"s;
+    }
+
+    static std::string escape(std::string_view text)
+    {
+        auto out = ""s;
+        out.reserve(text.size() + 8);
+        for(const auto ch : text)
+        {
+            switch(ch)
+            {
+                case '"':  out += "\\\""; break;
+                case '\\': out += "\\\\"; break;
+                case '\b': out += "\\b";  break;
+                case '\f': out += "\\f";  break;
+                case '\n': out += "\\n";  break;
+                case '\r': out += "\\r";  break;
+                case '\t': out += "\\t";  break;
+                default:
+                    if(static_cast<unsigned char>(ch) < 0x20)
+                    {
+                        constexpr auto hex = "0123456789abcdef";
+                        out += "\\u00";
+                        out.push_back(hex[(static_cast<unsigned char>(ch) >> 4) & 0xF]);
+                        out.push_back(hex[static_cast<unsigned char>(ch) & 0xF]);
+                    }
+                    else
+                        out.push_back(ch);
+                    break;
+            }
+        }
+        return out;
+    }
+
+    static std::string quote(std::string_view text)
+    {
+        return "\""s + escape(text) + "\"";
+    }
+
+    [[nodiscard]] static std::optional<json> parse(std::string_view text)
+    {
+        auto p = parser{text};
+        auto value = p.parse_value(0);
+        if(not value)
+            return std::nullopt;
+        p.skip_ws();
+        if(not p.eof())
+            return std::nullopt;
+        return value;
+    }
+
+private:
+
+    static void append_utf8(std::string& out, char32_t cp)
+    {
+        if(cp <= 0x7F)
+            out.push_back(static_cast<char>(cp));
+        else if(cp <= 0x7FF)
+        {
+            out.push_back(static_cast<char>(0xC0 | ((cp >> 6) & 0x1F)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        }
+        else if(cp <= 0xFFFF)
+        {
+            out.push_back(static_cast<char>(0xE0 | ((cp >> 12) & 0x0F)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        }
+        else
+        {
+            out.push_back(static_cast<char>(0xF0 | ((cp >> 18) & 0x07)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        }
+    }
+
+    struct parser
+    {
+        std::string_view in;
+        std::size_t i = 0;
+
+        [[nodiscard]] bool eof() const noexcept { return i >= in.size(); }
+
+        [[nodiscard]] char peek() const noexcept
+        {
+            return eof() ? '\0' : in[i];
+        }
+
+        char get()
+        {
+            return eof() ? '\0' : in[i++];
+        }
+
+        void skip_ws()
+        {
+            while(not eof() and (in[i] == ' ' or in[i] == '\t' or in[i] == '\n' or in[i] == '\r'))
+                ++i;
+        }
+
+        [[nodiscard]] std::optional<unsigned> read_hex4()
+        {
+            if(i + 4 > in.size())
+                return std::nullopt;
+            auto code = 0u;
+            for(auto n = 0; n < 4; ++n)
+            {
+                const auto h = in[i++];
+                code <<= 4;
+                if(h >= '0' and h <= '9')
+                    code |= static_cast<unsigned>(h - '0');
+                else if(h >= 'a' and h <= 'f')
+                    code |= static_cast<unsigned>(h - 'a' + 10);
+                else if(h >= 'A' and h <= 'F')
+                    code |= static_cast<unsigned>(h - 'A' + 10);
+                else
+                    return std::nullopt;
+            }
+            return code;
+        }
+
+        [[nodiscard]] std::optional<json> parse_value(std::size_t depth)
+        {
+            if(depth > max_json_depth)
+                return std::nullopt;
+            skip_ws();
+            if(eof())
+                return std::nullopt;
+            const auto ch = peek();
+            if(ch == '{')
+                return parse_object(depth);
+            if(ch == '[')
+                return parse_array(depth);
+            if(ch == '"')
+                return parse_string();
+            if(ch == 't' or ch == 'f')
+                return parse_boolean();
+            if(ch == 'n')
+                return parse_null();
+            if(ch == '-' or (ch >= '0' and ch <= '9'))
+                return parse_number();
+            return std::nullopt;
+        }
+
+        [[nodiscard]] std::optional<json> parse_null()
+        {
+            if(in.substr(i).starts_with("null"sv))
+            {
+                i += 4;
+                auto v = json{};
+                v.kind = type::null_;
+                return v;
+            }
+            return std::nullopt;
+        }
+
+        [[nodiscard]] std::optional<json> parse_boolean()
+        {
+            if(in.substr(i).starts_with("true"sv))
+            {
+                i += 4;
+                auto v = json{};
+                v.kind = type::boolean;
+                v.leaf = "true"s;
+                return v;
+            }
+            if(in.substr(i).starts_with("false"sv))
+            {
+                i += 5;
+                auto v = json{};
+                v.kind = type::boolean;
+                v.leaf = "false"s;
+                return v;
+            }
+            return std::nullopt;
+        }
+
+        // RFC 8259 number: -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?
+        [[nodiscard]] std::optional<json> parse_number()
+        {
+            const auto start = i;
+            if(peek() == '-')
+                ++i;
+            if(eof())
+                return std::nullopt;
+            if(peek() == '0')
+            {
+                ++i;
+            }
+            else if(peek() >= '1' and peek() <= '9')
+            {
+                while(not eof() and peek() >= '0' and peek() <= '9')
+                    ++i;
+            }
+            else
+                return std::nullopt;
+
+            if(not eof() and peek() == '.')
+            {
+                ++i;
+                if(eof() or peek() < '0' or peek() > '9')
+                    return std::nullopt;
+                while(not eof() and peek() >= '0' and peek() <= '9')
+                    ++i;
+            }
+
+            if(not eof() and (peek() == 'e' or peek() == 'E'))
+            {
+                ++i;
+                if(not eof() and (peek() == '+' or peek() == '-'))
+                    ++i;
+                if(eof() or peek() < '0' or peek() > '9')
+                    return std::nullopt;
+                while(not eof() and peek() >= '0' and peek() <= '9')
+                    ++i;
+            }
+
+            auto v = json{};
+            v.kind = type::number;
+            v.leaf = std::string{in.substr(start, i - start)};
+            return v;
+        }
+
+        [[nodiscard]] std::optional<json> parse_string()
+        {
+            if(get() != '"')
+                return std::nullopt;
+            auto out = ""s;
+            while(not eof())
+            {
+                const auto ch = get();
+                if(ch == '"')
+                {
+                    auto v = json{};
+                    v.kind = type::string;
+                    v.leaf = std::move(out);
+                    return v;
+                }
+                if(static_cast<unsigned char>(ch) < 0x20)
+                    return std::nullopt;
+                if(ch != '\\')
+                {
+                    const auto byte = static_cast<unsigned char>(ch);
+                    if(byte < 0x80)
+                    {
+                        out.push_back(ch);
+                        continue;
+                    }
+
+                    // JSON strings carry Unicode as UTF-8. Validate literal
+                    // multibyte sequences rather than passing malformed bytes
+                    // through to a tool or response.
+                    const auto continuation = [&](std::size_t offset)
+                    {
+                        return i + offset < in.size()
+                            and (static_cast<unsigned char>(in[i + offset]) & 0xC0) == 0x80;
+                    };
+                    auto trailing = std::size_t{0};
+                    if(byte >= 0xC2 and byte <= 0xDF)
+                        trailing = 1;
+                    else if(byte == 0xE0 and continuation(0)
+                            and static_cast<unsigned char>(in[i]) >= 0xA0 and continuation(1))
+                        trailing = 2;
+                    else if((byte >= 0xE1 and byte <= 0xEC or byte >= 0xEE and byte <= 0xEF)
+                            and continuation(0) and continuation(1))
+                        trailing = 2;
+                    else if(byte == 0xED and continuation(0)
+                            and static_cast<unsigned char>(in[i]) <= 0x9F and continuation(1))
+                        trailing = 2;
+                    else if(byte == 0xF0 and continuation(0)
+                            and static_cast<unsigned char>(in[i]) >= 0x90
+                            and continuation(1) and continuation(2))
+                        trailing = 3;
+                    else if(byte >= 0xF1 and byte <= 0xF3
+                            and continuation(0) and continuation(1) and continuation(2))
+                        trailing = 3;
+                    else if(byte == 0xF4 and continuation(0)
+                            and static_cast<unsigned char>(in[i]) <= 0x8F
+                            and continuation(1) and continuation(2))
+                        trailing = 3;
                     else
                         return std::nullopt;
-                }
-                // MCP keys are ASCII; non-ASCII / surrogates are rejected so
-                // authorize (full JSON) and this scanner cannot diverge on
-                // exotic key spellings.
-                if(code > 0x7F)
-                    return std::nullopt;
-                out.push_back(static_cast<char>(code));
-                break;
-            }
-            default:
-                return std::nullopt;
-        }
-    }
-    return out;
-}
 
-// Locate `"key"` as a top-level object member only (depth == 1). Nested
-// objects must not contribute keys: for tools/call, `arguments.name` must
-// not shadow `params.name` when clients serialize `arguments` before `name`
-// (alphabetical / BTreeMap key order).
-//
-// Duplicate keys at the same depth return nullopt (fail closed). RFC 8259
-// says names SHOULD be unique; common libraries (Python json, nlohmann) are
-// last-wins while a first-wins scan disagrees. After body-aware `authorize`,
-// that mismatch lets a last-wins auth check allow `ping` while dispatch
-// invokes an earlier privileged `name` (or the reverse with last-wins
-// dispatch). Rejecting duplicates keeps authorize and JSON-RPC aligned.
-//
-// Keys are compared after JSON unescaping: `"\u006eame"` is the same member
-// as `"name"`. Without that, a last-wins authorize parser can allow `ping`
-// from the escaped spelling while this scanner still dispatches the earlier
-// ASCII `"name":"delete_all"`.
-//
-// Deliberately not using xson/json4cpp: MCP needs only a JSON-RPC field
-// subset, and net4cpp should stay free of a JSON library dependency.
-inline std::optional<std::size_t> find_key(std::string_view json, std::string_view key)
-{
-    auto depth = 0;
-    auto in_string = false;
-    auto escape = false;
-    auto found = std::optional<std::size_t>{};
-    for(std::size_t i = 0; i < json.size(); ++i)
-    {
-        const auto ch = json[i];
-        if(in_string)
-        {
-            if(escape)
-                escape = false;
-            else if(ch == '\\')
-                escape = true;
-            else if(ch == '"')
-                in_string = false;
-            continue;
-        }
-        if(ch == '"')
-        {
-            if(depth == 1)
-            {
-                // Member name if this string is followed by `:`. Compare the
-                // unescaped name to `key` so `\u006e`-aliases count as dups.
-                auto j = i + 1;
-                auto esc = false;
-                while(j < json.size())
-                {
-                    if(esc)
-                        esc = false;
-                    else if(json[j] == '\\')
-                        esc = true;
-                    else if(json[j] == '"')
-                        break;
-                    ++j;
+                    out.push_back(ch);
+                    out.append(in.substr(i, trailing));
+                    i += trailing;
+                    continue;
                 }
-                if(j >= json.size())
+                if(eof())
                     return std::nullopt;
-                auto after = trim_ws(json.substr(j + 1));
-                if(not after.empty() and after.front() == ':')
+                const auto esc = get();
+                switch(esc)
                 {
-                    auto decoded = unescape_json_string(json.substr(i + 1, j - (i + 1)));
-                    if(not decoded)
-                        return std::nullopt;
-                    if(*decoded == key)
+                    case '"': case '\\': case '/': out.push_back(esc); break;
+                    case 'b': out.push_back('\b'); break;
+                    case 'f': out.push_back('\f'); break;
+                    case 'n': out.push_back('\n'); break;
+                    case 'r': out.push_back('\r'); break;
+                    case 't': out.push_back('\t'); break;
+                    case 'u':
                     {
-                        if(found.has_value())
+                        auto hi = read_hex4();
+                        if(not hi)
                             return std::nullopt;
-                        found = i;
+                        auto code = *hi;
+                        if(code >= 0xD800 and code <= 0xDBFF)
+                        {
+                            // Surrogate pair: require \uDC00–\uDFFF next.
+                            if(peek() != '\\')
+                                return std::nullopt;
+                            ++i;
+                            if(get() != 'u')
+                                return std::nullopt;
+                            auto lo = read_hex4();
+                            if(not lo or *lo < 0xDC00 or *lo > 0xDFFF)
+                                return std::nullopt;
+                            code = 0x10000
+                                + ((code - 0xD800) << 10)
+                                + (*lo - 0xDC00);
+                        }
+                        else if(code >= 0xDC00 and code <= 0xDFFF)
+                        {
+                            return std::nullopt; // lone low surrogate
+                        }
+                        append_utf8(out, static_cast<char32_t>(code));
+                        break;
                     }
+                    default:
+                        return std::nullopt;
                 }
             }
-            in_string = true;
-            continue;
+            return std::nullopt;
         }
-        if(ch == '{' or ch == '[')
-            ++depth;
-        else if(ch == '}' or ch == ']')
-        {
-            if(depth > 0)
-                --depth;
-        }
-    }
-    return found;
-}
 
-inline std::optional<std::string_view> after_json_string(std::string_view json, std::size_t open_quote)
+        [[nodiscard]] std::optional<json> parse_array(std::size_t depth)
+        {
+            if(get() != '[')
+                return std::nullopt;
+            auto v = json{};
+            v.kind = type::array;
+            skip_ws();
+            if(peek() == ']')
+            {
+                ++i;
+                return v;
+            }
+            while(true)
+            {
+                auto elem = parse_value(depth + 1);
+                if(not elem)
+                    return std::nullopt;
+                v.items.push_back(std::move(*elem));
+                skip_ws();
+                if(peek() == ']')
+                {
+                    ++i;
+                    return v;
+                }
+                if(get() != ',')
+                    return std::nullopt;
+                skip_ws();
+            }
+        }
+
+        [[nodiscard]] std::optional<json> parse_object(std::size_t depth)
+        {
+            if(get() != '{')
+                return std::nullopt;
+            auto v = json{};
+            v.kind = type::object;
+            skip_ws();
+            if(peek() == '}')
+            {
+                ++i;
+                return v;
+            }
+            while(true)
+            {
+                skip_ws();
+                auto key = parse_string();
+                if(not key)
+                    return std::nullopt;
+                skip_ws();
+                if(get() != ':')
+                    return std::nullopt;
+                auto val = parse_value(depth + 1);
+                if(not val)
+                    return std::nullopt;
+                if(not v.members.emplace(std::move(key->leaf), std::move(*val)).second)
+                    return std::nullopt;
+                skip_ws();
+                if(peek() == '}')
+                {
+                    ++i;
+                    return v;
+                }
+                if(get() != ',')
+                    return std::nullopt;
+            }
+        }
+    };
+};
+
+// Host / Origin allow patterns.
+// For `host:*`: accept host with no port, or host:port where port is 0–65535
+// (digits only, no leading zeros unless the port is exactly "0").
+class allowlist
 {
-    if(open_quote >= json.size() or json[open_quote] != '"')
-        return std::nullopt;
-    auto escape = false;
-    for(auto i = open_quote + 1; i < json.size(); ++i)
+public:
+
+    allowlist() = default;
+
+    explicit allowlist(std::vector<std::string> patterns)
+        : m_patterns{std::move(patterns)}
     {
-        if(escape)
-            escape = false;
-        else if(json[i] == '\\')
-            escape = true;
-        else if(json[i] == '"')
-            return json.substr(i + 1);
     }
-    return std::nullopt;
-}
 
-inline std::optional<std::string_view> json_string_field(std::string_view json, std::string_view key)
-{
-    const auto key_pos = find_key(json, key);
-    if(not key_pos)
-        return std::nullopt;
-    const auto after_key = after_json_string(json, *key_pos);
-    if(not after_key)
-        return std::nullopt;
-    auto rest = trim_ws(*after_key);
-    if(rest.empty() or rest.front() != ':')
-        return std::nullopt;
-    rest.remove_prefix(1);
-    rest = trim_ws(rest);
-    if(rest.empty() or rest.front() != '"')
-        return std::nullopt;
-    rest.remove_prefix(1);
-    auto out_start = rest;
-    auto i = std::size_t{0};
-    while(i < rest.size())
+    [[nodiscard]] bool empty() const noexcept
     {
-        if(rest[i] == '\\')
-        {
-            i += (i + 1 < rest.size()) ? 2 : 1;
-            continue;
-        }
-        if(rest[i] == '"')
-            return out_start.substr(0, i);
-        ++i;
+        return m_patterns.empty();
     }
-    return std::nullopt;
-}
 
-// Raw JSON value for `id` (number, string, or null) — copied without surrounding spaces.
-inline std::optional<std::string> json_id_field(std::string_view json)
-{
-    const auto key_pos = find_key(json, "id"sv);
-    if(not key_pos)
-        return std::nullopt;
-    const auto after_key = after_json_string(json, *key_pos);
-    if(not after_key)
-        return std::nullopt;
-    auto rest = trim_ws(*after_key);
-    if(rest.empty() or rest.front() != ':')
-        return std::nullopt;
-    rest = trim_ws(rest.substr(1));
-    if(rest.empty())
-        return std::nullopt;
-    if(rest.starts_with("null"sv))
-        return "null"s;
-    if(rest.front() == '"')
+    [[nodiscard]] bool contains(std::string_view value) const
     {
-        // Keep the original quoted token (including escapes) from the request.
-        auto i = std::size_t{1};
-        auto escape = false;
-        while(i < rest.size())
+        for(const auto& p : m_patterns)
         {
-            if(escape)
-                escape = false;
-            else if(rest[i] == '\\')
-                escape = true;
-            else if(rest[i] == '"')
-                return std::string{rest.substr(0, i + 1)};
-            ++i;
+            if(matches(value, p))
+                return true;
         }
-        return std::nullopt;
-    }
-    auto i = std::size_t{0};
-    while(i < rest.size() and rest[i] != ',' and rest[i] != '}' and rest[i] != ' '
-          and rest[i] != '\n' and rest[i] != '\r' and rest[i] != '\t')
-        ++i;
-    return std::string{rest.substr(0, i)};
-}
-
-inline std::optional<std::string_view> json_object_field(std::string_view json, std::string_view key)
-{
-    const auto key_pos = find_key(json, key);
-    if(not key_pos)
-        return std::nullopt;
-    const auto after_key = after_json_string(json, *key_pos);
-    if(not after_key)
-        return std::nullopt;
-    auto rest = trim_ws(*after_key);
-    if(rest.empty() or rest.front() != ':')
-        return std::nullopt;
-    rest = trim_ws(rest.substr(1));
-    if(rest.empty() or rest.front() != '{')
-        return std::nullopt;
-    auto depth = 0;
-    auto in_string = false;
-    auto escape = false;
-    for(std::size_t i = 0; i < rest.size(); ++i)
-    {
-        const auto ch = rest[i];
-        if(in_string)
-        {
-            if(escape)
-                escape = false;
-            else if(ch == '\\')
-                escape = true;
-            else if(ch == '"')
-                in_string = false;
-            continue;
-        }
-        if(ch == '"')
-        {
-            in_string = true;
-            continue;
-        }
-        if(ch == '{')
-            ++depth;
-        else if(ch == '}')
-        {
-            --depth;
-            if(depth == 0)
-                return rest.substr(0, i + 1);
-        }
-    }
-    return std::nullopt;
-}
-
-} // namespace detail
-
-// Host/Origin pattern match: exact, or `host:*` / `http://host:*` (port wildcard).
-inline bool match_allow_pattern(std::string_view value, std::string_view pattern)
-{
-    if(pattern.ends_with(":*"sv))
-    {
-        const auto prefix = pattern.substr(0, pattern.size() - 2);
-        if(value == prefix)
-            return true;
-        if(value.starts_with(prefix) and value.size() > prefix.size() and value[prefix.size()] == ':')
-            return true;
         return false;
     }
-    return value == pattern;
-}
 
-inline bool value_allowed(std::string_view value, std::span<const std::string> patterns)
-{
-    for(const auto& p : patterns)
+    static bool matches(std::string_view value, std::string_view pattern)
     {
-        if(match_allow_pattern(value, p))
-            return true;
-    }
-    return false;
-}
-
-inline std::vector<std::string> default_allowed_hosts()
-{
-    return {"127.0.0.1:*"s, "localhost:*"s, "[::1]:*"s};
-}
-
-inline std::vector<std::string> default_allowed_origins()
-{
-    return {
-        "http://127.0.0.1:*"s,
-        "http://localhost:*"s,
-        "http://[::1]:*"s,
-    };
-}
-
-struct tool_spec
-{
-    std::string name;
-    std::string description;
-    // Opaque JSON object; default empty object schema.
-    std::string input_schema = R"({"type":"object","properties":{}})"s;
-};
-
-struct tool_result
-{
-    std::string text;
-    bool is_error = false;
-};
-
-using list_tools_fn = std::function<std::vector<tool_spec>()>;
-using call_tool_fn = std::function<tool_result(std::string_view name, std::string_view arguments_json)>;
-
-struct server_info
-{
-    std::string name = "net-mcp"s;
-    std::string version = "1.0.0"s;
-    std::string protocol_version = std::string{default_protocol_version};
-};
-
-// JSON-RPC dispatch (unit-testable). Returns nullopt for notifications / no reply.
-inline std::optional<std::string> handle_json_rpc(
-    std::string_view message,
-    const server_info& info,
-    const list_tools_fn& list_tools,
-    const call_tool_fn& call_tool)
-{
-    using detail::json_id_field;
-    using detail::json_object_field;
-    using detail::json_string_field;
-
-    const auto method = json_string_field(message, "method"sv);
-    if(not method)
-    {
-        if(auto id = json_id_field(message))
-            return R"({"jsonrpc":"2.0","id":)"s + *id
-                + R"(,"error":{"code":-32600,"message":"Invalid Request"}})"s;
-        return std::nullopt;
-    }
-
-    const auto id = json_id_field(message);
-
-    if(*method == "notifications/initialized"sv or method->starts_with("notifications/"sv))
-        return std::nullopt;
-
-    if(not id)
-        return std::nullopt;
-
-    auto result_msg = [&](std::string_view result_json)
-    {
-        return R"({"jsonrpc":"2.0","id":)"s + *id + R"(,"result":)"s + std::string{result_json} + "}"s;
-    };
-    auto error_msg = [&](int code, std::string_view msg)
-    {
-        return R"({"jsonrpc":"2.0","id":)"s + *id + R"(,"error":{"code":)"s
-            + std::to_string(code) + R"(,"message":)"s + json_quote(msg) + "}}"s;
-    };
-
-    if(*method == "initialize"sv)
-    {
-        auto result = R"({"protocolVersion":)"s + json_quote(info.protocol_version)
-            + R"(,"capabilities":{"tools":{}},"serverInfo":{"name":)"s
-            + json_quote(info.name) + R"(,"version":)"s + json_quote(info.version) + "}}"s;
-        return result_msg(result);
-    }
-
-    if(*method == "ping"sv)
-        return result_msg("{}"sv);
-
-    if(*method == "tools/list"sv)
-    {
-        auto tools_json = "["s;
-        if(list_tools)
+        auto ieq = [](std::string_view a, std::string_view b)
         {
-            auto first = true;
-            for(const auto& tool : list_tools())
+            if(a.size() != b.size())
+                return false;
+            for(std::size_t n = 0; n < a.size(); ++n)
             {
-                if(not first)
-                    tools_json.push_back(',');
-                first = false;
-                tools_json += R"({"name":)"s + json_quote(tool.name)
-                    + R"(,"description":)"s + json_quote(tool.description)
-                    + R"(,"inputSchema":)"s + tool.input_schema + "}"s;
+                auto ca = a[n];
+                auto cb = b[n];
+                if(ca >= 'A' and ca <= 'Z')
+                    ca = static_cast<char>(ca - 'A' + 'a');
+                if(cb >= 'A' and cb <= 'Z')
+                    cb = static_cast<char>(cb - 'A' + 'a');
+                if(ca != cb)
+                    return false;
             }
+            return true;
+        };
+
+        if(pattern.ends_with(":*"sv))
+        {
+            const auto prefix = pattern.substr(0, pattern.size() - 2);
+            if(ieq(value, prefix))
+                return true; // host-only (no port present)
+            if(value.size() <= prefix.size() or value[prefix.size()] != ':')
+                return false;
+            if(not ieq(value.substr(0, prefix.size()), prefix))
+                return false;
+            const auto port = value.substr(prefix.size() + 1);
+            if(port.empty() or port.size() > 5)
+                return false;
+            if(not std::ranges::all_of(port, [](char c) {
+                    return c >= '0' and c <= '9';
+                }))
+                return false;
+            if(port.size() > 1 and port.front() == '0')
+                return false;
+            unsigned long n = 0;
+            for(const auto c : port)
+                n = n * 10 + static_cast<unsigned long>(c - '0');
+            return n <= 65535;
         }
-        tools_json.push_back(']');
-        return result_msg(R"({"tools":)"s + tools_json + "}"s);
+        return ieq(value, pattern);
     }
 
-    if(*method == "tools/call"sv)
+    static allowlist localhost_hosts()
     {
-        const auto params = json_object_field(message, "params"sv).value_or("{}"sv);
-        const auto name = json_string_field(params, "name"sv);
-        if(not name)
-            return error_msg(-32602, "Missing tool name"sv);
-
-        if(list_tools)
-        {
-            const auto tools = list_tools();
-            const auto known = std::ranges::any_of(tools, [&](const tool_spec& t) {
-                return t.name == *name;
-            });
-            if(not known)
-                return error_msg(-32601, "Unknown tool: "s + std::string{*name});
-        }
-
-        const auto arguments = json_object_field(params, "arguments"sv).value_or("{}"sv);
-        if(not call_tool)
-            return error_msg(-32601, "Unknown tool: "s + std::string{*name});
-        try
-        {
-            const auto result = call_tool(*name, arguments);
-            auto body = R"({"content":[{"type":"text","text":)"s + json_quote(result.text) + "}]"s;
-            if(result.is_error)
-                body += R"(,"isError":true)"s;
-            body.push_back('}');
-            return result_msg(body);
-        }
-        catch(const std::exception& e)
-        {
-            auto body = R"({"content":[{"type":"text","text":)"s
-                + json_quote("error: "s + e.what()) + R"(}],"isError":true})"s;
-            return result_msg(body);
-        }
+        return allowlist{{"127.0.0.1:*"s, "localhost:*"s, "[::1]:*"s}};
     }
 
-    return error_msg(-32601, "Method not found: "s + std::string{*method});
-}
+    static allowlist localhost_origins()
+    {
+        return allowlist{{
+            "http://127.0.0.1:*"s,
+            "http://localhost:*"s,
+            "http://[::1]:*"s,
+        }};
+    }
 
-namespace detail
+private:
+
+    std::vector<std::string> m_patterns;
+};
+
+[[nodiscard]] inline std::optional<std::string> query_param(
+    std::string_view request_target,
+    std::string_view key)
 {
+    const auto u = http::uri{request_target};
+    const auto q = static_cast<std::string_view>(u.query);
+    if(q.empty())
+        return std::nullopt;
+
+    for(const auto part : u.query)
+    {
+        const auto eq = part.find('=');
+        const auto name = eq == std::string_view::npos ? part : part.substr(0, eq);
+        if(name != key)
+            continue;
+        if(eq == std::string_view::npos)
+            return ""s;
+        return std::string{part.substr(eq + 1)};
+    }
+    return std::nullopt;
+}
 
 struct session_state
 {
@@ -571,15 +681,252 @@ struct session_state
     std::mutex mutex;
     std::condition_variable cv;
     std::deque<std::string> inbound;
+    std::size_t inbound_bytes = 0;
     bool closed = false;
 };
 
+inline std::string rpc_error(std::string_view id_token, int code, std::string_view message)
+{
+    return R"({"jsonrpc":"2.0","id":)"s + std::string{id_token}
+        + R"(,"error":{"code":)"s + std::to_string(code)
+        + R"(,"message":)"s + json::quote(message) + "}}"s;
+}
+
+[[nodiscard]] inline bool is_json_content_type(std::string_view value)
+{
+    const auto is_ows = [](char ch) { return ch == ' ' or ch == '\t'; };
+    while(not value.empty() and is_ows(value.front()))
+        value.remove_prefix(1);
+
+    constexpr auto media_type = "application/json"sv;
+    if(value.size() < media_type.size())
+        return false;
+    for(auto n = std::size_t{0}; n < media_type.size(); ++n)
+    {
+        auto ch = value[n];
+        if(ch >= 'A' and ch <= 'Z')
+            ch = static_cast<char>(ch - 'A' + 'a');
+        if(ch != media_type[n])
+            return false;
+    }
+
+    value.remove_prefix(media_type.size());
+    while(not value.empty() and is_ows(value.front()))
+        value.remove_prefix(1);
+    return value.empty() or value.front() == ';';
+}
+
 } // namespace detail
 
-// Per-connection MCP SSE session. Lives on the SSE thread; POSTs enqueue here.
+export namespace http::mcp
+{
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+struct tool_spec
+{
+    std::string name;
+    std::string description;
+    std::string input_schema = R"({"type":"object","properties":{}})"s;
+};
+
+struct tool_result
+{
+    std::string text;
+    bool is_error = false;
+};
+
+using list_tools_fn = std::function<std::vector<tool_spec>()>;
+// arguments_json is a normalized re-serialization of the arguments object
+// (sorted keys, canonical escapes) — not a byte-identical client substring.
+using call_tool_fn = std::function<tool_result(std::string_view name, std::string_view arguments_json)>;
+
+struct server_info
+{
+    std::string name = "net-mcp"s;
+    std::string version = "1.0.0"s;
+    std::string protocol_version = std::string{default_protocol_version};
+};
+
+// JSON-RPC dispatch. Full strict parse first — malformed JSON never reaches
+// call_tool. Parse failures return -32700; invalid envelope/id return -32600.
+class dispatcher
+{
+public:
+
+    dispatcher& info(server_info info)
+    {
+        m_info = std::move(info);
+        return *this;
+    }
+
+    dispatcher& list_tools(list_tools_fn fn)
+    {
+        m_list_tools = std::move(fn);
+        return *this;
+    }
+
+    dispatcher& call_tool(call_tool_fn fn)
+    {
+        m_call_tool = std::move(fn);
+        return *this;
+    }
+
+    [[nodiscard]] std::optional<std::string> handle(std::string_view message) const
+    {
+        const auto root = detail::json::parse(message);
+        if(not root)
+            return detail::rpc_error("null"sv, -32700, "Parse error"sv);
+        if(not root->is_object())
+            return detail::rpc_error("null"sv, -32600, "Invalid Request"sv);
+
+        const auto id = root->id();
+
+        // Invalid id type (true, {}, []) → Invalid Request, not a notification.
+        if(id.kind == detail::json::id_kind::invalid)
+            return detail::rpc_error("null"sv, -32600, "Invalid Request"sv);
+
+        // Require JSON-RPC 2.0 envelope.
+        const auto jsonrpc = root->string_member("jsonrpc"sv);
+        if(not jsonrpc or *jsonrpc != "2.0"sv)
+        {
+            const auto token = id.kind == detail::json::id_kind::valid ? id.token : "null"s;
+            return detail::rpc_error(token, -32600, "Invalid Request"sv);
+        }
+
+        const auto method = root->string_member("method"sv);
+        if(not method)
+        {
+            if(id.kind == detail::json::id_kind::absent)
+                return std::nullopt; // malformed notification — no reply
+            return detail::rpc_error(id.token, -32600, "Invalid Request"sv);
+        }
+
+        // Notifications: no id → no response.
+        if(id.kind == detail::json::id_kind::absent)
+            return std::nullopt;
+
+        if(method->starts_with("notifications/"sv))
+            return std::nullopt;
+
+        auto result_msg = [&](std::string_view result_json)
+        {
+            return R"({"jsonrpc":"2.0","id":)"s + id.token
+                + R"(,"result":)"s + std::string{result_json} + "}"s;
+        };
+        auto error_msg = [&](int code, std::string_view msg)
+        {
+            return detail::rpc_error(id.token, code, msg);
+        };
+
+        if(*method == "initialize"sv)
+        {
+            auto result = R"({"protocolVersion":)"s + detail::json::quote(m_info.protocol_version)
+                + R"(,"capabilities":{"tools":{}},"serverInfo":{"name":)"s
+                + detail::json::quote(m_info.name) + R"(,"version":)"s
+                + detail::json::quote(m_info.version) + "}}"s;
+            return result_msg(result);
+        }
+
+        if(*method == "ping"sv)
+            return result_msg("{}"sv);
+
+        if(*method == "tools/list"sv)
+        {
+            auto tools_json = "["s;
+            if(m_list_tools)
+            {
+                auto first = true;
+                for(const auto& tool : m_list_tools())
+                {
+                    if(not first)
+                        tools_json.push_back(',');
+                    first = false;
+                    tools_json += R"({"name":)"s + detail::json::quote(tool.name)
+                        + R"(,"description":)"s + detail::json::quote(tool.description)
+                        + R"(,"inputSchema":)"s + tool.input_schema + "}"s;
+                }
+            }
+            tools_json.push_back(']');
+            return result_msg(R"({"tools":)"s + tools_json + "}"s);
+        }
+
+        if(*method == "tools/call"sv)
+        {
+            const auto* params = root->member("params"sv);
+            if(not params or not params->is_object())
+                return error_msg(-32602, "Invalid params"sv);
+
+            const auto name = params->string_member("name"sv);
+            if(not name)
+                return error_msg(-32602, "Missing tool name"sv);
+
+            if(m_list_tools)
+            {
+                const auto tools = m_list_tools();
+                const auto known = std::ranges::any_of(tools, [&](const tool_spec& t) {
+                    return t.name == *name;
+                });
+                if(not known)
+                    return error_msg(-32601, "Unknown tool: "s + std::string{*name});
+            }
+
+            // Normalized dump() — sorted keys / canonical escapes (see call_tool_fn).
+            auto arguments_json = "{}"s;
+            if(const auto* args = params->member("arguments"sv))
+            {
+                if(not args->is_object())
+                    return error_msg(-32602, "Invalid arguments"sv);
+                arguments_json = args->dump();
+            }
+
+            if(not m_call_tool)
+                return error_msg(-32601, "Unknown tool: "s + std::string{*name});
+            try
+            {
+                const auto result = m_call_tool(*name, arguments_json);
+                auto body = R"({"content":[{"type":"text","text":)"s
+                    + detail::json::quote(result.text) + "}]"s;
+                if(result.is_error)
+                    body += R"(,"isError":true)"s;
+                body.push_back('}');
+                return result_msg(body);
+            }
+            catch(const std::exception& e)
+            {
+                auto body = R"({"content":[{"type":"text","text":)"s
+                    + detail::json::quote("error: "s + e.what())
+                    + R"(}],"isError":true})"s;
+                return result_msg(body);
+            }
+        }
+
+        return error_msg(-32601, "Method not found: "s + std::string{*method});
+    }
+
+private:
+
+    server_info m_info{};
+    list_tools_fn m_list_tools;
+    call_tool_fn m_call_tool;
+};
+
+// ---------------------------------------------------------------------------
+// session / transport / server
+// ---------------------------------------------------------------------------
+
 class session
 {
 public:
+
+    static std::string make_id()
+    {
+        auto id = net::generate_uuid_v4();
+        id.erase(std::remove(id.begin(), id.end(), '-'), id.end());
+        return id;
+    }
 
     session(std::shared_ptr<detail::session_state> state, sse::session& stream) noexcept
         : m_state{std::move(state)}
@@ -628,6 +975,7 @@ public:
 
         auto msg = std::move(m_state->inbound.front());
         m_state->inbound.pop_front();
+        m_state->inbound_bytes -= std::min(m_state->inbound_bytes, msg.size());
         return msg;
     }
 
@@ -638,13 +986,9 @@ private:
 };
 
 using session_handler = std::function<void(session&)>;
-// `body` is empty on SSE open and the JSON-RPC payload on POST /messages/.
-// Apps that need method/tool-aware auth (e.g. separate data vs admin PATs) inspect
-// the body on POST; Host/Origin and simple Bearer checks ignore it.
 using request_gate = std::function<
     std::optional<response_with_headers>(request_view, headers&, body_view)>;
 
-// Legacy MCP HTTP+SSE transport (session layer).
 class sse_transport
 {
 public:
@@ -674,7 +1018,6 @@ public:
         auto& sse_ctrl = server.sse(sse_path);
         if(gate)
         {
-            // SSE controller gate has no body; pass an empty view.
             sse_ctrl.gate([gate](request_view req, headers& hdr) {
                 return gate(req, hdr, body_view{});
             });
@@ -685,7 +1028,7 @@ public:
         sse_ctrl.sse(
             [this, on_session = std::move(on_session)](sse::session& stream, request_view, headers&)
             {
-                const auto id = make_session_id();
+                const auto id = session::make_id();
                 auto state = std::make_shared<detail::session_state>(id);
                 {
                     std::lock_guard lock{m_mutex};
@@ -722,15 +1065,12 @@ public:
                         return *denied;
                 }
 
-                if(hdr.contains("content-type"s))
-                {
-                    auto ct = hdr["content-type"s];
-                    utils::ascii_to_lower(ct);
-                    if(not ct.starts_with("application/json"sv))
-                        return make_error_response(status_bad_request, "Content-Type must be application/json"sv);
-                }
+                if(not hdr.contains("content-type"s))
+                    return make_error_response(status_bad_request, "Content-Type must be application/json"sv);
+                if(not detail::is_json_content_type(hdr["content-type"s]))
+                    return make_error_response(status_bad_request, "Content-Type must be application/json"sv);
 
-                const auto sid = query_param(req, "session_id"sv);
+                const auto sid = detail::query_param(req, "session_id"sv);
                 if(not sid.has_value() or sid->empty())
                     return make_error_response(status_bad_request, "session_id is required"sv);
 
@@ -747,6 +1087,10 @@ public:
                     std::lock_guard lock{state->mutex};
                     if(state->closed)
                         return make_error_response(status_not_found, "Could not find session"sv);
+                    if(state->inbound.size() >= max_session_inbound
+                       or state->inbound_bytes + body.size() > max_session_inbound_bytes)
+                        return make_error_response(status_too_many_requests, "Session inbound queue full"sv);
+                    state->inbound_bytes += body.size();
                     state->inbound.emplace_back(body);
                 }
                 state->cv.notify_one();
@@ -777,6 +1121,7 @@ private:
             std::lock_guard lock{state->mutex};
             state->closed = true;
             state->inbound.clear();
+            state->inbound_bytes = 0;
         }
         state->cv.notify_all();
         std::lock_guard lock{m_mutex};
@@ -788,7 +1133,6 @@ private:
     std::flat_map<std::string, std::shared_ptr<detail::session_state>> m_sessions;
 };
 
-// MCP protocol server (M5): JSON-RPC loop + DNS-rebinding Host/Origin defaults.
 class server
 {
 public:
@@ -800,31 +1144,31 @@ public:
 
     server& info(server_info info)
     {
-        m_info = std::move(info);
+        m_dispatcher.info(std::move(info));
         return *this;
     }
 
     server& list_tools(list_tools_fn fn)
     {
-        m_list_tools = std::move(fn);
+        m_dispatcher.list_tools(std::move(fn));
         return *this;
     }
 
     server& call_tool(call_tool_fn fn)
     {
-        m_call_tool = std::move(fn);
+        m_dispatcher.call_tool(std::move(fn));
         return *this;
     }
 
     server& allowed_hosts(std::vector<std::string> hosts)
     {
-        m_allowed_hosts = std::move(hosts);
+        m_allowed_hosts = detail::allowlist{std::move(hosts)};
         return *this;
     }
 
     server& allowed_origins(std::vector<std::string> origins)
     {
-        m_allowed_origins = std::move(origins);
+        m_allowed_origins = detail::allowlist{std::move(origins)};
         return *this;
     }
 
@@ -834,35 +1178,38 @@ public:
         return *this;
     }
 
-    // Optional app auth (e.g. Bearer PAT). Runs after Host/Origin on SSE open and
-    // every POST /messages/. Net does not invent a second PAT system — apps supply
-    // the same check they use on ordinary HTTP routes.
     server& authorize(request_gate gate)
     {
         m_authorize = std::move(gate);
         return *this;
     }
 
-    // Register SSE + POST on `http`. `*this` must outlive listen/stop.
+    // Registers SSE + POST. Also enforces max_request_body_bytes on `http`
+    // so a single POST cannot allocate unbounded memory before the session queue.
     void attach(http::server& http, std::string_view sse_path = "/sse")
     {
+        if(http.max_request_body_size() > max_request_body_bytes
+           or http.max_request_body_size() == std::numeric_limits<std::size_t>::max())
+        {
+            http.max_request_body_size(max_request_body_bytes);
+        }
+
         if(m_dns_rebinding_protection)
         {
             if(m_allowed_hosts.empty())
-                m_allowed_hosts = default_allowed_hosts();
+                m_allowed_hosts = detail::allowlist::localhost_hosts();
             if(m_allowed_origins.empty())
-                m_allowed_origins = default_allowed_origins();
+                m_allowed_origins = detail::allowlist::localhost_origins();
         }
 
         auto gate = [this](request_view req, headers& hdr, body_view body) -> std::optional<response_with_headers>
         {
             if(m_dns_rebinding_protection)
             {
-                if(not hdr.contains("host"s) or not value_allowed(hdr["host"s], m_allowed_hosts))
+                if(not hdr.contains("host"s) or not m_allowed_hosts.contains(hdr["host"s]))
                     return make_error_response(status_forbidden, "Invalid Host header"sv);
 
-                // Origin is optional (non-browser clients); when present it must match.
-                if(hdr.contains("origin"s) and not value_allowed(hdr["origin"s], m_allowed_origins))
+                if(hdr.contains("origin"s) and not m_allowed_origins.contains(hdr["origin"s]))
                     return make_error_response(status_forbidden, "Invalid Origin header"sv);
             }
 
@@ -880,7 +1227,7 @@ public:
         {
             cors = [this](std::string_view origin)
             {
-                return value_allowed(origin, m_allowed_origins);
+                return m_allowed_origins.contains(origin);
             };
         }
 
@@ -900,14 +1247,15 @@ public:
         return m_transport;
     }
 
+    [[nodiscard]] static bool host_pattern_matches(std::string_view value, std::string_view pattern)
+    {
+        return detail::allowlist::matches(value, pattern);
+    }
+
 private:
 
     void run_session(session& sess)
     {
-        // recv(0) waits forever on the inbound CV and is not woken by a TCP
-        // half-close. Without a periodic write probe, every client disconnect
-        // leaks the handler thread and leaves the session_id in m_sessions
-        // until an unrelated POST happens to arrive.
         constexpr auto heartbeat = std::chrono::seconds{1};
         while(not sess.closed())
         {
@@ -918,7 +1266,7 @@ private:
                     break;
                 continue;
             }
-            if(auto reply = handle_json_rpc(*msg, m_info, m_list_tools, m_call_tool))
+            if(auto reply = m_dispatcher.handle(*msg))
             {
                 if(not sess.send_message(*reply))
                     break;
@@ -927,11 +1275,9 @@ private:
     }
 
     sse_transport m_transport;
-    server_info m_info{};
-    list_tools_fn m_list_tools;
-    call_tool_fn m_call_tool;
-    std::vector<std::string> m_allowed_hosts;
-    std::vector<std::string> m_allowed_origins;
+    dispatcher m_dispatcher;
+    detail::allowlist m_allowed_hosts;
+    detail::allowlist m_allowed_origins;
     bool m_dns_rebinding_protection = true;
     request_gate m_authorize;
 };
