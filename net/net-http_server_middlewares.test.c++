@@ -27,7 +27,7 @@ auto register_middleware_tests()
             constexpr std::size_t max_size = 100;
             auto mw = ::http::middleware::body_size_validation_middleware(max_size);
             
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             
@@ -60,7 +60,7 @@ auto register_middleware_tests()
             constexpr std::size_t max_size = 100;
             auto mw = ::http::middleware::body_size_validation_middleware(max_size);
             
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             
@@ -86,7 +86,7 @@ auto register_middleware_tests()
         tester::bdd::given("A middleware requiring application/json") = [] {
             auto mw = ::http::middleware::accept_validation_middleware("application/json"sv);
             
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             
@@ -120,7 +120,7 @@ auto register_middleware_tests()
         tester::bdd::given("A middleware requiring application/json") = [] {
             auto mw = ::http::middleware::accept_validation_middleware("application/json"sv);
             
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             
@@ -167,7 +167,7 @@ auto register_middleware_tests()
         tester::bdd::given("A middleware requiring text/xml") = [] {
             auto mw = ::http::middleware::accept_validation_middleware("text/xml"sv);
             
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             
@@ -205,18 +205,18 @@ auto register_middleware_tests()
 
     tester::bdd::scenario("authentication_middleware - rejects unauthenticated requests, [net]") = [] {
         tester::bdd::given("A middleware requiring authentication") = [] {
-            auto is_public = [](std::string_view path) -> bool {
+            auto is_public = [](std::string_view path){
                 return path == "/public"sv;
             };
             
             auto valid_tokens = std::make_shared<std::set<std::string>>(std::set<std::string>{"Bearer token123", "Bearer admin"});
-            auto validate_token = [valid_tokens](std::string_view token) -> bool {
+            auto validate_token = [valid_tokens](std::string_view token){
                 return valid_tokens->contains(std::string{token});
             };
             
             auto mw = ::http::middleware::authentication_middleware(is_public, validate_token, "Test Realm"sv);
             
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             
@@ -245,15 +245,15 @@ auto register_middleware_tests()
 
     tester::bdd::scenario("authentication_middleware - allows public paths, [net]") = [] {
         tester::bdd::given("A middleware with public paths") = [] {
-            auto is_public = [](std::string_view path) -> bool {
+            auto is_public = [](std::string_view path){
                 return path == "/public"sv or path == "/health"sv;
             };
             
-            auto validate_token = [](std::string_view) -> bool { return false; };
+            auto validate_token = [](std::string_view){ return false; };
             
             auto mw = ::http::middleware::authentication_middleware(is_public, validate_token);
             
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             
@@ -276,16 +276,16 @@ auto register_middleware_tests()
 
     tester::bdd::scenario("authentication_middleware - validates tokens, [net]") = [] {
         tester::bdd::given("A middleware with token validation") = [] {
-            auto is_public = [](std::string_view) -> bool { return false; };
+            auto is_public = [](std::string_view){ return false; };
             
             auto valid_tokens = std::make_shared<std::set<std::string>>(std::set<std::string>{"Bearer valid-token", "Bearer admin-key"});
-            auto validate_token = [valid_tokens](std::string_view token) -> bool {
+            auto validate_token = [valid_tokens](std::string_view token){
                 return valid_tokens->contains(std::string{token});
             };
             
             auto mw = ::http::middleware::authentication_middleware(is_public, validate_token);
             
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             
@@ -309,16 +309,16 @@ auto register_middleware_tests()
 
     tester::bdd::scenario("authentication_middleware - rejects invalid tokens, [net]") = [] {
         tester::bdd::given("A middleware with token validation") = [] {
-            auto is_public = [](std::string_view) -> bool { return false; };
+            auto is_public = [](std::string_view){ return false; };
             
             auto valid_tokens = std::make_shared<std::set<std::string>>(std::set<std::string>{"Bearer valid-token"});
-            auto validate_token = [valid_tokens](std::string_view token) -> bool {
+            auto validate_token = [valid_tokens](std::string_view token){
                 return valid_tokens->contains(std::string{token});
             };
             
             auto mw = ::http::middleware::authentication_middleware(is_public, validate_token);
             
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             
@@ -345,7 +345,7 @@ auto register_middleware_tests()
             auto allowed_origin = [](std::string_view) { return true; };
             auto mw = ::http::middleware::cors_middleware(allowed_origin);
             
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             
@@ -383,7 +383,7 @@ auto register_middleware_tests()
             auto allowed_origin = [](std::string_view) { return true; };
             auto mw = ::http::middleware::cors_middleware(allowed_origin);
             
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             
@@ -411,13 +411,13 @@ auto register_middleware_tests()
     tester::bdd::scenario("cors_middleware - respects allowed origin policy, [net]") = [] {
         tester::bdd::given("A CORS middleware with restricted origins") = [] {
             auto allowed_origins = std::make_shared<std::set<std::string>>(std::set<std::string>{"https://example.com", "https://trusted.com"});
-            auto allowed_origin = [allowed_origins](std::string_view origin) -> bool {
+            auto allowed_origin = [allowed_origins](std::string_view origin){
                 return allowed_origins->contains(std::string{origin});
             };
             
             auto mw = ::http::middleware::cors_middleware(allowed_origin);
             
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             
@@ -446,13 +446,13 @@ auto register_middleware_tests()
     tester::bdd::scenario("cors_middleware - omits ACAO for disallowed origin, [net]") = [] {
         tester::bdd::given("A CORS middleware with restricted origins") = [] {
             auto allowed_origins = std::make_shared<std::set<std::string>>(std::set<std::string>{"https://example.com"});
-            auto allowed_origin = [allowed_origins](std::string_view origin) -> bool {
+            auto allowed_origin = [allowed_origins](std::string_view origin){
                 return allowed_origins->contains(std::string{origin});
             };
             
             auto mw = ::http::middleware::cors_middleware(allowed_origin);
             
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             
@@ -484,7 +484,7 @@ auto register_middleware_tests()
             auto allowed_origin = [](std::string_view) { return true; };
             auto mw = ::http::middleware::cors_middleware(allowed_origin, {}, {}, true, std::make_optional(3600));
             
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             
@@ -516,7 +516,7 @@ auto register_middleware_tests()
             auto allowed_origin = [](std::string_view) { return true; };
             auto mw = ::http::middleware::cors_middleware(allowed_origin);
             
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 auto existing_headers = ::http::headers{};
                 existing_headers.set("custom-header"s, "custom-value"s);
                 return ::http::make_response(::http::status_ok, "OK"s, std::make_optional(existing_headers));
@@ -552,7 +552,7 @@ auto register_middleware_tests()
         tester::bdd::given("A correlation ID middleware") = [] {
             auto mw = ::http::middleware::correlation_id_middleware();
             
-            auto handler = [](auto&&, auto&&, const auto& hdr) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, const auto& hdr){
                 using namespace std::string_literals;
                 auto headers = ::http::headers{};
                 if(hdr.contains("x-correlation-id"s))
@@ -592,7 +592,7 @@ auto register_middleware_tests()
         tester::bdd::given("A correlation ID middleware") = [] {
             auto mw = ::http::middleware::correlation_id_middleware();
             
-            auto handler = [](auto&&, auto&&, const auto& hdr) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, const auto& hdr){
                 using namespace std::string_literals;
                 auto headers = ::http::headers{};
                 if(hdr.contains("x-correlation-id"s))
@@ -628,7 +628,7 @@ auto register_middleware_tests()
         tester::bdd::given("A correlation ID middleware") = [] {
             auto mw = ::http::middleware::correlation_id_middleware();
             
-            auto handler = [](auto&&, auto&&, const auto& hdr) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, const auto& hdr){
                 using namespace std::string_literals;
                 auto response_headers = ::http::headers{};
                 // Copy all headers to response
@@ -673,7 +673,7 @@ auto register_middleware_tests()
             
             auto mw = ::http::middleware::rate_limiting_middleware(5, std::chrono::seconds{60}, key_extractor);
             
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             
@@ -702,7 +702,7 @@ auto register_middleware_tests()
             
             auto mw = ::http::middleware::rate_limiting_middleware(2, std::chrono::seconds{60}, key_extractor);
             
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             
@@ -745,7 +745,7 @@ auto register_middleware_tests()
             
             auto mw = ::http::middleware::rate_limiting_middleware(1, std::chrono::seconds{60}, key_extractor);
             
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             
@@ -773,7 +773,7 @@ auto register_middleware_tests()
         tester::bdd::given("A metrics middleware with a successful handler") = [] {
             ::http::middleware::http_metrics().reset();
             auto mw = ::http::middleware::metrics_middleware();
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             auto wrapped = mw(handler);
@@ -809,7 +809,7 @@ auto register_middleware_tests()
         tester::bdd::given("A metrics middleware with a 404 handler") = [] {
             ::http::middleware::http_metrics().reset();
             auto mw = ::http::middleware::metrics_middleware();
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_not_found, "missing"s, std::optional<::http::headers>{});
             };
             auto wrapped = mw(handler);
@@ -834,7 +834,7 @@ auto register_middleware_tests()
         tester::bdd::given("A metrics middleware with a successful handler") = [] {
             ::http::middleware::http_metrics().reset();
             auto mw = ::http::middleware::metrics_middleware();
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             auto wrapped = mw(handler);
@@ -860,7 +860,7 @@ auto register_middleware_tests()
         tester::bdd::given("A metrics middleware with a successful handler") = [] {
             ::http::middleware::http_metrics().reset();
             auto mw = ::http::middleware::metrics_middleware();
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             auto wrapped = mw(handler);
@@ -959,7 +959,7 @@ auto register_middleware_tests()
         tester::bdd::given("A metrics middleware with a successful handler") = [] {
             ::http::middleware::http_metrics().reset();
             auto mw = ::http::middleware::metrics_middleware();
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             auto wrapped = mw(handler);
@@ -985,7 +985,7 @@ auto register_middleware_tests()
         tester::bdd::given("A metrics middleware with a successful handler") = [] {
             ::http::middleware::http_metrics().reset();
             auto mw = ::http::middleware::metrics_middleware();
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             auto wrapped = mw(handler);
@@ -1011,7 +1011,7 @@ auto register_middleware_tests()
         tester::bdd::given("A reset metrics registry") = [] {
             ::http::middleware::http_metrics().reset();
             auto mw = ::http::middleware::metrics_middleware();
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
             };
             auto wrapped = mw(handler);
@@ -1033,7 +1033,7 @@ auto register_middleware_tests()
         tester::bdd::given("A metrics middleware mimicking http::server (URI + method header)") = [] {
             ::http::middleware::http_metrics().reset();
             auto mw = ::http::middleware::metrics_middleware();
-            auto handler = [](auto&&, auto&&, auto&&) -> ::http::response_with_headers {
+            auto handler = [](auto&&, auto&&, auto&&){
                 return ::http::make_response(::http::status_created, "created"s, std::optional<::http::headers>{});
             };
             auto wrapped = mw(handler);

@@ -39,7 +39,7 @@ auto register_server_tests()
         tester::bdd::given("An HTTP server with registered routes") = [] {
     auto handler = [](std::string_view request,
                       std::string_view,
-                      const http::headers&) -> http::response_with_headers
+                      const http::headers&)
         {return http::make_response("200 OK"s, "<p>" + std::string{request} + "</p>"s);};
 
             auto server = std::make_shared<http::server>();
@@ -342,7 +342,7 @@ auto register_server_tests()
         .redirect(*captured_output);
 
             auto server = std::make_shared<http::server>();
-            server->get("/slow").response_handler("text/plain", [](auto&&, auto&&, auto&&) -> http::response_with_headers {
+            server->get("/slow").response_handler("text/plain", [](auto&&, auto&&, auto&&) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         return http::make_response("200 OK"s, "Slow response"s);
     });
@@ -1523,7 +1523,7 @@ auto register_server_tests()
                 true,
                 std::optional<int>{3600});
 
-            auto post_handler = [handler_invoked](auto&&, auto&&, auto&&) -> http::response_with_headers {
+            auto post_handler = [handler_invoked](auto&&, auto&&, auto&&){
                 handler_invoked->store(true);
                 return http::make_response(http::status_created, "Created"s, std::optional<http::headers>{});
             };
@@ -1612,7 +1612,7 @@ auto register_server_tests()
             auto handler_invoked = std::make_shared<std::atomic<bool>>(false);
 
             server->post("/api/mutate").response_handler("application/json",
-                [handler_invoked](auto&&, auto&&, auto&&) -> http::response_with_headers {
+                [handler_invoked](auto&&, auto&&, auto&&){
                     handler_invoked->store(true);
                     return http::make_response(http::status_created, "mutated"s);
                 });

@@ -754,7 +754,7 @@ public:
 
         server.post(post_pattern).response(
             "text/plain"sv,
-            [this, gate](request_view req, body_view body, headers& hdr) -> response_with_headers
+            [this, gate](request_view req, body_view body, headers& hdr)
             {
                 if(gate)
                 {

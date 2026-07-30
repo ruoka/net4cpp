@@ -6,6 +6,8 @@ export module net:structured_log_stream;
 import std;
 import :posix;
 
+using namespace std::string_literals;
+
 export namespace net::syslog {
 
 // Public API enums - used by external code (yardb, yarproxy, etc.)
@@ -211,14 +213,14 @@ private:
     }
 
     static std::string value_to_str(const detail::value& v) {
-        return std::visit([](auto&& arg) -> std::string {
+        return std::visit([](auto&& arg){
             using T = std::decay_t<decltype(arg)>;
-            if constexpr (std::is_same_v<T, std::nullptr_t>) return "null";
-            if constexpr (std::is_same_v<T, bool>)           return arg ? "true" : "false";
+            if constexpr (std::is_same_v<T, std::nullptr_t>) return "null"s;
+            if constexpr (std::is_same_v<T, bool>)           return arg ? "true"s : "false"s;
             if constexpr (std::is_same_v<T, std::string>)   return arg;
             if constexpr (std::is_integral_v<T>)             return std::to_string(arg);
             if constexpr (std::is_floating_point_v<T>)       return std::to_string(arg);
-            return "";  // Should never reach here
+            return ""s;  // Should never reach here
         }, v);
     }
 

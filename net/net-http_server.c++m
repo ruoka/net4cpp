@@ -104,37 +104,37 @@ public:
     void text(const content& c)
     {
         m_content_type = "text/plain";
-        m_callback = [c](auto&&...) -> ::http::response_with_headers { return make_response(status_ok, c); };
+        m_callback = [c](auto&&...){ return make_response(status_ok, c); };
     }
 
     void html(const content& c)
     {
         m_content_type = "text/html";
-        m_callback = [c](auto&&...) -> ::http::response_with_headers { return make_response(status_ok, c); };
+        m_callback = [c](auto&&...){ return make_response(status_ok, c); };
     }
 
     void css(const content& c)
     {
         m_content_type = "text/css";
-        m_callback = [c](auto&&...) -> ::http::response_with_headers { return make_response(status_ok, c); };
+        m_callback = [c](auto&&...){ return make_response(status_ok, c); };
     }
 
     void script(const content& c)
     {
         m_content_type = "application/javascript";
-        m_callback = [c](auto&&...) -> ::http::response_with_headers { return make_response(status_ok, c); };
+        m_callback = [c](auto&&...){ return make_response(status_ok, c); };
     }
 
     void json(const content& c)
     {
         m_content_type = "application/json";
-        m_callback = [c](auto&&...) -> ::http::response_with_headers { return make_response(status_ok, c); };
+        m_callback = [c](auto&&...){ return make_response(status_ok, c); };
     }
 
     void xml(const content& c)
     {
         m_content_type = "application/xml";
-        m_callback = [c](auto&&...) -> ::http::response_with_headers { return make_response(status_ok, c); };
+        m_callback = [c](auto&&...){ return make_response(status_ok, c); };
     }
 
     void response_handler(std::string_view ct, callback cb)
@@ -246,7 +246,7 @@ public:
 private:
 
     content_type m_content_type = "*/*";
-    callback m_callback = [](request_view, body_view, headers&) -> ::http::response_with_headers { return make_response(status_ok, "Not Found"s); };
+    callback m_callback = [](request_view, body_view, headers&){ return make_response(status_ok, "Not Found"s); };
     websocket_callback m_ws_callback;
     sse_callback m_sse_callback;
     std::function<bool(std::string_view)> m_cors_origin;

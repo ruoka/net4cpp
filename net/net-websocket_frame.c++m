@@ -340,13 +340,13 @@ inline frame_read read_frame(std::istream& is, frame& f)
 {
     return read_frame_impl(
         f,
-        [&]() -> int {
+        [&](){
             const auto c = is.get();
             if(not is)
                 return -1;
             return c;
         },
-        [&](std::span<std::byte> dest) -> bool {
+        [&](std::span<std::byte> dest){
             is.read(reinterpret_cast<char*>(dest.data()), static_cast<std::streamsize>(dest.size()));
             return static_cast<bool>(is)
                 and static_cast<std::size_t>(is.gcount()) == dest.size();
@@ -359,7 +359,7 @@ inline frame_read read_frame(std::istream& is, frame& f)
 template<class EnsureReadable>
 inline frame_read read_frame(std::istream& is, frame& f, EnsureReadable ensure_readable)
 {
-    auto get_byte = [&]() -> int {
+    auto get_byte = [&](){
         if(not ensure_readable())
             return -1;
         const auto c = is.get();
@@ -370,7 +370,7 @@ inline frame_read read_frame(std::istream& is, frame& f, EnsureReadable ensure_r
     return read_frame_impl(
         f,
         get_byte,
-        [&](std::span<std::byte> dest) -> bool {
+        [&](std::span<std::byte> dest){
             for(auto& b : dest)
             {
                 const auto c = get_byte();

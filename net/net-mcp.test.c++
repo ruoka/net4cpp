@@ -458,15 +458,17 @@ auto register_mcp_tests()
             // method while a permissive scanner dispatches a trailing tools/call.
             // Fail closed: no tool call.
             auto called = std::make_shared<std::string>();
+
             const auto list_both = [] {
                 return std::vector<tool_spec>{
                     {.name = "ping"s, .description = "Safe"s},
                     {.name = "delete_all"s, .description = "Dangerous"s},
                 };
             };
-            const auto call = [called](std::string_view name, std::string_view) -> tool_result {
+
+            const auto call = [called](std::string_view name, std::string_view) {
                 *called = std::string{name};
-                return {.text = "ok"s};
+                return tool_result{.text = "ok"s};
             };
 
             const auto twin = handle_json_rpc(
