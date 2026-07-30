@@ -247,6 +247,229 @@ auto register_mcp_tests()
             check_eq(message_data, *got_post);
             check_eq(transport->active_sessions(), 0u);
         };
+
+        section("POST returns 503 when per-session inbound queue is full") = []
+        {
+            using namespace std::chrono_literals;
+
+            auto server = std::make_shared<http::server>();
+            auto transport = std::make_shared<sse_transport>("/messages/");
+            transport->max_pending_messages(2);
+            transport->max_pending_bytes(1u << 20);
+
+            // Hold the session open without draining POSTs.
+            transport->attach(*server, "/sse", [](session& sess) {
+                while(not sess.closed())
+                    std::this_thread::sleep_for(50ms);
+            });
+            server->timeout(std::chrono::seconds{1});
+
+            std::promise<void> started;
+            auto started_future = started.get_future();
+            std::thread server_thread{[server, &started] {
+                try
+                {
+                    started.set_value();
+                    server->listen("8105");
+                }
+                catch(...)
+                {
+                }
+            }};
+
+            auto endpoint_data = ""s;
+            auto first_status = ""s;
+            auto second_status = ""s;
+            auto third_status = ""s;
+
+            if(started_future.wait_for(2s) == std::future_status::ready)
+            {
+                std::this_thread::sleep_for(200ms);
+                try
+                {
+                    auto stream = net::connect("127.0.0.1", "8105");
+                    stream << "GET /sse HTTP/1.1" << net::crlf
+                           << "Host: 127.0.0.1:8105" << net::crlf
+                           << "Accept: text/event-stream" << net::crlf
+                           << "Connection: close" << net::crlf
+                           << net::crlf
+                           << net::flush;
+
+                    std::string line;
+                    while(stream and std::getline(stream, line))
+                    {
+                        if(not line.empty() and line.back() == '\r')
+                            line.pop_back();
+                        if(line.empty())
+                            break;
+                    }
+
+                    auto body = ""s;
+                    char ch{};
+                    while(stream.get(ch))
+                    {
+                        body.push_back(ch);
+                        for(const auto& [ev, data] : parse_sse_events(body))
+                        {
+                            if(ev == "endpoint" and endpoint_data.empty())
+                                endpoint_data = data;
+                        }
+                        if(not endpoint_data.empty())
+                            break;
+                        if(body.size() > 8192)
+                            break;
+                    }
+
+                    require_true(not endpoint_data.empty());
+                    const auto q = endpoint_data.find("session_id=");
+                    require_true(q != std::string::npos);
+                    const auto sid = endpoint_data.substr(q + "session_id="sv.size());
+                    const auto payload = R"({"jsonrpc":"2.0","id":1,"method":"ping"})"s;
+
+                    auto post_once = [&](std::string& status_out) {
+                        auto post = net::connect("127.0.0.1", "8105");
+                        post << "POST /messages/?session_id=" << sid << " HTTP/1.1" << net::crlf
+                             << "Host: 127.0.0.1:8105" << net::crlf
+                             << "Content-Type: application/json" << net::crlf
+                             << "Content-Length: " << payload.size() << net::crlf
+                             << "Connection: close" << net::crlf
+                             << net::crlf
+                             << payload
+                             << net::flush;
+                        if(std::getline(post, line))
+                        {
+                            if(not line.empty() and line.back() == '\r')
+                                line.pop_back();
+                            status_out = line;
+                        }
+                    };
+
+                    post_once(first_status);
+                    post_once(second_status);
+                    post_once(third_status);
+                }
+                catch(...)
+                {
+                }
+
+                std::this_thread::sleep_for(200ms);
+                server->stop();
+            }
+
+            if(server_thread.joinable())
+                server_thread.join();
+
+            check_contains(first_status, "202");
+            check_contains(second_status, "202");
+            check_contains(third_status, "503");
+        };
+
+        section("POST returns 503 when per-session pending bytes are exceeded") = []
+        {
+            using namespace std::chrono_literals;
+
+            auto server = std::make_shared<http::server>();
+            auto transport = std::make_shared<sse_transport>("/messages/");
+            transport->max_pending_messages(256);
+            transport->max_pending_bytes(16);
+
+            transport->attach(*server, "/sse", [](session& sess) {
+                while(not sess.closed())
+                    std::this_thread::sleep_for(50ms);
+            });
+            server->timeout(std::chrono::seconds{1});
+
+            std::promise<void> started;
+            auto started_future = started.get_future();
+            std::thread server_thread{[server, &started] {
+                try
+                {
+                    started.set_value();
+                    server->listen("8106");
+                }
+                catch(...)
+                {
+                }
+            }};
+
+            auto endpoint_data = ""s;
+            auto status = ""s;
+
+            if(started_future.wait_for(2s) == std::future_status::ready)
+            {
+                std::this_thread::sleep_for(200ms);
+                try
+                {
+                    auto stream = net::connect("127.0.0.1", "8106");
+                    stream << "GET /sse HTTP/1.1" << net::crlf
+                           << "Host: 127.0.0.1:8106" << net::crlf
+                           << "Accept: text/event-stream" << net::crlf
+                           << "Connection: close" << net::crlf
+                           << net::crlf
+                           << net::flush;
+
+                    std::string line;
+                    while(stream and std::getline(stream, line))
+                    {
+                        if(not line.empty() and line.back() == '\r')
+                            line.pop_back();
+                        if(line.empty())
+                            break;
+                    }
+
+                    auto body = ""s;
+                    char ch{};
+                    while(stream.get(ch))
+                    {
+                        body.push_back(ch);
+                        for(const auto& [ev, data] : parse_sse_events(body))
+                        {
+                            if(ev == "endpoint" and endpoint_data.empty())
+                                endpoint_data = data;
+                        }
+                        if(not endpoint_data.empty())
+                            break;
+                        if(body.size() > 8192)
+                            break;
+                    }
+
+                    require_true(not endpoint_data.empty());
+                    const auto q = endpoint_data.find("session_id=");
+                    require_true(q != std::string::npos);
+                    const auto sid = endpoint_data.substr(q + "session_id="sv.size());
+                    // 32-byte body exceeds the 16-byte pending cap.
+                    const auto payload = R"({"jsonrpc":"2.0","id":1,"method":"ping"})"s;
+                    require_true(payload.size() > 16u);
+
+                    auto post = net::connect("127.0.0.1", "8106");
+                    post << "POST /messages/?session_id=" << sid << " HTTP/1.1" << net::crlf
+                         << "Host: 127.0.0.1:8106" << net::crlf
+                         << "Content-Type: application/json" << net::crlf
+                         << "Content-Length: " << payload.size() << net::crlf
+                         << "Connection: close" << net::crlf
+                         << net::crlf
+                         << payload
+                         << net::flush;
+                    if(std::getline(post, line))
+                    {
+                        if(not line.empty() and line.back() == '\r')
+                            line.pop_back();
+                        status = line;
+                    }
+                }
+                catch(...)
+                {
+                }
+
+                std::this_thread::sleep_for(200ms);
+                server->stop();
+            }
+
+            if(server_thread.joinable())
+                server_thread.join();
+
+            check_contains(status, "503");
+        };
     };
 
     test_case("MCP JSON-RPC dispatch, [net]") = []
