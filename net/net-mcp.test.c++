@@ -451,12 +451,11 @@ auto register_mcp_tests()
             check_contains(*alias_method, R"("code":-32600)");
         };
 
-        section("tools/call rejects leading JSON value before object (authorize/dispatch confusion)") = [info]
+        section("tools/call rejects parser/scanner JSON disagreement") = [info]
         {
             // Python raw_decode / nlohmann operator>> take the first top-level
-            // value only. A body-aware authorize on a leading `null`/`true`/`0`
-            // sees no method and allows; a brace-oriented scanner that skips
-            // the prefix would still dispatch the trailing tools/call.
+            // value only. A body-aware authorize can allow a prefix with no
+            // method while a permissive scanner dispatches a trailing tools/call.
             // Fail closed: no tool call.
             auto called = std::make_shared<std::string>();
             const auto list_both = [] {
@@ -469,6 +468,26 @@ auto register_mcp_tests()
                 *called = std::string{name};
                 return {.text = "ok"s};
             };
+
+            const auto twin = handle_json_rpc(
+                R"({"jsonrpc":"2.0","id":1}{"method":"tools/call","params":{"name":"delete_all","arguments":{}}})",
+                info,
+                list_both,
+                call);
+            check_true(called->empty());
+            check_false(twin.has_value());
+
+            // Invalid `string :` after a value invented a phantom method for
+            // scanners that treat any depth-1 `"…":` as a key. json.loads
+            // rejects the body; fail closed here too (no tool call).
+            const auto phantom = handle_json_rpc(
+                R"({"x":"method":"tools/call","id":13,"params":{"name":"delete_all","arguments":{}}})",
+                info,
+                list_both,
+                call);
+            check_true(called->empty());
+            require_true(phantom.has_value());
+            check_contains(*phantom, R"("code":-32600)");
 
             const auto leading_null = handle_json_rpc(
                 R"(null{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all","arguments":{}}})",
