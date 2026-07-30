@@ -451,12 +451,12 @@ auto register_mcp_tests()
             check_contains(*alias_method, R"("code":-32600)");
         };
 
-        section("tools/call rejects concatenated JSON values (authorize/dispatch confusion)") = [info]
+        section("tools/call rejects parser/scanner JSON disagreement") = [info]
         {
             // Python raw_decode / nlohmann operator>> take the first top-level
-            // value only. A body-aware authorize on {"id":1} sees no method and
-            // allows; a scanner that keeps walking would still dispatch the
-            // trailing tools/call. Fail closed: no tool call.
+            // value only. A body-aware authorize can allow a prefix with no
+            // method while a permissive scanner dispatches a trailing tools/call.
+            // Fail closed: no tool call.
             auto called = std::make_shared<std::string>();
             const auto list_both = [] {
                 return std::vector<tool_spec>{
@@ -488,6 +488,41 @@ auto register_mcp_tests()
             check_true(called->empty());
             require_true(phantom.has_value());
             check_contains(*phantom, R"("code":-32600)");
+
+            const auto leading_null = handle_json_rpc(
+                R"(null{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all","arguments":{}}})",
+                info,
+                list_both,
+                call);
+            check_true(called->empty());
+            check_false(leading_null.has_value());
+
+            const auto leading_true = handle_json_rpc(
+                R"(true{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"delete_all","arguments":{}}})",
+                info,
+                list_both,
+                call);
+            check_true(called->empty());
+            check_false(leading_true.has_value());
+
+            const auto leading_number = handle_json_rpc(
+                R"(0{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"delete_all","arguments":{}}})",
+                info,
+                list_both,
+                call);
+            check_true(called->empty());
+            check_false(leading_number.has_value());
+
+            // Leading whitespace before a single object remains valid.
+            *called = {};
+            const auto padded = handle_json_rpc(
+                "\n  {\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\","
+                "\"params\":{\"name\":\"ping\",\"arguments\":{}}}\n",
+                info,
+                list_both,
+                call);
+            require_true(padded.has_value());
+            check_eq(*called, "ping"s);
         };
 
         section("Host/Origin allow patterns") = []
