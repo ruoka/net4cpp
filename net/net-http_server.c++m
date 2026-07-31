@@ -349,6 +349,18 @@ public:
                 }
             } release{this};
 
+            // Drain detached connection handlers on every listen() exit path
+            // (stop, accept error, throw) before the caller destroys server-owned
+            // state those handlers may still touch.
+            struct wait_handlers
+            {
+                server* self;
+                ~wait_handlers()
+                {
+                    self->wait_for_handlers();
+                }
+            } wait_exit{this};
+
             auto check_timeout = m_timeout.count() ? m_timeout : std::chrono::seconds{1};
             endpoint->timeout(std::chrono::milliseconds{check_timeout.count() * 1000});
             net::slog << net::notice("HTTP_SERVER_READY") << "started up at " << endpoint->host() << ":" << endpoint->service_or_port()
@@ -367,7 +379,31 @@ public:
                               << std::pair{"protocol"sv, "http"sv}
                               << "waiting for HTTP connections" << net::flush;
                     auto client = endpoint->accept();
-                    std::thread{[client_data = std::move(client), this]() mutable { handle(client_data); }}.detach();
+                    // Track in-flight handlers so listen()/stop joiners do not
+                    // destroy server-owned state (routes, MCP sessions) while a
+                    // detached handle() is still running — that UAF showed up as
+                    // flaky SIGSEGV/SIGABRT under parallel test --jobs.
+                    m_active_handlers.fetch_add(1, std::memory_order_acq_rel);
+                    try
+                    {
+                        std::thread{[client_data = std::move(client), this]() mutable
+                        {
+                            struct complete
+                            {
+                                server* self;
+                                ~complete()
+                                {
+                                    self->handler_finished();
+                                }
+                            } done{this};
+                            handle(client_data);
+                        }}.detach();
+                    }
+                    catch(...)
+                    {
+                        handler_finished();
+                        throw;
+                    }
                 }
                 catch(const std::system_error& e)
                 {
@@ -488,6 +524,8 @@ public:
 
     // Signal the listen loop to exit and close listen sockets so accept wait
     // wakes immediately (Docker SIGTERM / join). Thread-safe vs listen().
+    // listen() does not return (and thus a join on the listen thread does not
+    // complete) until in-flight connection handlers have finished.
     void stop()
     {
         m_stop.store(true);
@@ -518,6 +556,25 @@ public:
     }
 
 private:
+
+    void handler_finished()
+    {
+        const auto previous = m_active_handlers.fetch_sub(1, std::memory_order_acq_rel);
+        if(previous == 1)
+        {
+            std::lock_guard lock{m_handlers_mutex};
+            m_handlers_cv.notify_all();
+        }
+    }
+
+    void wait_for_handlers()
+    {
+        std::unique_lock lock{m_handlers_mutex};
+        m_handlers_cv.wait(lock, [this]
+        {
+            return m_active_handlers.load(std::memory_order_acquire) == 0;
+        });
+    }
 
     // Read through the terminating blank line. Empty return means the peer
     // closed before a complete head arrived. Throws when max_bytes is hit so
@@ -1431,6 +1488,9 @@ private:
     std::size_t m_max_request_body_size = std::numeric_limits<std::size_t>::max();
     std::size_t m_max_request_head_size = default_max_request_head_size;
     std::atomic<bool> m_stop{false};
+    std::atomic<std::size_t> m_active_handlers{0};
+    std::mutex m_handlers_mutex;
+    std::condition_variable m_handlers_cv;
     std::mutex m_acceptor_mutex;
     std::shared_ptr<net::acceptor> m_acceptor;
 };

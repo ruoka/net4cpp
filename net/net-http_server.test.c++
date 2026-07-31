@@ -135,6 +135,67 @@ auto register_server_tests()
         check_true(elapsed < 2s);
     };
 
+    // Regression: detached handle() threads used to outlive listen()'s return, so
+    // callers that destroyed route/MCP state right after joining the listen
+    // thread hit heap-use-after-free (YarDB --jobs>2 flaky SIGSEGV).
+    tester::bdd::scenario("listen join waits for in-flight handlers, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        using namespace std::chrono_literals;
+        auto server = std::make_shared<http::server>();
+        auto handler_done = std::make_shared<std::atomic<bool>>(false);
+        server->get("/slow").response_handler(
+            "text/plain"sv,
+            [handler_done](std::string_view, std::string_view, http::headers&)
+            {
+                std::this_thread::sleep_for(200ms);
+                handler_done->store(true);
+                return http::make_response(http::status_ok, "done"s);
+            });
+        server->timeout(std::chrono::seconds{1});
+
+        std::uint16_t port = 0;
+        std::promise<void> bound;
+        auto bound_future = bound.get_future();
+        std::thread t{[server, &bound, &port] {
+            try
+            {
+                server->listen("127.0.0.1", "0", [&bound, server, &port] {
+                    port = server->bound_port();
+                    bound.set_value();
+                });
+            }
+            catch(...)
+            {
+            }
+        }};
+
+        check_true(bound_future.wait_for(2s) == std::future_status::ready);
+        check_true(port != 0);
+
+        try
+        {
+            auto stream = net::connect("127.0.0.1", std::to_string(port));
+            stream << "GET /slow HTTP/1.1" << net::crlf
+                   << "Host: 127.0.0.1" << net::crlf
+                   << "Connection: close" << net::crlf
+                   << net::crlf << net::flush;
+            // Do not wait for the response body — stop while handle() is still in
+            // the 200ms sleep, then require join not to return early.
+            std::this_thread::sleep_for(20ms);
+        }
+        catch(...)
+        {
+        }
+
+        server->stop();
+        if(t.joinable())
+            t.join();
+
+        check_true(handler_done->load());
+        check_true(server->stopped());
+    };
+
     // Regression: accept() EMFILE used to rethrow out of listen() and permanently
     // stop the server. After FD pressure clears, the server must accept again.
     // Soft-retry also covers post-accept std::thread EAGAIN and bad_alloc (same
