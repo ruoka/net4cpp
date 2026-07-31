@@ -48,6 +48,15 @@ public:
         }
     }
 
+    // Half/fully close the TCP connection without releasing the fd. Concurrent
+    // recv/send wake with EOF/error; close() still owns lifetime. Idempotent
+    // relative to a closed socket (no-op when already closed).
+    void shutdown() noexcept
+    {
+        if(m_fd != native_handle_npos)
+            posix::shutdown(m_fd, posix::shutdown_rdwr);
+    }
+
     // === Your original polling interface — preserved exactly ===
     bool wait_for(const std::chrono::milliseconds& timeout) const {
         posix::fd_set fds{};

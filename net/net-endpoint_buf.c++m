@@ -19,9 +19,10 @@ public:
         return m_socket.wait_for(timeout);
     }
 
-    native_handle_type native_handle() const noexcept
+    // Wake blocking I/O on this buffer's socket (see socket::shutdown).
+    void shutdown() noexcept
     {
-        return m_socket;
+        m_socket.shutdown();
     }
 
 protected:

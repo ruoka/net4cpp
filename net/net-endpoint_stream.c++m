@@ -4,7 +4,6 @@
 
 export module net:endpointstream;
 import :endpointbuf;
-import :socket;
 import std;
 
 namespace gsl { template<typename T> using owner = T; }
@@ -121,11 +120,12 @@ public:
         }
         init(nullptr);
     }
-    // Underlying socket fd, or native_handle_npos after close(). Used by
-    // http::server::stop() to shutdown() live clients without racing close().
-    native_handle_type native_handle() const noexcept
+    // Unblock concurrent readers/writers without destroying the stream.
+    // Thread-safe vs I/O on this stream; not safe vs concurrent close().
+    void shutdown() noexcept
     {
-        return m_buf ? m_buf->native_handle() : native_handle_npos;
+        if(m_buf)
+            m_buf->shutdown();
     }
     bool wait_for(const std::chrono::milliseconds& timeout)
     {
