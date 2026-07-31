@@ -25,7 +25,7 @@ auto register_sender_tests()
 {
     if(not network_tests_enabled()) return false;
 
-    tester::bdd::scenario("Basic construction, [net]") = [] {
+    tester::bdd::scenario("Sender basic construction, [net]") = [] {
         tester::bdd::given("A sender for group 228.0.0.4 and service test") = [] {
             auto sder = net::sender{"228.0.0.4","test"};
             check_eq(sder.group(),"228.0.0.4");

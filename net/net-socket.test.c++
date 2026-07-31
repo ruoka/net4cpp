@@ -27,7 +27,7 @@ auto register_socket_tests()
 {
     if(not network_tests_enabled()) return false;
 
-    tester::bdd::scenario("Basic construction, [net]") = [] {
+    tester::bdd::scenario("Socket basic construction, [net]") = [] {
         tester::bdd::given("An IPv4 TCP socket") = [] {
             const net::socket s{posix::af_inet, posix::sock_stream};
             check_true(not(not s));

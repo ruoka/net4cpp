@@ -25,7 +25,7 @@ auto register_receiver_tests()
 {
     if(not network_tests_enabled()) return false;
 
-    tester::bdd::scenario("Basic construction, [net]") = [] {
+    tester::bdd::scenario("Receiver basic construction, [net]") = [] {
         tester::bdd::given("A receiver for group 228.0.0.4 and service test") = [] {
             auto rver = net::receiver{"228.0.0.4","test"};
             check_eq(rver.group(),"228.0.0.4");

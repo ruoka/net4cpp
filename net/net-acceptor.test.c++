@@ -123,7 +123,7 @@ auto register_acceptor_tests()
         check_true(elapsed < 2s);
     };
 
-    tester::bdd::scenario("Basic construction, [net]") = [] {
+    tester::bdd::scenario("Acceptor basic construction, [net]") = [] {
         tester::bdd::given("An acceptor for localhost:54321") = [] {
             auto ator = net::acceptor{"localhost","54321"};
             check_eq(ator.host(),"localhost");

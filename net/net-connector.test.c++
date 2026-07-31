@@ -31,7 +31,7 @@ auto register_connector_tests()
 {
     if(not network_tests_enabled()) return false;
 
-    tester::bdd::scenario("Basic construction, [net]") = [] {
+    tester::bdd::scenario("Connector basic construction, [net]") = [] {
         tester::bdd::given("A connector to google.com:http") = [] {
             const auto ctor = net::connector{"google.com","http"};
             check_eq(ctor.host(), "google.com");
