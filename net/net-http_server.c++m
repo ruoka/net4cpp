@@ -1232,12 +1232,17 @@ private:
                               << std::pair{"request_id", request_id}
                               << std::pair{"duration_ms", request_duration}
                               << net::flush;
+                    // Close + break: after drain-on-listen-exit, falling through to
+                    // another keep-alive read leaves join(stop) blocked forever while
+                    // the client still holds the socket open (websocket substring test).
                     stream << "HTTP/1.1 505 HTTP Version Not Supported" << net::crlf
                            << "Date: "         << date()                << net::crlf
                            << "Server: "       << host()                << net::crlf
                            << "Content-Type: " << m_content_type        << net::crlf
                            << "Content-Length: 0"                       << net::crlf
+                           << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
+                    break;
                 }
                 else if(not m_methods.contains(method))
                 {
@@ -1256,7 +1261,9 @@ private:
                            << "Server: "       << host()                    << net::crlf
                            << "Content-Type: " << m_content_type            << net::crlf
                            << "Content-Length: 0"                           << net::crlf
+                           << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
+                    break;
                 }
                 else if(uri == "/favicon.ico")
                 {
@@ -1275,7 +1282,9 @@ private:
                            << "Server: "       << host()         << net::crlf
                            << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0"                << net::crlf
+                           << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
+                    break;
                 }
                 else
                 {
