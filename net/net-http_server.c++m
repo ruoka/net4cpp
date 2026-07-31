@@ -5,6 +5,7 @@
 export module net:http_server;
 import :acceptor;
 import :posix;
+import :socket;
 import :structured_log_stream;
 import :http_headers;
 import :endpointstream;
@@ -388,14 +389,22 @@ public:
                     {
                         std::thread{[client_data = std::move(client), this]() mutable
                         {
+                            // Register before handle() so stop() can shutdown() the
+                            // socket and wake blocking reads (idle keep-alive /
+                            // yarproxy pooled connections). Unregister before the
+                            // stream destructor closes the fd.
+                            const auto fd = std::get<0>(client_data).native_handle();
+                            register_client_fd(fd);
                             struct complete
                             {
                                 server* self;
+                                net::native_handle_type fd;
                                 ~complete()
                                 {
+                                    self->unregister_client_fd(fd);
                                     self->handler_finished();
                                 }
-                            } done{this};
+                            } done{this, fd};
                             handle(client_data);
                         }}.detach();
                     }
@@ -524,8 +533,8 @@ public:
 
     // Signal the listen loop to exit and close listen sockets so accept wait
     // wakes immediately (Docker SIGTERM / join). Thread-safe vs listen().
-    // listen() does not return (and thus a join on the listen thread does not
-    // complete) until in-flight connection handlers have finished.
+    // Also shutdown()s accepted client sockets so idle keep-alive handlers
+    // unblock; listen() then waits until those handlers finish before return.
     void stop()
     {
         m_stop.store(true);
@@ -536,6 +545,7 @@ public:
         }
         if(acceptor)
             acceptor->close();
+        shutdown_client_sockets();
     }
 
     bool stopped() const
@@ -574,6 +584,32 @@ private:
         {
             return m_active_handlers.load(std::memory_order_acquire) == 0;
         });
+    }
+
+    void register_client_fd(net::native_handle_type fd)
+    {
+        if(fd == net::native_handle_npos)
+            return;
+        std::lock_guard lock{m_client_fds_mutex};
+        m_client_fds.insert(fd);
+    }
+
+    void unregister_client_fd(net::native_handle_type fd)
+    {
+        if(fd == net::native_handle_npos)
+            return;
+        std::lock_guard lock{m_client_fds_mutex};
+        m_client_fds.erase(fd);
+    }
+
+    // Wake blocking recv/send in handle() without closing the fd (the stream
+    // still owns close). Safe vs concurrent unregister: fds are only removed
+    // under the same mutex, and only after handle() returns.
+    void shutdown_client_sockets()
+    {
+        std::lock_guard lock{m_client_fds_mutex};
+        for(const auto fd : m_client_fds)
+            net::posix::shutdown(fd, net::posix::shutdown_rdwr);
     }
 
     // Read through the terminating blank line. Empty return means the peer
@@ -1491,6 +1527,8 @@ private:
     std::atomic<std::size_t> m_active_handlers{0};
     std::mutex m_handlers_mutex;
     std::condition_variable m_handlers_cv;
+    std::mutex m_client_fds_mutex;
+    std::flat_set<net::native_handle_type> m_client_fds;
     std::mutex m_acceptor_mutex;
     std::shared_ptr<net::acceptor> m_acceptor;
 };

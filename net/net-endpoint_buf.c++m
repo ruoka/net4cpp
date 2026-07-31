@@ -19,6 +19,11 @@ public:
         return m_socket.wait_for(timeout);
     }
 
+    native_handle_type native_handle() const noexcept
+    {
+        return m_socket;
+    }
+
 protected:
     socket m_socket;
 };

@@ -196,6 +196,57 @@ auto register_server_tests()
         check_true(server->stopped());
     };
 
+    // Regression: waiting for handlers without shutdown() left idle keep-alive
+    // connections (e.g. yarproxy→yardb pools) blocking forever on SIGTERM.
+    tester::bdd::scenario("stop unblocks idle keep-alive handlers, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        using namespace std::chrono_literals;
+        auto server = std::make_shared<http::server>();
+        server->get("/").text("OK");
+        server->timeout(std::chrono::seconds{1});
+
+        std::uint16_t port = 0;
+        std::promise<void> bound;
+        auto bound_future = bound.get_future();
+        std::thread t{[server, &bound, &port] {
+            try
+            {
+                server->listen("127.0.0.1", "0", [&bound, server, &port] {
+                    port = server->bound_port();
+                    bound.set_value();
+                });
+            }
+            catch(...)
+            {
+            }
+        }};
+
+        check_true(bound_future.wait_for(2s) == std::future_status::ready);
+        check_true(port != 0);
+
+        // Open a connection and leave it idle in handle()'s request read.
+        auto idle = std::optional<net::endpointstream>{};
+        try
+        {
+            idle = net::connect("127.0.0.1", std::to_string(port));
+            std::this_thread::sleep_for(50ms);
+        }
+        catch(...)
+        {
+        }
+
+        const auto start = std::chrono::steady_clock::now();
+        server->stop();
+        if(t.joinable())
+            t.join();
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+
+        check_true(server->stopped());
+        check_true(elapsed < 2s);
+        idle.reset();
+    };
+
     // Regression: accept() EMFILE used to rethrow out of listen() and permanently
     // stop the server. After FD pressure clears, the server must accept again.
     // Soft-retry also covers post-accept std::thread EAGAIN and bad_alloc (same
