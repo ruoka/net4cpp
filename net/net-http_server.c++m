@@ -586,8 +586,16 @@ private:
 
     void register_client_stream(net::endpointstream& stream)
     {
+        // Insert under the same mutex as shutdown_client_streams so a concurrent
+        // stop() either sees this stream in m_clients or we observe m_stop here.
+        // Without the late self-shutdown, accept → fetch_add → detach can race
+        // stop()'s shutdown pass: the handler is counted in m_active_handlers but
+        // not yet registered, so wait_for_handlers() blocks forever on an idle
+        // read_request_head that nobody wakes.
         std::lock_guard lock{m_clients_mutex};
         m_clients.insert(&stream);
+        if(m_stop.load())
+            stream.shutdown();
     }
 
     void unregister_client_stream(net::endpointstream& stream)
