@@ -3,6 +3,10 @@
 // See the LICENSE file in the project root for full license text.
 
 module net;
+import :endpointbuf;
+import :endpointstream;
+import :posix;
+import :socket;
 import :sse;
 import tester;
 import std;
@@ -80,6 +84,21 @@ auto register_sse_tests()
             check_true(s.closed());
             check_false(s.send_comment("more"));
             check_false(s.flush());
+        };
+
+        // Regression: stop() → endpointstream::shutdown() left failbit clear, so
+        // MCP handlers that only poll session.closed() never exited and
+        // wait_for_handlers() deadlocked after drain-on-listen-exit.
+        section("closed after endpointstream shutdown latch") = []
+        {
+            auto stream = net::endpointstream{
+                new net::tcp_endpointbuf{net::socket{net::posix::af_inet, net::posix::sock_stream}}};
+            auto s = session{stream};
+            check_false(stream.shut_down());
+            check_false(s.closed());
+            stream.shutdown();
+            check_true(stream.shut_down());
+            check_true(s.closed());
         };
     };
 

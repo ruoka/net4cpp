@@ -20,13 +20,22 @@ public:
     }
 
     // Wake blocking I/O on this buffer's socket (see socket::shutdown).
+    // Also latches shut_down() so observers (e.g. SSE/MCP session::closed)
+    // notice stop() without waiting for a write to set iostream failbit.
     void shutdown() noexcept
     {
         m_socket.shutdown();
+        m_shut_down.store(true, std::memory_order_release);
+    }
+
+    [[nodiscard]] bool shut_down() const noexcept
+    {
+        return m_shut_down.load(std::memory_order_acquire);
     }
 
 protected:
     socket m_socket;
+    std::atomic<bool> m_shut_down{false};
 };
 
 constexpr std::size_t tcp_buffer_size = 4096;
