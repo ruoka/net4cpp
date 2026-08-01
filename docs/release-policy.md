@@ -35,6 +35,11 @@ Semantic versioning (`vMAJOR.MINOR.PATCH`) on the public surface above.
 **Tester pin.** When bumping `deps/tester`, land the same SHA in cryptic, net4cpp,
 json4cpp, and YarDB together.
 
+**No bump required.** Pin-only `deps/tester` syncs and test-only / docs-only /
+CI-only changes that leave the public surface above unchanged do **not** require a
+new SemVer tag. See
+[YarDB versioning — When not to bump](https://github.com/ruoka/YarDB/blob/master/docs/versioning.md#when-not-to-bump).
+
 ## Release criteria
 
 1. Default-branch CI green (`debug`/`release`, `--jsonl=failures`, `--jobs=$(nproc)`,
