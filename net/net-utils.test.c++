@@ -29,21 +29,21 @@ auto register_utils_tests()
         tester::bdd::given("Invalid number strings") = [] {
             tester::bdd::when("String contains non-numeric characters") = [] {
                 tester::bdd::then("Throws std::invalid_argument") = [] {
-                    check_throws_as([] { utils::stoll("abc"); }, std::invalid_argument{""});
-                    check_throws_as([] { utils::stoll("12abc"); }, std::invalid_argument{""});
-                    check_throws_as([] { utils::stoll("abc12"); }, std::invalid_argument{""});
+                    check_throws_as<std::invalid_argument>([] { utils::stoll("abc"); });
+                    check_throws_as<std::invalid_argument>([] { utils::stoll("12abc"); });
+                    check_throws_as<std::invalid_argument>([] { utils::stoll("abc12"); });
                 };
             };
 
             tester::bdd::when("String is empty") = [] {
                 tester::bdd::then("Throws std::invalid_argument") = [] {
-                    check_throws_as([] { utils::stoll(""); }, std::invalid_argument{""});
+                    check_throws_as<std::invalid_argument>([] { utils::stoll(""); });
                 };
             };
 
             tester::bdd::when("String is out of range") = [] {
                 tester::bdd::then("Throws std::invalid_argument") = [] {
-                    check_throws_as([] { utils::stoll("99999999999999999999"); }, std::invalid_argument{""});
+                    check_throws_as<std::invalid_argument>([] { utils::stoll("99999999999999999999"); });
                 };
             };
         };
@@ -161,64 +161,50 @@ auto register_utils_tests()
         tester::bdd::given("Invalid RFC 1123 date strings") = [] {
             tester::bdd::when("String is missing comma") = [] {
                 tester::bdd::then("Throws std::invalid_argument") = [] {
-                    check_throws_as([] { utils::parse_rfc1123_date("Thu 01 Jan 2026 00:00:00 GMT"sv); },
-                                    std::invalid_argument{""});
+                    check_throws_as<std::invalid_argument>([] { utils::parse_rfc1123_date("Thu 01 Jan 2026 00:00:00 GMT"sv); });
                 };
             };
 
             tester::bdd::when("String has invalid month") = [] {
                 tester::bdd::then("Throws std::invalid_argument") = [] {
-                    check_throws_as([] { utils::parse_rfc1123_date("Thu, 01 Xxx 2026 00:00:00 GMT"sv); },
-                                    std::invalid_argument{""});
-                    check_throws_as([] { utils::parse_rfc1123_date("Thu, 01 Invalid 2026 00:00:00 GMT"sv); },
-                                    std::invalid_argument{""});
+                    check_throws_as<std::invalid_argument>([] { utils::parse_rfc1123_date("Thu, 01 Xxx 2026 00:00:00 GMT"sv); });
+                    check_throws_as<std::invalid_argument>([] { utils::parse_rfc1123_date("Thu, 01 Invalid 2026 00:00:00 GMT"sv); });
                 };
             };
 
             tester::bdd::when("String has invalid day format") = [] {
                 tester::bdd::then("Throws std::invalid_argument") = [] {
-                    check_throws_as([] { utils::parse_rfc1123_date("Thu, XX Jan 2026 00:00:00 GMT"sv); },
-                                    std::invalid_argument{""});
+                    check_throws_as<std::invalid_argument>([] { utils::parse_rfc1123_date("Thu, XX Jan 2026 00:00:00 GMT"sv); });
                 };
             };
 
             tester::bdd::when("String has invalid year format") = [] {
                 tester::bdd::then("Throws std::invalid_argument") = [] {
-                    check_throws_as([] { utils::parse_rfc1123_date("Thu, 01 Jan XXXX 00:00:00 GMT"sv); },
-                                    std::invalid_argument{""});
-                    check_throws_as([] { utils::parse_rfc1123_date("Thu, 01 Jan 26 00:00:00 GMT"sv); },
-                                    std::invalid_argument{""});
+                    check_throws_as<std::invalid_argument>([] { utils::parse_rfc1123_date("Thu, 01 Jan XXXX 00:00:00 GMT"sv); });
+                    check_throws_as<std::invalid_argument>([] { utils::parse_rfc1123_date("Thu, 01 Jan 26 00:00:00 GMT"sv); });
                 };
             };
 
             tester::bdd::when("String has invalid time format") = [] {
                 tester::bdd::then("Throws std::invalid_argument") = [] {
-                    check_throws_as([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026 XX:00:00 GMT"sv); },
-                                    std::invalid_argument{""});
-                    check_throws_as([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026 00:XX:00 GMT"sv); },
-                                    std::invalid_argument{""});
-                    check_throws_as([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026 00:00:XX GMT"sv); },
-                                    std::invalid_argument{""});
-                    check_throws_as([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026 00-00-00 GMT"sv); },
-                                    std::invalid_argument{""});
+                    check_throws_as<std::invalid_argument>([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026 XX:00:00 GMT"sv); });
+                    check_throws_as<std::invalid_argument>([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026 00:XX:00 GMT"sv); });
+                    check_throws_as<std::invalid_argument>([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026 00:00:XX GMT"sv); });
+                    check_throws_as<std::invalid_argument>([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026 00-00-00 GMT"sv); });
                 };
             };
 
             tester::bdd::when("String is too short") = [] {
                 tester::bdd::then("Throws std::invalid_argument") = [] {
-                    check_throws_as([] { utils::parse_rfc1123_date("Thu, 01 Jan"sv); },
-                                    std::invalid_argument{""});
-                    check_throws_as([] { utils::parse_rfc1123_date("Thu"sv); },
-                                    std::invalid_argument{""});
-                    check_throws_as([] { utils::parse_rfc1123_date(""sv); },
-                                    std::invalid_argument{""});
+                    check_throws_as<std::invalid_argument>([] { utils::parse_rfc1123_date("Thu, 01 Jan"sv); });
+                    check_throws_as<std::invalid_argument>([] { utils::parse_rfc1123_date("Thu"sv); });
+                    check_throws_as<std::invalid_argument>([] { utils::parse_rfc1123_date(""sv); });
                 };
             };
 
             tester::bdd::when("String is missing time") = [] {
                 tester::bdd::then("Throws std::invalid_argument") = [] {
-                    check_throws_as([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026"sv); },
-                                    std::invalid_argument{""});
+                    check_throws_as<std::invalid_argument>([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026"sv); });
                 };
             };
 
@@ -226,12 +212,9 @@ auto register_utils_tests()
             // then read past sv.size() while parsing HH:MM:SS (OOB / UB).
             tester::bdd::when("String has truncated time after year") = [] {
                 tester::bdd::then("Throws std::invalid_argument without reading past the view") = [] {
-                    check_throws_as([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026 "sv); },
-                                    std::invalid_argument{""});
-                    check_throws_as([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026 12"sv); },
-                                    std::invalid_argument{""});
-                    check_throws_as([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026 12:34:5"sv); },
-                                    std::invalid_argument{""});
+                    check_throws_as<std::invalid_argument>([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026 "sv); });
+                    check_throws_as<std::invalid_argument>([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026 12"sv); });
+                    check_throws_as<std::invalid_argument>([] { utils::parse_rfc1123_date("Thu, 01 Jan 2026 12:34:5"sv); });
                 };
             };
         };
