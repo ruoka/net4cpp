@@ -760,11 +760,13 @@ inline bool is_metrics_scrape_request(std::string_view method, std::string_view 
 // histogram; short-circuits GET /metrics with Prometheus text exposition (scrapes are not counted).
 // Prefer method from x-http-method (set by http::server); fall back to parsing a request line.
 // Optional X-Metrics-Scenario selects the scenario label (sanitized); absent → "-".
-inline auto metrics_middleware()
+// Pass a local registry in tests so parallel scenarios do not share process-global counters;
+// production keeps the default http_metrics() singleton (already mutex-protected per op).
+inline auto metrics_middleware(metrics_registry& registry = http_metrics())
 {
-    return [](callback_with_headers next)
+    return [&registry](callback_with_headers next)
     {
-        return [next = std::move(next)](auto req, auto body, auto hdr) mutable
+        return [next = std::move(next), &registry](auto req, auto body, auto hdr) mutable
         {
             const auto [method, target] = metrics_resolve_method_and_target(req, hdr);
 
@@ -772,7 +774,7 @@ inline auto metrics_middleware()
             {
                 auto response_headers = headers{};
                 response_headers.set("content-type"s, "text/plain; version=0.0.4; charset=utf-8"s);
-                return make_response(status_ok, http_metrics().render_prometheus_text(), std::make_optional(response_headers));
+                return make_response(status_ok, registry.render_prometheus_text(), std::make_optional(response_headers));
             }
 
             const auto path = metrics_normalize_path(target);
@@ -781,7 +783,7 @@ inline auto metrics_middleware()
             auto response = next(req, body, hdr);
             const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
 
-            http_metrics().observe(
+            registry.observe(
                 method,
                 metrics_status_code(std::get<0>(response)),
                 path,

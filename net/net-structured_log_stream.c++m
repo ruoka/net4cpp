@@ -100,7 +100,7 @@ concept c_string_type = std::same_as<std::remove_cvref_t<T>, const char*> or
                         std::same_as<std::remove_cvref_t<T>, char*>;
 
 template<typename T>
-concept string_view_convertible = not exact_value_type<T> and 
+concept string_view_convertible = not exact_value_type<T> and
                                   not c_string_type<T> and
                                   std::convertible_to<T, std::string_view>;
 
@@ -146,32 +146,103 @@ struct level_manip {
 
 class structured_log_stream {
 private:
-    // Instance configuration (was static, now instance members for singleton pattern)
-    syslog::severity       m_log_level = syslog::severity::debug;
-    log_format             m_format = log_format::jsonl;
-    std::string            m_app_name = "slog";
-    std::string            m_sd_id = "slog";
-    int                    m_facility_value = 1;  // user facility
 
-    // Thread-safety and output redirection (instance members for singleton)
-    mutable std::mutex             m_log_mutex;  // mutable for const getter methods
-    std::unique_ptr<std::ofstream> m_file_stream;
-    std::ostream*                  m_output_stream = &std::clog;
+    // Process-wide defaults inherited by each thread on first slog use. Lets main
+    // configure yardb/yarproxy before workers start; workers then copy these values.
+    // Output streams are intentionally not published here — a test redirect must not
+    // leak a stack stringstream pointer into another thread's initial state.
+    struct process_defaults
+    {
+        syslog::severity log_level = syslog::severity::debug;
+        log_format format = log_format::jsonl;
+        std::string app_name = "slog";
+        std::string sd_id = "slog";
+        int facility_value = 1;  // user facility
+    };
 
-    // Cached metadata (rarely changes, cache for performance)
-    std::string                 m_hostname;
-    std::string                 m_procid;
-    bool                        m_metadata_cached = false;
+    // Per-thread configuration, redirect target, and in-flight entry. Concurrent
+    // slog << … << flush on different threads no longer share entry buffers or
+    // redirect destinations.
+    struct thread_state
+    {
+        syslog::severity log_level = syslog::severity::debug;
+        log_format format = log_format::jsonl;
+        std::string app_name = "slog";
+        std::string sd_id = "slog";
+        int facility_value = 1;
 
-    // Per-entry state (instance members, like original syslogstream - mutex serializes access)
-    bool                        entry_enabled    = false;
-    syslog::severity            entry_severity   = syslog::severity::debug;
-    std::string_view            entry_msg_id     = std::string_view{};
-    std::flat_map<detail::field_name_type, detail::value> structured_fields;
-    std::stringstream           human_message;
+        std::unique_ptr<std::ofstream> file_stream;
+        std::ostream* output_stream = &std::clog;
 
-    std::string get_severity_str() const {
-        switch (entry_severity) {
+        std::string hostname;
+        std::string procid;
+        bool metadata_cached = false;
+
+        bool entry_enabled = false;
+        bool entry_active = false;  // true between level_manip and flush (or throw cleanup)
+        syslog::severity entry_severity = syslog::severity::debug;
+        std::string_view entry_msg_id = std::string_view{};
+        std::flat_map<detail::field_name_type, detail::value> structured_fields;
+        std::stringstream human_message;
+    };
+
+    static std::mutex& process_mutex()
+    {
+        static std::mutex mutex;
+        return mutex;
+    }
+
+    static process_defaults& process_config()
+    {
+        static process_defaults defaults{};
+        return defaults;
+    }
+
+    static std::mutex& shared_ostream_mutex()
+    {
+        // Serialize writes to the process-wide standard streams only.
+        static std::mutex mutex;
+        return mutex;
+    }
+
+    static bool is_shared_standard_stream(const std::ostream* stream) noexcept
+    {
+        return stream == &std::cout or stream == &std::cerr or stream == &std::clog;
+    }
+
+    static thread_state& state()
+    {
+        thread_local thread_state local{};
+        thread_local bool initialized = false;
+        if (not initialized)
+        {
+            std::lock_guard lock{process_mutex()};
+            const auto& defaults = process_config();
+            local.log_level = defaults.log_level;
+            local.format = defaults.format;
+            local.app_name = defaults.app_name;
+            local.sd_id = defaults.sd_id;
+            local.facility_value = defaults.facility_value;
+            local.output_stream = &std::clog;
+            initialized = true;
+        }
+        return local;
+    }
+
+    static void publish_process_defaults(const thread_state& local)
+    {
+        std::lock_guard lock{process_mutex()};
+        auto& defaults = process_config();
+        defaults.log_level = local.log_level;
+        defaults.format = local.format;
+        defaults.app_name = local.app_name;
+        defaults.sd_id = local.sd_id;
+        defaults.facility_value = local.facility_value;
+    }
+
+    static std::string get_severity_str(syslog::severity severity)
+    {
+        switch (severity) {
             case syslog::severity::debug:     return "debug";
             case syslog::severity::info:      return "info";
             case syslog::severity::notice:    return "notice";
@@ -239,20 +310,20 @@ private:
         }, v);
     }
 
-    void ensure_metadata_cached() {
-        if (not m_metadata_cached) {
+    static void ensure_metadata_cached(thread_state& local) {
+        if (not local.metadata_cached) {
             char host[posix::ni_maxhost];
             if (posix::gethostname(host, posix::ni_maxhost) == 0) {
-                m_hostname = host;
+                local.hostname = host;
             } else {
-                m_hostname = "localhost";
+                local.hostname = "localhost";
             }
-            m_procid = std::to_string(posix::getpid());
-            m_metadata_cached = true;
+            local.procid = std::to_string(posix::getpid());
+            local.metadata_cached = true;
         }
     }
 
-    std::string generate_timestamp() const {
+    static std::string generate_timestamp() {
         auto now = std::chrono::system_clock::now();
         return detail::format_timestamp(now);
     }
@@ -277,7 +348,7 @@ private:
     static detail::value convert_to_value(T v) {
         // getenv() and other C APIs return nullptr; std::string{nullptr} is UB and
         // throws (libstdc++) or crashes (libc++). Map null to the variant's nullptr
-        // so the entry can finish and flush() can release m_log_mutex.
+        // so the entry can finish and flush() can complete.
         if (v == nullptr) {
             return nullptr;
         }
@@ -324,160 +395,81 @@ private:
         return ss.str();
     }
 
-    void output() {
-        if (not entry_enabled) return;
+    static void output(thread_state& local) {
+        if (not local.entry_enabled) return;
 
-        // Note: m_log_mutex must be held by caller (already locked in operator<<)
-        ensure_metadata_cached();
+        ensure_metadata_cached(local);
         const auto timestamp = generate_timestamp();
 
         std::stringstream full_line;
 
-        if (m_format == log_format::jsonl) {
+        if (local.format == log_format::jsonl) {
             full_line << "{"
                       << "\"time\":\"" << timestamp << "\","
-                      << "\"host\":\"" << json_escape(m_hostname) << "\","
-                      << "\"app\":\"" << json_escape(m_app_name) << "\","
-                      << "\"pid\":\"" << m_procid << "\","
-                      << "\"level\":\"" << get_severity_str() << "\","
-                      << "\"source\":\"" << json_escape(m_sd_id) << "\"";
+                      << "\"host\":\"" << json_escape(local.hostname) << "\","
+                      << "\"app\":\"" << json_escape(local.app_name) << "\","
+                      << "\"pid\":\"" << local.procid << "\","
+                      << "\"level\":\"" << get_severity_str(local.entry_severity) << "\","
+                      << "\"source\":\"" << json_escape(local.sd_id) << "\"";
 
-            if (not entry_msg_id.empty()) {
-                full_line << ",\"msg_id\":\"" << json_escape(entry_msg_id) << "\"";
+            if (not local.entry_msg_id.empty()) {
+                full_line << ",\"msg_id\":\"" << json_escape(local.entry_msg_id) << "\"";
             }
 
-            full_line << ",\"message\":\"" << json_escape(human_message.str()) << "\"";
+            full_line << ",\"message\":\"" << json_escape(local.human_message.str()) << "\"";
 
-            for (const auto& [k, v] : structured_fields) {
+            for (const auto& [k, v] : local.structured_fields) {
                 full_line << ",\"" << json_escape(k) << "\":";
                 value_to_json(full_line, v);
             }
             full_line << "}";
 
         } else {  // syslog (RFC 5424)
-            int pri = m_facility_value * 8 + static_cast<int>(entry_severity);
-            full_line << "<" << pri << ">1 " << timestamp << " " << m_hostname << " "
-                      << m_app_name << " " << m_procid << " "
-                      << (entry_msg_id.empty() ? "-" : entry_msg_id);  // MSGID
+            int pri = local.facility_value * 8 + static_cast<int>(local.entry_severity);
+            full_line << "<" << pri << ">1 " << timestamp << " " << local.hostname << " "
+                      << local.app_name << " " << local.procid << " "
+                      << (local.entry_msg_id.empty() ? "-" : local.entry_msg_id);  // MSGID
 
-            if (structured_fields.empty()) {
+            if (local.structured_fields.empty()) {
                 full_line << " - ";  // NILVALUE for SD
             } else {
-                full_line << " [" << m_sd_id;
-                for (const auto& [k, v] : structured_fields) {
+                full_line << " [" << local.sd_id;
+                for (const auto& [k, v] : local.structured_fields) {
                     full_line << " " << k << "=\"" << sd_escape(value_to_str(v)) << "\"";
                 }
                 full_line << "]";
             }
 
-            full_line << " \xEF\xBB\xBF" << human_message.str();  // Space + BOM + MSG
+            full_line << " \xEF\xBB\xBF" << local.human_message.str();  // Space + BOM + MSG
         }
 
         std::string line = full_line.str();
 
-        if (m_output_stream) {
-            *m_output_stream << line << '\n';
-        }
-    }
-
-public:
-    // Configuration (instance methods) - chained for fluent API
-    // C++-idiomatic getters and setters using bare names with overloads
-    
-    // Query method to check if a severity level would be logged
-    bool is_enabled(syslog::severity s) const {
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        return static_cast<int>(s) <= static_cast<int>(m_log_level);
-    }
-    
-    syslog::severity log_level() const {
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        return m_log_level;
-    }
-    structured_log_stream& log_level(syslog::severity level) { 
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        m_log_level = level; 
-        return *this;
-    }
-    
-    log_format format() const {
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        return m_format;
-    }
-    structured_log_stream& format(log_format f) { 
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        m_format = f; 
-        return *this;
-    }
-    
-    const std::string& app_name() const {
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        return m_app_name;
-    }
-    structured_log_stream& app_name(const std::string& name) { 
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        m_app_name = name; 
-        return *this;
-    }
-    
-    const std::string& sd_id() const {
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        return m_sd_id;
-    }
-    structured_log_stream& sd_id(const std::string& id) { 
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        m_sd_id = id; 
-        return *this;
-    }
-    
-    int facility() const {
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        return m_facility_value;
-    }
-    structured_log_stream& facility(int f) { 
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        m_facility_value = f; 
-        return *this;
-    }
-    structured_log_stream& facility(syslog::facility f) { 
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        m_facility_value = static_cast<int>(f); 
-        return *this;
-    }
-
-    // Output redirection - chained for fluent API
-    structured_log_stream& redirect(const std::string& file_path) {
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        if (file_path.empty()) {
-            m_file_stream.reset();
-            m_output_stream = &std::cout;
-        } else {
-            m_file_stream = std::make_unique<std::ofstream>(file_path, std::ios::app);
-            if (m_file_stream->is_open()) {
-                m_output_stream = m_file_stream.get();
+        if (local.output_stream) {
+            if (is_shared_standard_stream(local.output_stream)) {
+                std::lock_guard lock{shared_ostream_mutex()};
+                *local.output_stream << line << '\n';
             } else {
-                m_file_stream.reset();
-                m_output_stream = &std::cout;
+                *local.output_stream << line << '\n';
             }
         }
-        return *this;
     }
 
-    // Redirect to ostream (backward compatibility)
-    structured_log_stream& redirect(std::ostream& os) {
-        std::lock_guard<std::mutex> lock(m_log_mutex);
-        m_file_stream.reset();
-        m_output_stream = &os;
-        return *this;
+    // Drop a partial entry after a mid-entry throw so the next log on this thread
+    // starts clean. No process mutex is held across an entry anymore — TLS entry
+    // state is enough for concurrent threads, and throw recovery is local.
+    static void abandon_entry(thread_state& local) noexcept
+    {
+        local.entry_active = false;
+        local.entry_enabled = false;
+        local.entry_msg_id = {};
+        local.structured_fields.clear();
+        local.human_message.str("");
+        local.human_message.clear();
     }
 
-    // If work under the entry lock throws, unlock before rethrow. Otherwise
-    // flush() never runs and m_log_mutex stays locked forever — every later
-    // slog use (including http::server's catch-path logging) deadlocks.
-    // Concrete trigger: default debug logs the full request body; human_message
-    // << body can throw std::bad_alloc on a large POST.
     template<class F>
-    void run_under_entry_lock(F&& f)
+    static void run_in_entry(thread_state& local, F&& f)
     {
         try
         {
@@ -485,29 +477,122 @@ public:
         }
         catch(...)
         {
-            m_log_mutex.unlock();
+            abandon_entry(local);
             throw;
         }
     }
 
-    // Streaming interface
-    // Lock once at start of log entry (matches original syslogstream pattern)
-    // Note: Manual lock/unlock pattern required because flush() unlocks, not scope exit
+public:
+    // Configuration (instance methods) - chained for fluent API
+    // C++-idiomatic getters and setters using bare names with overloads
+
+    // Query method to check if a severity level would be logged
+    bool is_enabled(syslog::severity s) const {
+        auto& local = state();
+        return static_cast<int>(s) <= static_cast<int>(local.log_level);
+    }
+
+    syslog::severity log_level() const {
+        return state().log_level;
+    }
+    structured_log_stream& log_level(syslog::severity level) {
+        auto& local = state();
+        local.log_level = level;
+        publish_process_defaults(local);
+        return *this;
+    }
+
+    log_format format() const {
+        return state().format;
+    }
+    structured_log_stream& format(log_format f) {
+        auto& local = state();
+        local.format = f;
+        publish_process_defaults(local);
+        return *this;
+    }
+
+    const std::string& app_name() const {
+        return state().app_name;
+    }
+    structured_log_stream& app_name(const std::string& name) {
+        auto& local = state();
+        local.app_name = name;
+        publish_process_defaults(local);
+        return *this;
+    }
+
+    const std::string& sd_id() const {
+        return state().sd_id;
+    }
+    structured_log_stream& sd_id(const std::string& id) {
+        auto& local = state();
+        local.sd_id = id;
+        publish_process_defaults(local);
+        return *this;
+    }
+
+    int facility() const {
+        return state().facility_value;
+    }
+    structured_log_stream& facility(int f) {
+        auto& local = state();
+        local.facility_value = f;
+        publish_process_defaults(local);
+        return *this;
+    }
+    structured_log_stream& facility(syslog::facility f) {
+        auto& local = state();
+        local.facility_value = static_cast<int>(f);
+        publish_process_defaults(local);
+        return *this;
+    }
+
+    // Output redirection is thread-local only (not published to process defaults),
+    // so parallel tests can each capture into their own stringstream safely.
+    structured_log_stream& redirect(const std::string& file_path) {
+        auto& local = state();
+        if (file_path.empty()) {
+            local.file_stream.reset();
+            local.output_stream = &std::cout;
+        } else {
+            local.file_stream = std::make_unique<std::ofstream>(file_path, std::ios::app);
+            if (local.file_stream->is_open()) {
+                local.output_stream = local.file_stream.get();
+            } else {
+                local.file_stream.reset();
+                local.output_stream = &std::cout;
+            }
+        }
+        return *this;
+    }
+
+    // Redirect to ostream (backward compatibility)
+    structured_log_stream& redirect(std::ostream& os) {
+        auto& local = state();
+        local.file_stream.reset();
+        local.output_stream = &os;
+        return *this;
+    }
+
+    // Streaming interface — entry state is thread-local, so concurrent threads
+    // do not need a process-wide mutex held for the lifetime of the entry.
     structured_log_stream& operator<<(const level_manip& manip) {
-        m_log_mutex.lock();  // Lock at start (unlocked by flush() or on throw)
-        entry_severity = manip.sev;
-        entry_msg_id   = manip.msg_id;
-        entry_enabled  = static_cast<int>(manip.sev) <= static_cast<int>(m_log_level);
-        
+        auto& local = state();
+        local.entry_active = true;
+        local.entry_severity = manip.sev;
+        local.entry_msg_id   = manip.msg_id;
+        local.entry_enabled  = static_cast<int>(manip.sev) <= static_cast<int>(local.log_level);
+
         // Early exit: skip expensive buffer clearing if disabled
-        if (not entry_enabled) {
+        if (not local.entry_enabled) {
             return *this;
         }
 
-        run_under_entry_lock([&] {
-            structured_fields.clear();
-            human_message.str("");
-            human_message.clear();
+        run_in_entry(local, [&] {
+            local.structured_fields.clear();
+            local.human_message.str("");
+            local.human_message.clear();
         });
 
         return *this;
@@ -518,9 +603,10 @@ public:
     // Handles both lvalue and rvalue references via forwarding reference
     template<class K, class V>
     structured_log_stream& operator<<(std::pair<K, V>&& kv) {
-        if (entry_enabled) {
-            run_under_entry_lock([&] {
-                structured_fields.emplace(std::piecewise_construct,
+        auto& local = state();
+        if (local.entry_enabled) {
+            run_in_entry(local, [&] {
+                local.structured_fields.emplace(std::piecewise_construct,
                                           std::forward_as_tuple(kv.first),
                                           std::forward_as_tuple(convert_to_value(std::forward<V>(kv.second))));
             });
@@ -530,16 +616,17 @@ public:
 
     // Source location support (C++20)
     structured_log_stream& operator<<(const std::source_location& loc) {
-        if (entry_enabled) {
-            run_under_entry_lock([&] {
+        auto& local = state();
+        if (local.entry_enabled) {
+            run_in_entry(local, [&] {
                 using namespace std::string_view_literals;
-                structured_fields.emplace(std::piecewise_construct,
+                local.structured_fields.emplace(std::piecewise_construct,
                                          std::forward_as_tuple("file"sv),
                                          std::forward_as_tuple(convert_to_value(loc.file_name())));
-                structured_fields.emplace(std::piecewise_construct,
+                local.structured_fields.emplace(std::piecewise_construct,
                                          std::forward_as_tuple("line"sv),
                                          std::forward_as_tuple(convert_to_value(loc.line())));
-                structured_fields.emplace(std::piecewise_construct,
+                local.structured_fields.emplace(std::piecewise_construct,
                                          std::forward_as_tuple("function"sv),
                                          std::forward_as_tuple(convert_to_value(loc.function_name())));
             });
@@ -547,55 +634,56 @@ public:
         return *this;
     }
 
-    // Intermediate operators don't lock (lock already held from start of entry)
+    // Intermediate operators mutate this thread's in-flight entry only
     template<typename T>
     requires (not std::is_same_v<std::remove_cvref_t<T>, level_manip> and
               not std::is_same_v<std::remove_cvref_t<T>, syslog::severity> and
               not std::is_same_v<std::remove_cvref_t<T>, std::source_location>)
     structured_log_stream& operator<<(T&& t) {
-        if (entry_enabled) {
-            run_under_entry_lock([&] {
-                human_message << std::forward<T>(t);
+        auto& local = state();
+        if (local.entry_enabled) {
+            run_in_entry(local, [&] {
+                local.human_message << std::forward<T>(t);
             });
         }
         return *this;
     }
 
-    // flush / endl - calls flush() which unlocks (matches original syslogstream pattern)
+    // flush / endl - calls flush()
     structured_log_stream& operator<<(std::ostream& (*)(std::ostream&)) {
-        // For any manipulator (endl, flush), call flush() which handles unlock
+        // For any manipulator (endl, flush), call flush()
         return flush();
     }
 
-    // Unlock on both success and output() failure. Mid-entry throws unlock via
-    // run_under_entry_lock before rethrow (flush is not reached in that case).
     structured_log_stream& flush() {
+        auto& local = state();
         try {
-            if (entry_enabled) {
-                output();
+            if (local.entry_enabled) {
+                output(local);
             }
-            m_log_mutex.unlock();
+            local.entry_active = false;
+            local.entry_enabled = false;
         } catch (...) {
-            m_log_mutex.unlock();
+            abandon_entry(local);
             throw;
         }
         return *this;
     }
 };
 
-// Global instance
+// Global facade — mutable state lives in thread_local storage accessed via methods.
 inline structured_log_stream slog;
 
 // Function object for level manipulators (supports both error and error("msgid"))
 struct level_manip_functor {
     syslog::severity sev;
-    
+
     // Implicit conversion to level_manip (for slog << error)
     operator level_manip() const { return {sev, std::string_view{}}; }
-    
+
     // Function call operator with no args (for slog << error()) - internal/test use only
     level_manip operator()() const { return {sev, std::string_view{}}; }
-    
+
     // Function call operator with msgid (for slog << error("msgid"))
     level_manip operator()(std::string_view id) const { return {sev, id}; }
 };
@@ -616,8 +704,8 @@ inline structured_log_stream& operator<<(structured_log_stream& stream, const le
     return stream << static_cast<level_manip>(functor);
 }
 
-[[nodiscard]] inline auto& flush(structured_log_stream& ss) { 
-    [[maybe_unused]] auto& _ = ss.flush(); 
+[[nodiscard]] inline auto& flush(structured_log_stream& ss) {
+    [[maybe_unused]] auto& _ = ss.flush();
     return ss;
 }
 
