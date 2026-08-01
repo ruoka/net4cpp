@@ -36,11 +36,19 @@ inline std::ostream& operator<<(std::ostream& os, throwing_log_value)
     throw std::runtime_error{"slog mid-entry throw"};
     return os;
 }
+
+// Process-global `slog` redirect/format is shared; serialize scenarios under --jobs>1.
+std::mutex& slog_scenario_mutex()
+{
+    static std::mutex m;
+    return m;
+}
 }
 
 auto register_structured_log_stream_tests()
 {
     tester::bdd::scenario("Timestamp formatting, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         tester::bdd::given("A specific time point") = [] {
             using namespace std::chrono;
             auto tp = sys_days{2024y/January/15d} + 14h + 30min + 45s + 123ms;
@@ -56,6 +64,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Setup and Log levels, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         tester::bdd::given("A syslog stream setup") = [] {
             slog.app_name("tester")
                 .facility(syslog::facility::local0)
@@ -85,6 +94,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Direct level_manip usage, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         tester::bdd::given("A syslog stream setup") = [] {
             slog.app_name("tester")
                 .log_level(syslog::severity::debug)
@@ -102,6 +112,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Structured logging with fields, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         tester::bdd::given("A syslog stream setup") = [] {
             slog.app_name("tester")
                 .log_level(syslog::severity::debug)
@@ -157,6 +168,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Structured fields output verification, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
@@ -188,6 +200,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Null C-string structured fields stay exception-safe, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
 
         tester::bdd::given("A JSONL slog stream and a null const char* field") = [captured_output] {
@@ -229,6 +242,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Structured fields with error message output verification, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
@@ -261,6 +275,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Structured fields in syslog format output verification, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for syslog format") = [captured_output] {
@@ -295,6 +310,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Log level filtering, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         tester::bdd::given("A syslog stream with info level") = [] {
             slog.app_name("tester")
                 .log_level(syslog::severity::info)
@@ -316,6 +332,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("JSONL format output, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         tester::bdd::given("A syslog stream configured for JSONL format") = [] {
             slog.app_name("tester")
                 .log_level(syslog::severity::debug)
@@ -335,6 +352,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Facility configuration, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         tester::bdd::given("A syslog stream") = [] {
             slog.app_name("tester")
                 .log_level(syslog::severity::debug);
@@ -351,6 +369,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("App name method, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         tester::bdd::given("A syslog stream") = [] {
             tester::bdd::when("Setting app name") = [] {
                 require_nothrow([] {
@@ -361,6 +380,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Syslog format output verification, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for syslog format") = [captured_output] {
@@ -388,6 +408,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Syslog format with structured data, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for syslog format") = [captured_output] {
@@ -420,6 +441,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("JSONL format output verification, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
@@ -452,6 +474,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("JSONL format with structured fields, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
@@ -484,6 +507,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Format switching between syslog and JSONL, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream") = [captured_output] {
@@ -517,6 +541,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("JSONL format with different value types, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
@@ -547,6 +572,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Structured fields with hh_mm_ss time type, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
@@ -592,6 +618,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Structured fields with chrono calendar types, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
@@ -651,6 +678,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Structured fields with additional streamable types, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
@@ -726,6 +754,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Syslog format priority calculation, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for syslog format") = [captured_output] {
@@ -758,6 +787,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Source location support (C++20), [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
@@ -813,6 +843,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Fluent configuration API (method chaining), [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         tester::bdd::given("A syslog stream") = [] {
             tester::bdd::when("Using fluent/chained configuration") = [] {
                 require_nothrow([] {
@@ -848,6 +879,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("is_enabled() method, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         tester::bdd::given("A syslog stream with info level") = [] {
             slog.app_name("testapp")
                 .log_level(syslog::severity::info)
@@ -891,6 +923,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Structured fields with string_view keys (sv suffix), [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
@@ -951,6 +984,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Early filtering optimization, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream with info level") = [captured_output] {
@@ -994,6 +1028,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("RFC 5424 MSG-ID patterns, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
         
         tester::bdd::given("A syslog stream configured for JSONL format") = [captured_output] {
@@ -1035,6 +1070,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Flush method returns structured_log_stream&, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         tester::bdd::given("A syslog stream") = [] {
             slog.app_name("testapp")
                 .log_level(syslog::severity::debug)
@@ -1054,6 +1090,7 @@ auto register_structured_log_stream_tests()
     // A throw from human_message << or convert_to_value skipped flush() and left
     // the mutex locked — http::server's catch-path slog then hung forever.
     tester::bdd::scenario("Mid-entry throw releases slog mutex, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
 
         tester::bdd::given("A slog stream at debug level") = [captured_output] {
@@ -1091,6 +1128,7 @@ auto register_structured_log_stream_tests()
     };
 
     tester::bdd::scenario("Structured-field convert throw releases slog mutex, [net]") = [] {
+        auto _slog_lock = std::lock_guard<std::mutex>{slog_scenario_mutex()};
         auto captured_output = std::make_shared<std::stringstream>();
 
         tester::bdd::given("A slog stream at debug level") = [captured_output] {

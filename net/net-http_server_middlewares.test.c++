@@ -18,6 +18,13 @@ using tester::assertions::check_true;
 using tester::assertions::check_false;
 using tester::assertions::check_contains;
 using tester::assertions::check_nothrow;
+
+// Process-global http_metrics() registry; serialize metrics scenarios under --jobs>1.
+std::mutex& metrics_scenario_mutex()
+{
+    static std::mutex m;
+    return m;
+}
 } // namespace
 
 auto register_middleware_tests()
@@ -770,6 +777,7 @@ auto register_middleware_tests()
     };
 
     tester::bdd::scenario("metrics_middleware - records OK request and scrape body, [net]") = [] {
+        auto _metrics_lock = std::lock_guard<std::mutex>{metrics_scenario_mutex()};
         tester::bdd::given("A metrics middleware with a successful handler") = [] {
             ::http::middleware::http_metrics().reset();
             auto mw = ::http::middleware::metrics_middleware();
@@ -806,6 +814,7 @@ auto register_middleware_tests()
     };
 
     tester::bdd::scenario("metrics_middleware - records error status, [net]") = [] {
+        auto _metrics_lock = std::lock_guard<std::mutex>{metrics_scenario_mutex()};
         tester::bdd::given("A metrics middleware with a 404 handler") = [] {
             ::http::middleware::http_metrics().reset();
             auto mw = ::http::middleware::metrics_middleware();
@@ -831,6 +840,7 @@ auto register_middleware_tests()
     };
 
     tester::bdd::scenario("metrics_middleware - strips query from path label, [net]") = [] {
+        auto _metrics_lock = std::lock_guard<std::mutex>{metrics_scenario_mutex()};
         tester::bdd::given("A metrics middleware with a successful handler") = [] {
             ::http::middleware::http_metrics().reset();
             auto mw = ::http::middleware::metrics_middleware();
@@ -857,6 +867,7 @@ auto register_middleware_tests()
     };
 
     tester::bdd::scenario("metrics_middleware - templates numeric path segments, [net]") = [] {
+        auto _metrics_lock = std::lock_guard<std::mutex>{metrics_scenario_mutex()};
         tester::bdd::given("A metrics middleware with a successful handler") = [] {
             ::http::middleware::http_metrics().reset();
             auto mw = ::http::middleware::metrics_middleware();
@@ -885,6 +896,7 @@ auto register_middleware_tests()
     };
 
     tester::bdd::scenario("metrics_middleware - caps unique series with path=_other, [net]") = [] {
+        auto _metrics_lock = std::lock_guard<std::mutex>{metrics_scenario_mutex()};
         tester::bdd::given("A metrics registry filled to the series cap") = [] {
             ::http::middleware::http_metrics().reset();
             for(std::size_t i = 0; i < ::http::middleware::metrics_max_series; ++i)
@@ -913,6 +925,7 @@ auto register_middleware_tests()
     };
 
     tester::bdd::scenario("metrics_middleware - caps unique series under scenario spam, [net]") = [] {
+        auto _metrics_lock = std::lock_guard<std::mutex>{metrics_scenario_mutex()};
         tester::bdd::given("A metrics registry filled to the series cap") = [] {
             ::http::middleware::http_metrics().reset();
             for(std::size_t i = 0; i < ::http::middleware::metrics_max_series; ++i)
@@ -956,6 +969,7 @@ auto register_middleware_tests()
     };
 
     tester::bdd::scenario("metrics_middleware - records X-Metrics-Scenario, [net]") = [] {
+        auto _metrics_lock = std::lock_guard<std::mutex>{metrics_scenario_mutex()};
         tester::bdd::given("A metrics middleware with a successful handler") = [] {
             ::http::middleware::http_metrics().reset();
             auto mw = ::http::middleware::metrics_middleware();
@@ -982,6 +996,7 @@ auto register_middleware_tests()
     };
 
     tester::bdd::scenario("metrics_middleware - rejects invalid scenario values, [net]") = [] {
+        auto _metrics_lock = std::lock_guard<std::mutex>{metrics_scenario_mutex()};
         tester::bdd::given("A metrics middleware with a successful handler") = [] {
             ::http::middleware::http_metrics().reset();
             auto mw = ::http::middleware::metrics_middleware();
@@ -1008,6 +1023,7 @@ auto register_middleware_tests()
     };
 
     tester::bdd::scenario("metrics_middleware - scrape does not inflate request totals, [net]") = [] {
+        auto _metrics_lock = std::lock_guard<std::mutex>{metrics_scenario_mutex()};
         tester::bdd::given("A reset metrics registry") = [] {
             ::http::middleware::http_metrics().reset();
             auto mw = ::http::middleware::metrics_middleware();
@@ -1030,6 +1046,7 @@ auto register_middleware_tests()
     };
 
     tester::bdd::scenario("metrics_middleware - uses x-http-method with URI-only request, [net]") = [] {
+        auto _metrics_lock = std::lock_guard<std::mutex>{metrics_scenario_mutex()};
         tester::bdd::given("A metrics middleware mimicking http::server (URI + method header)") = [] {
             ::http::middleware::http_metrics().reset();
             auto mw = ::http::middleware::metrics_middleware();
@@ -1059,6 +1076,7 @@ auto register_middleware_tests()
     };
 
     tester::bdd::scenario("metrics histogram buckets are cumulative, [net]") = [] {
+        auto _metrics_lock = std::lock_guard<std::mutex>{metrics_scenario_mutex()};
         tester::bdd::given("A reset metrics registry") = [] {
             ::http::middleware::http_metrics().reset();
 
