@@ -611,10 +611,15 @@ struct session_state
     std::mutex mutex;
     std::condition_variable cv;
     std::deque<std::string> inbound;
+    std::size_t pending_bytes = 0;
     bool closed = false;
 };
 
 } // namespace detail
+
+// Defaults keep a stalled SSE reader from growing `inbound` without bound.
+inline constexpr std::size_t default_max_pending_messages = 256;
+inline constexpr std::size_t default_max_pending_bytes = 1u << 20; // 1 MiB
 
 // Per-connection MCP SSE session. Lives on the SSE thread; POSTs enqueue here.
 class session
@@ -668,6 +673,7 @@ public:
 
         auto msg = std::move(m_state->inbound.front());
         m_state->inbound.pop_front();
+        m_state->pending_bytes -= std::min(m_state->pending_bytes, msg.size());
         return msg;
     }
 
@@ -697,6 +703,29 @@ public:
     [[nodiscard]] std::string_view messages_path() const noexcept
     {
         return m_messages_path;
+    }
+
+    // Cap queued POST bodies per session. Overflow returns 503 before enqueue.
+    sse_transport& max_pending_messages(std::size_t n) noexcept
+    {
+        m_max_pending_messages = n;
+        return *this;
+    }
+
+    [[nodiscard]] std::size_t max_pending_messages() const noexcept
+    {
+        return m_max_pending_messages;
+    }
+
+    sse_transport& max_pending_bytes(std::size_t n) noexcept
+    {
+        m_max_pending_bytes = n;
+        return *this;
+    }
+
+    [[nodiscard]] std::size_t max_pending_bytes() const noexcept
+    {
+        return m_max_pending_bytes;
     }
 
     void attach(
@@ -787,7 +816,17 @@ public:
                     std::lock_guard lock{state->mutex};
                     if(state->closed)
                         return make_error_response(status_not_found, "Could not find session"sv);
+                    const auto next_bytes = state->pending_bytes + body.size();
+                    if(state->inbound.size() >= m_max_pending_messages
+                       or next_bytes < state->pending_bytes
+                       or next_bytes > m_max_pending_bytes)
+                    {
+                        return make_error_response(
+                            status_service_unavailable,
+                            "Session inbound queue full"sv);
+                    }
                     state->inbound.emplace_back(body);
+                    state->pending_bytes = next_bytes;
                 }
                 state->cv.notify_one();
                 return make_response(status_accepted, "Accepted"s);
@@ -817,6 +856,7 @@ private:
             std::lock_guard lock{state->mutex};
             state->closed = true;
             state->inbound.clear();
+            state->pending_bytes = 0;
         }
         state->cv.notify_all();
         std::lock_guard lock{m_mutex};
@@ -824,6 +864,8 @@ private:
     }
 
     std::string m_messages_path;
+    std::size_t m_max_pending_messages = default_max_pending_messages;
+    std::size_t m_max_pending_bytes = default_max_pending_bytes;
     mutable std::mutex m_mutex;
     std::flat_map<std::string, std::shared_ptr<detail::session_state>> m_sessions;
 };
