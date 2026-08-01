@@ -11,6 +11,12 @@ This subproject is designed to work both:
 - **Standalone** (as its own repo, with `deps/tester` available), and
 - **As a dependency inside YarDB** (reusing YarDB’s `deps/tester`).
 
+## Versioning & Releases
+
+**Current release: [`v3.0.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.0.0)** — SemVer tag for the Clang 21 + libc++ modules consume surface. Prior `v1.0` / `v2.0` / `v2.1` tags are historical.
+
+See [`docs/release-policy.md`](docs/release-policy.md) for the public surface, SemVer rules, and release criteria. Nested `deps/tester` must match sibling libraries and YarDB — [ecosystem versioning](https://github.com/ruoka/YarDB/blob/master/docs/versioning.md).
+
 ## Build
 
 Build and run tests with the project’s C++ Builder wrapper:
