@@ -149,8 +149,9 @@ private:
 
     // Process-wide defaults inherited by each thread on first slog use. Lets main
     // configure yardb/yarproxy before workers start; workers then copy these values.
-    // Output streams are intentionally not published here — a test redirect must not
-    // leak a stack stringstream pointer into another thread's initial state.
+    // Raw ostream* redirects stay thread-local (stack captures must not leak into
+    // workers). A shared_ptr capture may be published so HTTP handler threads can
+    // join a test/process sink without dangling.
     struct process_defaults
     {
         syslog::severity log_level = syslog::severity::debug;
@@ -158,11 +159,11 @@ private:
         std::string app_name = "slog";
         std::string sd_id = "slog";
         int facility_value = 1;  // user facility
+        std::shared_ptr<std::ostream> shared_output;
     };
 
     // Per-thread configuration, redirect target, and in-flight entry. Concurrent
-    // slog << … << flush on different threads no longer share entry buffers or
-    // redirect destinations.
+    // slog << … << flush on different threads no longer share entry buffers.
     struct thread_state
     {
         syslog::severity log_level = syslog::severity::debug;
@@ -172,6 +173,7 @@ private:
         int facility_value = 1;
 
         std::unique_ptr<std::ofstream> file_stream;
+        std::shared_ptr<std::ostream> shared_output;
         std::ostream* output_stream = &std::clog;
 
         std::string hostname;
@@ -200,7 +202,7 @@ private:
 
     static std::mutex& shared_ostream_mutex()
     {
-        // Serialize writes to the process-wide standard streams only.
+        // Serialize writes to cout/cerr/clog and to any process-shared capture.
         static std::mutex mutex;
         return mutex;
     }
@@ -208,6 +210,11 @@ private:
     static bool is_shared_standard_stream(const std::ostream* stream) noexcept
     {
         return stream == &std::cout or stream == &std::cerr or stream == &std::clog;
+    }
+
+    static bool needs_shared_ostream_lock(const thread_state& local) noexcept
+    {
+        return local.shared_output != nullptr or is_shared_standard_stream(local.output_stream);
     }
 
     static thread_state& state()
@@ -223,7 +230,8 @@ private:
             local.app_name = defaults.app_name;
             local.sd_id = defaults.sd_id;
             local.facility_value = defaults.facility_value;
-            local.output_stream = &std::clog;
+            local.shared_output = defaults.shared_output;
+            local.output_stream = local.shared_output ? local.shared_output.get() : &std::clog;
             initialized = true;
         }
         return local;
@@ -446,7 +454,7 @@ private:
         std::string line = full_line.str();
 
         if (local.output_stream) {
-            if (is_shared_standard_stream(local.output_stream)) {
+            if (needs_shared_ostream_lock(local)) {
                 std::lock_guard lock{shared_ostream_mutex()};
                 *local.output_stream << line << '\n';
             } else {
@@ -548,10 +556,10 @@ public:
         return *this;
     }
 
-    // Output redirection is thread-local only (not published to process defaults),
-    // so parallel tests can each capture into their own stringstream safely.
+    // File redirect is thread-local (each worker would need its own open).
     structured_log_stream& redirect(const std::string& file_path) {
         auto& local = state();
+        local.shared_output.reset();
         if (file_path.empty()) {
             local.file_stream.reset();
             local.output_stream = &std::cout;
@@ -567,11 +575,32 @@ public:
         return *this;
     }
 
-    // Redirect to ostream (backward compatibility)
+    // Thread-local redirect. Does not publish to workers — use the shared_ptr
+    // overload when HTTP handler threads must write into the same capture.
     structured_log_stream& redirect(std::ostream& os) {
         auto& local = state();
         local.file_stream.reset();
+        local.shared_output.reset();
         local.output_stream = &os;
+        if (is_shared_standard_stream(&os))
+        {
+            std::lock_guard lock{process_mutex()};
+            process_config().shared_output.reset();
+        }
+        return *this;
+    }
+
+    // Process-wide capture inherited by threads that have not used slog yet.
+    // Lifetime is owned by the shared_ptr (tests: make_shared<stringstream>).
+    structured_log_stream& redirect(std::shared_ptr<std::ostream> os) {
+        auto& local = state();
+        local.file_stream.reset();
+        local.shared_output = std::move(os);
+        local.output_stream = local.shared_output ? local.shared_output.get() : &std::clog;
+        {
+            std::lock_guard lock{process_mutex()};
+            process_config().shared_output = local.shared_output;
+        }
         return *this;
     }
 

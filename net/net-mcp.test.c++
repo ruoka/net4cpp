@@ -27,6 +27,47 @@ inline bool network_tests_enabled()
     return true;
 }
 
+// Keep a session handler alive without draining POSTs. Must probe the stream
+// (send_comment) so server->stop()'s socket shutdown is observed — iostream
+// good() stays true until the next write, so a sleep-only closed() loop hangs
+// the handler thread and blocks listen()/join forever.
+inline void hold_session_until_closed(session& sess)
+{
+    using namespace std::chrono_literals;
+    while(not sess.closed())
+    {
+        if(not sess.send_comment())
+            break;
+        std::this_thread::sleep_for(50ms);
+    }
+}
+
+// Bind 127.0.0.1:0 and return {server_thread, bound_port}. Port 0 means bind failed.
+inline std::pair<std::thread, std::uint16_t> listen_ephemeral(const std::shared_ptr<http::server>& server)
+{
+    using namespace std::chrono_literals;
+    auto port = std::make_shared<std::uint16_t>(0);
+    auto bound = std::make_shared<std::promise<void>>();
+    auto bound_future = bound->get_future();
+    std::thread t{[server, port, bound]
+    {
+        try
+        {
+            server->listen("127.0.0.1", "0", [server, port, bound]
+            {
+                *port = server->bound_port();
+                bound->set_value();
+            });
+        }
+        catch(...)
+        {
+        }
+    }};
+    if(bound_future.wait_for(2s) != std::future_status::ready)
+        return {std::move(t), 0};
+    return {std::move(t), *port};
+}
+
 // Parse `event:` / `data:` pairs from an SSE body (v1 subset).
 inline std::vector<std::pair<std::string, std::string>> parse_sse_events(std::string_view body)
 {
@@ -126,18 +167,8 @@ auto register_mcp_tests()
             });
             server->timeout(std::chrono::seconds{1});
 
-            std::promise<void> started;
-            auto started_future = started.get_future();
-            std::thread server_thread{[server, &started] {
-                try
-                {
-                    started.set_value();
-                    server->listen("8101");
-                }
-                catch(...)
-                {
-                }
-            }};
+            auto [server_thread, port] = listen_ephemeral(server);
+            const auto port_s = std::to_string(port);
 
             auto endpoint_data = ""s;
             auto message_data = ""s;
@@ -145,14 +176,14 @@ auto register_mcp_tests()
             auto missing_status = ""s;
             auto posted = false;
 
-            if(started_future.wait_for(2s) == std::future_status::ready)
+            if(port != 0)
             {
                 std::this_thread::sleep_for(200ms);
                 try
                 {
-                    auto stream = net::connect("127.0.0.1", "8101");
+                    auto stream = net::connect("127.0.0.1", port_s);
                     stream << "GET /sse HTTP/1.1" << net::crlf
-                           << "Host: 127.0.0.1:8101" << net::crlf
+                           << "Host: 127.0.0.1:" << port_s << net::crlf
                            << "Accept: text/event-stream" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf
@@ -188,10 +219,10 @@ auto register_mcp_tests()
                             if(q == std::string::npos)
                                 break;
                             const auto sid = endpoint_data.substr(q + "session_id="sv.size());
-                            auto post = net::connect("127.0.0.1", "8101");
+                            auto post = net::connect("127.0.0.1", port_s);
                             const auto payload = R"({"jsonrpc":"2.0","id":1,"method":"ping"})"s;
                             post << "POST /messages/?session_id=" << sid << " HTTP/1.1" << net::crlf
-                                 << "Host: 127.0.0.1:8101" << net::crlf
+                                 << "Host: 127.0.0.1:" << port_s << net::crlf
                                  << "Content-Type: application/json" << net::crlf
                                  << "Content-Length: " << payload.size() << net::crlf
                                  << "Connection: close" << net::crlf
@@ -206,9 +237,9 @@ auto register_mcp_tests()
                             }
 
                             // Unknown session → 404
-                            auto bad = net::connect("127.0.0.1", "8101");
+                            auto bad = net::connect("127.0.0.1", port_s);
                             bad << "POST /messages/?session_id=deadbeefdeadbeefdeadbeefdeadbeef HTTP/1.1" << net::crlf
-                                << "Host: 127.0.0.1:8101" << net::crlf
+                                << "Host: 127.0.0.1:" << port_s << net::crlf
                                 << "Content-Type: application/json" << net::crlf
                                 << "Content-Length: 2" << net::crlf
                                 << "Connection: close" << net::crlf
@@ -259,37 +290,26 @@ auto register_mcp_tests()
 
             // Hold the session open without draining POSTs.
             transport->attach(*server, "/sse", [](session& sess) {
-                while(not sess.closed())
-                    std::this_thread::sleep_for(50ms);
+                hold_session_until_closed(sess);
             });
             server->timeout(std::chrono::seconds{1});
 
-            std::promise<void> started;
-            auto started_future = started.get_future();
-            std::thread server_thread{[server, &started] {
-                try
-                {
-                    started.set_value();
-                    server->listen("8105");
-                }
-                catch(...)
-                {
-                }
-            }};
+            auto [server_thread, port] = listen_ephemeral(server);
+            const auto port_s = std::to_string(port);
 
             auto endpoint_data = ""s;
             auto first_status = ""s;
             auto second_status = ""s;
             auto third_status = ""s;
 
-            if(started_future.wait_for(2s) == std::future_status::ready)
+            if(port != 0)
             {
                 std::this_thread::sleep_for(200ms);
                 try
                 {
-                    auto stream = net::connect("127.0.0.1", "8105");
+                    auto stream = net::connect("127.0.0.1", port_s);
                     stream << "GET /sse HTTP/1.1" << net::crlf
-                           << "Host: 127.0.0.1:8105" << net::crlf
+                           << "Host: 127.0.0.1:" << port_s << net::crlf
                            << "Accept: text/event-stream" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf
@@ -327,9 +347,9 @@ auto register_mcp_tests()
                     const auto payload = R"({"jsonrpc":"2.0","id":1,"method":"ping"})"s;
 
                     auto post_once = [&](std::string& status_out) {
-                        auto post = net::connect("127.0.0.1", "8105");
+                        auto post = net::connect("127.0.0.1", port_s);
                         post << "POST /messages/?session_id=" << sid << " HTTP/1.1" << net::crlf
-                             << "Host: 127.0.0.1:8105" << net::crlf
+                             << "Host: 127.0.0.1:" << port_s << net::crlf
                              << "Content-Type: application/json" << net::crlf
                              << "Content-Length: " << payload.size() << net::crlf
                              << "Connection: close" << net::crlf
@@ -374,35 +394,24 @@ auto register_mcp_tests()
             transport->max_pending_bytes(16);
 
             transport->attach(*server, "/sse", [](session& sess) {
-                while(not sess.closed())
-                    std::this_thread::sleep_for(50ms);
+                hold_session_until_closed(sess);
             });
             server->timeout(std::chrono::seconds{1});
 
-            std::promise<void> started;
-            auto started_future = started.get_future();
-            std::thread server_thread{[server, &started] {
-                try
-                {
-                    started.set_value();
-                    server->listen("8106");
-                }
-                catch(...)
-                {
-                }
-            }};
+            auto [server_thread, port] = listen_ephemeral(server);
+            const auto port_s = std::to_string(port);
 
             auto endpoint_data = ""s;
             auto status = ""s;
 
-            if(started_future.wait_for(2s) == std::future_status::ready)
+            if(port != 0)
             {
                 std::this_thread::sleep_for(200ms);
                 try
                 {
-                    auto stream = net::connect("127.0.0.1", "8106");
+                    auto stream = net::connect("127.0.0.1", port_s);
                     stream << "GET /sse HTTP/1.1" << net::crlf
-                           << "Host: 127.0.0.1:8106" << net::crlf
+                           << "Host: 127.0.0.1:" << port_s << net::crlf
                            << "Accept: text/event-stream" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf
@@ -441,9 +450,9 @@ auto register_mcp_tests()
                     const auto payload = R"({"jsonrpc":"2.0","id":1,"method":"ping"})"s;
                     require_true(payload.size() > 16u);
 
-                    auto post = net::connect("127.0.0.1", "8106");
+                    auto post = net::connect("127.0.0.1", port_s);
                     post << "POST /messages/?session_id=" << sid << " HTTP/1.1" << net::crlf
-                         << "Host: 127.0.0.1:8106" << net::crlf
+                         << "Host: 127.0.0.1:" << port_s << net::crlf
                          << "Content-Type: application/json" << net::crlf
                          << "Content-Length: " << payload.size() << net::crlf
                          << "Connection: close" << net::crlf
@@ -773,28 +782,18 @@ auto register_mcp_tests()
             mcp->attach(*http, "/sse");
             http->timeout(std::chrono::seconds{1});
 
-            std::promise<void> started;
-            auto started_future = started.get_future();
-            std::thread server_thread{[http, &started] {
-                try
-                {
-                    started.set_value();
-                    http->listen("8103");
-                }
-                catch(...)
-                {
-                }
-            }};
+            auto [server_thread, port] = listen_ephemeral(http);
+            const auto port_s = std::to_string(port);
 
             auto saw_endpoint = false;
-            if(started_future.wait_for(2s) == std::future_status::ready)
+            if(port != 0)
             {
                 std::this_thread::sleep_for(200ms);
                 try
                 {
-                    auto stream = net::connect("127.0.0.1", "8103");
+                    auto stream = net::connect("127.0.0.1", port_s);
                     stream << "GET /sse HTTP/1.1" << net::crlf
-                           << "Host: 127.0.0.1:8103" << net::crlf
+                           << "Host: 127.0.0.1:" << port_s << net::crlf
                            << "Accept: text/event-stream" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf
@@ -868,33 +867,23 @@ auto register_mcp_tests()
             mcp->attach(*http, "/sse");
             http->timeout(std::chrono::seconds{1});
 
-            std::promise<void> started;
-            auto started_future = started.get_future();
-            std::thread server_thread{[http, &started] {
-                try
-                {
-                    started.set_value();
-                    http->listen("8102");
-                }
-                catch(...)
-                {
-                }
-            }};
+            auto [server_thread, port] = listen_ephemeral(http);
+            const auto port_s = std::to_string(port);
 
             auto init_reply = ""s;
             auto list_reply = ""s;
             auto evil_status = ""s;
 
-            if(started_future.wait_for(2s) == std::future_status::ready)
+            if(port != 0)
             {
                 std::this_thread::sleep_for(200ms);
                 try
                 {
                     // Evil Origin on SSE open → 403 before stream.
                     {
-                        auto evil = net::connect("127.0.0.1", "8102");
+                        auto evil = net::connect("127.0.0.1", port_s);
                         evil << "GET /sse HTTP/1.1" << net::crlf
-                             << "Host: 127.0.0.1:8102" << net::crlf
+                             << "Host: 127.0.0.1:" << port_s << net::crlf
                              << "Origin: http://evil.example" << net::crlf
                              << "Connection: close" << net::crlf
                              << net::crlf
@@ -908,9 +897,9 @@ auto register_mcp_tests()
                         }
                     }
 
-                    auto stream = net::connect("127.0.0.1", "8102");
+                    auto stream = net::connect("127.0.0.1", port_s);
                     stream << "GET /sse HTTP/1.1" << net::crlf
-                           << "Host: 127.0.0.1:8102" << net::crlf
+                           << "Host: 127.0.0.1:" << port_s << net::crlf
                            << "Origin: http://127.0.0.1:3000" << net::crlf
                            << "Accept: text/event-stream" << net::crlf
                            << "Connection: close" << net::crlf
@@ -955,9 +944,9 @@ auto register_mcp_tests()
                                 break;
                             const auto sid = endpoint.substr(q + "session_id="sv.size());
                             auto post_init = [&](std::string_view payload) {
-                                auto post = net::connect("127.0.0.1", "8102");
+                                auto post = net::connect("127.0.0.1", port_s);
                                 post << "POST /messages/?session_id=" << sid << " HTTP/1.1" << net::crlf
-                                     << "Host: 127.0.0.1:8102" << net::crlf
+                                     << "Host: 127.0.0.1:" << port_s << net::crlf
                                      << "Origin: http://127.0.0.1:3000" << net::crlf
                                      << "Content-Type: application/json" << net::crlf
                                      << "Content-Length: " << payload.size() << net::crlf
@@ -1018,32 +1007,22 @@ auto register_mcp_tests()
             mcp->attach(*http, "/sse");
             http->timeout(std::chrono::seconds{1});
 
-            std::promise<void> started;
-            auto started_future = started.get_future();
-            std::thread server_thread{[http, &started] {
-                try
-                {
-                    started.set_value();
-                    http->listen("8104");
-                }
-                catch(...)
-                {
-                }
-            }};
+            auto [server_thread, port] = listen_ephemeral(http);
+            const auto port_s = std::to_string(port);
 
             auto denied_status = ""s;
             auto allowed_status = ""s;
             auto saw_endpoint = false;
 
-            if(started_future.wait_for(2s) == std::future_status::ready)
+            if(port != 0)
             {
                 std::this_thread::sleep_for(200ms);
                 try
                 {
                     {
-                        auto denied = net::connect("127.0.0.1", "8104");
+                        auto denied = net::connect("127.0.0.1", port_s);
                         denied << "GET /sse HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8104" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "Accept: text/event-stream" << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf
@@ -1057,9 +1036,9 @@ auto register_mcp_tests()
                         }
                     }
 
-                    auto stream = net::connect("127.0.0.1", "8104");
+                    auto stream = net::connect("127.0.0.1", port_s);
                     stream << "GET /sse HTTP/1.1" << net::crlf
-                           << "Host: 127.0.0.1:8104" << net::crlf
+                           << "Host: 127.0.0.1:" << port_s << net::crlf
                            << "Authorization: Bearer secret" << net::crlf
                            << "Accept: text/event-stream" << net::crlf
                            << "Connection: close" << net::crlf

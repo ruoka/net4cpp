@@ -428,7 +428,7 @@ auto register_server_tests()
         .log_level(syslog::severity::debug)
         .format(log_format::jsonl)
         .sd_id("http")
-        .redirect(*captured_output);
+        .redirect(captured_output);
 
             auto server = std::make_shared<http::server>();
             server->get("/test").text("OK");
@@ -527,7 +527,7 @@ auto register_server_tests()
         .log_level(syslog::severity::debug)
         .format(log_format::jsonl)
         .sd_id("http")
-        .redirect(*captured_output);
+        .redirect(captured_output);
 
             auto server = std::make_shared<http::server>();
             server->get("/slow").response_handler("text/plain", [](auto&&, auto&&, auto&&) {
@@ -614,7 +614,7 @@ auto register_server_tests()
         .log_level(syslog::severity::debug)
         .format(log_format::jsonl)
         .sd_id("http")
-        .redirect(*captured_output);
+        .redirect(captured_output);
 
             auto server = std::make_shared<http::server>();
             server->get("/test").text("OK");
@@ -680,7 +680,7 @@ auto register_server_tests()
         .log_level(syslog::severity::debug)
         .format(log_format::jsonl)
         .sd_id("http")
-        .redirect(*captured_output);
+        .redirect(captured_output);
 
             auto server = std::make_shared<http::server>();
             server->get("/test").text("OK");
@@ -748,7 +748,7 @@ auto register_server_tests()
         .log_level(syslog::severity::debug)
         .format(log_format::jsonl)
         .sd_id("http")
-        .redirect(*captured_output);
+        .redirect(captured_output);
 
             auto server = std::make_shared<http::server>();
             server->get("/test").text("OK");
@@ -816,7 +816,7 @@ auto register_server_tests()
                 .log_level(syslog::severity::debug)
                 .format(log_format::jsonl)
                 .sd_id("http")
-                .redirect(*captured_output);
+                .redirect(captured_output);
 
             auto server = std::make_shared<http::server>();
             server->get("/test").text("OK");
@@ -899,7 +899,7 @@ auto register_server_tests()
                 .log_level(syslog::severity::debug)
                 .format(log_format::jsonl)
                 .sd_id("http")
-                .redirect(*captured_output);
+                .redirect(captured_output);
 
             auto server = std::make_shared<http::server>();
             server->get("/test").text("OK");
