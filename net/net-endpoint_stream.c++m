@@ -10,10 +10,18 @@ namespace gsl { template<typename T> using owner = T; }
 
 export namespace net {
 
+// HTTP/wire protocols must not inherit a process locale with thousands
+// grouping (Content-Length "1,512", RFC 1123 year "2,026"). basic_ios::init
+// copies the global locale, so re-imbue classic after every init().
+
 class iendpointstream : public std::istream
 {
 public:
-    iendpointstream(endpointbuf_base* buf) : std::istream{buf}, m_buf{buf} { init(m_buf); }
+    iendpointstream(endpointbuf_base* buf) : std::istream{buf}, m_buf{buf}
+    {
+        init(m_buf);
+        imbue(std::locale::classic());
+    }
     iendpointstream(iendpointstream&& s) noexcept : std::istream{nullptr}, m_buf{s.m_buf}
     {
         // Detach source first: otherwise both streams keep the same rdbuf and
@@ -21,6 +29,7 @@ public:
         s.m_buf = nullptr;
         s.init(nullptr);
         init(m_buf);
+        imbue(std::locale::classic());
     }
     ~iendpointstream() override { if(m_buf) delete m_buf; }
     iendpointstream& operator=(iendpointstream&& s) noexcept
@@ -31,6 +40,7 @@ public:
         s.m_buf = nullptr;
         s.init(nullptr);
         init(m_buf);
+        imbue(std::locale::classic());
         return *this;
     }
     // Drop ownership and clear the iostream rdbuf. Leaving a dangling non-null
@@ -58,12 +68,17 @@ private:
 class oendpointstream : public std::ostream
 {
 public:
-    oendpointstream(endpointbuf_base* sb) : std::ostream{sb}, m_buf{sb} { init(m_buf); }
+    oendpointstream(endpointbuf_base* sb) : std::ostream{sb}, m_buf{sb}
+    {
+        init(m_buf);
+        imbue(std::locale::classic());
+    }
     oendpointstream(oendpointstream&& s) noexcept : std::ostream{nullptr}, m_buf{s.m_buf}
     {
         s.m_buf = nullptr;
         s.init(nullptr);
         init(m_buf);
+        imbue(std::locale::classic());
     }
     ~oendpointstream() override { if(m_buf) delete m_buf; }
     oendpointstream& operator=(oendpointstream&& s) noexcept
@@ -74,6 +89,7 @@ public:
         s.m_buf = nullptr;
         s.init(nullptr);
         init(m_buf);
+        imbue(std::locale::classic());
         return *this;
     }
     void close() noexcept
@@ -93,12 +109,17 @@ private:
 class endpointstream : public std::iostream
 {
 public:
-    endpointstream(endpointbuf_base* buf) : std::iostream{buf}, m_buf{buf} { init(m_buf); }
+    endpointstream(endpointbuf_base* buf) : std::iostream{buf}, m_buf{buf}
+    {
+        init(m_buf);
+        imbue(std::locale::classic());
+    }
     endpointstream(endpointstream&& s) noexcept : std::iostream{nullptr}, m_buf{s.m_buf}
     {
         s.m_buf = nullptr;
         s.init(nullptr);
         init(m_buf);
+        imbue(std::locale::classic());
     }
     ~endpointstream() override { if(m_buf) delete m_buf; }
     endpointstream& operator=(endpointstream&& s) noexcept
@@ -109,6 +130,7 @@ public:
         s.m_buf = nullptr;
         s.init(nullptr);
         init(m_buf);
+        imbue(std::locale::classic());
         return *this;
     }
     void close() noexcept
@@ -145,4 +167,3 @@ inline std::istream& newl(std::istream& is) { if(is.peek() == '\n') is.get(); re
 inline std::ostream& flush(std::ostream& os) { return os.flush(); }
 
 } // namespace net
-

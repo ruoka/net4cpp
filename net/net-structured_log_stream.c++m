@@ -78,6 +78,15 @@ namespace detail {
 >;
 } // namespace detail
 
+// Module-private: declared here only so structured_log_stream can friend them.
+// Definitions live in net-http_server.test.c++ (bodies cannot see private
+// redirect_holder without friendship, and other module units cannot share
+// symbols declared solely inside a single *.test.c++ TU).
+namespace net::test {
+    void publish_slog_capture(std::shared_ptr<std::ostream> sink);
+    void clear_slog_capture();
+}
+
 export namespace net {
 
 enum class log_format { syslog, jsonl };
@@ -145,13 +154,15 @@ struct level_manip {
 };
 
 class structured_log_stream {
+    friend void test::publish_slog_capture(std::shared_ptr<std::ostream>);
+    friend void test::clear_slog_capture();
+
 private:
 
     // Process-wide defaults inherited by each thread on first slog use. Lets main
     // configure yardb/yarproxy before workers start; workers then copy these values.
-    // Raw ostream* redirects stay thread-local (stack captures must not leak into
-    // workers). A shared_ptr capture may be published so HTTP handler threads can
-    // join a test/process sink without dangling.
+    // Cross-thread test captures use redirect_holder via net::test::publish_slog_capture
+    // — not redirect(ostream&), which stays thread-local.
     struct process_defaults
     {
         syslog::severity log_level = syslog::severity::debug;
@@ -159,7 +170,7 @@ private:
         std::string app_name = "slog";
         std::string sd_id = "slog";
         int facility_value = 1;  // user facility
-        std::shared_ptr<std::ostream> shared_output;
+        std::shared_ptr<std::ostream> redirect_holder;  // empty => workers use clog
     };
 
     // Per-thread configuration, redirect target, and in-flight entry. Concurrent
@@ -173,8 +184,8 @@ private:
         int facility_value = 1;
 
         std::unique_ptr<std::ofstream> file_stream;
-        std::shared_ptr<std::ostream> shared_output;
         std::ostream* output_stream = &std::clog;
+        bool serialize_output = true;
 
         std::string hostname;
         std::string procid;
@@ -202,7 +213,7 @@ private:
 
     static std::mutex& shared_ostream_mutex()
     {
-        // Serialize writes to cout/cerr/clog and to any process-shared capture.
+        // Serialize writes to cout/cerr/clog and process-published redirects.
         static std::mutex mutex;
         return mutex;
     }
@@ -210,11 +221,6 @@ private:
     static bool is_shared_standard_stream(const std::ostream* stream) noexcept
     {
         return stream == &std::cout or stream == &std::cerr or stream == &std::clog;
-    }
-
-    static bool needs_shared_ostream_lock(const thread_state& local) noexcept
-    {
-        return local.shared_output != nullptr or is_shared_standard_stream(local.output_stream);
     }
 
     static thread_state& state()
@@ -230,8 +236,11 @@ private:
             local.app_name = defaults.app_name;
             local.sd_id = defaults.sd_id;
             local.facility_value = defaults.facility_value;
-            local.shared_output = defaults.shared_output;
-            local.output_stream = local.shared_output ? local.shared_output.get() : &std::clog;
+            // Always start on clog. Cross-thread captures are resolved at flush
+            // via redirect_holder so TLS never retains a raw pointer that can
+            // dangle after net::test::clear_slog_capture().
+            local.output_stream = &std::clog;
+            local.serialize_output = true;
             initialized = true;
         }
         return local;
@@ -453,13 +462,29 @@ private:
 
         std::string line = full_line.str();
 
-        if (local.output_stream) {
-            if (needs_shared_ostream_lock(local)) {
-                std::lock_guard lock{shared_ostream_mutex()};
-                *local.output_stream << line << '\n';
-            } else {
-                *local.output_stream << line << '\n';
+        // Threads that called redirect(stringstream) keep that sink. Threads still
+        // on cout/cerr/clog follow a published capture (shared_ptr) when present.
+        std::ostream* out = local.output_stream;
+        bool serialize = local.serialize_output;
+        std::shared_ptr<std::ostream> published;
+        if (is_shared_standard_stream(out))
+        {
+            std::lock_guard lock{process_mutex()};
+            published = process_config().redirect_holder;
+            if (published)
+            {
+                out = published.get();
+                serialize = true;
             }
+        }
+        if (not out)
+            return;
+
+        if (serialize) {
+            std::lock_guard lock{shared_ostream_mutex()};
+            *out << line << '\n';
+        } else {
+            *out << line << '\n';
         }
     }
 
@@ -559,47 +584,40 @@ public:
     // File redirect is thread-local (each worker would need its own open).
     structured_log_stream& redirect(const std::string& file_path) {
         auto& local = state();
-        local.shared_output.reset();
         if (file_path.empty()) {
             local.file_stream.reset();
             local.output_stream = &std::cout;
+            local.serialize_output = true;
         } else {
             local.file_stream = std::make_unique<std::ofstream>(file_path, std::ios::app);
             if (local.file_stream->is_open()) {
                 local.output_stream = local.file_stream.get();
+                local.serialize_output = false;
             } else {
                 local.file_stream.reset();
                 local.output_stream = &std::cout;
+                local.serialize_output = true;
             }
+        }
+        {
+            std::lock_guard lock{process_mutex()};
+            process_config().redirect_holder.reset();
         }
         return *this;
     }
 
-    // Thread-local redirect. Does not publish to workers — use the shared_ptr
-    // overload when HTTP handler threads must write into the same capture.
+    // Thread-local redirect. Cross-thread captures (HTTP handlers) use
+    // net::test::publish_slog_capture(shared_ptr) so the sink's lifetime is owned.
+    // redirect(clog/cout/cerr) also clears any published capture.
     structured_log_stream& redirect(std::ostream& os) {
         auto& local = state();
         local.file_stream.reset();
-        local.shared_output.reset();
         local.output_stream = &os;
+        local.serialize_output = true;
         if (is_shared_standard_stream(&os))
         {
             std::lock_guard lock{process_mutex()};
-            process_config().shared_output.reset();
-        }
-        return *this;
-    }
-
-    // Process-wide capture inherited by threads that have not used slog yet.
-    // Lifetime is owned by the shared_ptr (tests: make_shared<stringstream>).
-    structured_log_stream& redirect(std::shared_ptr<std::ostream> os) {
-        auto& local = state();
-        local.file_stream.reset();
-        local.shared_output = std::move(os);
-        local.output_stream = local.shared_output ? local.shared_output.get() : &std::clog;
-        {
-            std::lock_guard lock{process_mutex()};
-            process_config().shared_output = local.shared_output;
+            process_config().redirect_holder.reset();
         }
         return *this;
     }

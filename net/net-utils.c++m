@@ -5,7 +5,9 @@
 export module net:utils;
 import std;
 
-namespace {
+// Module-private (not TU-local): exported templates such as rfc1123_legacy may
+// reference these without -Wunneeded-internal-declaration / -Wreference-tu-local-*.
+namespace utils::detail {
 
 constexpr std::string_view month_abbrev_view(const std::chrono::month& m) noexcept
 {
@@ -23,7 +25,7 @@ constexpr std::string_view weekday_abbrev_view(const std::chrono::weekday& wd) n
     return number2weekday[n];
 }
 
-} // namespace
+} // namespace utils::detail
 
 export namespace utils
 {
@@ -57,16 +59,18 @@ auto rfc1123_legacy(const std::chrono::time_point<T>& current_time) noexcept
     const auto weekday = std::chrono::weekday{midnight};
     const auto date = std::chrono::year_month_day{midnight};
     const auto time = std::chrono::hh_mm_ss{current_time - midnight};
-    auto os = std::ostringstream{};
-    os << weekday_abbrev_view(weekday)                                   << ", "
-       << std::setw(2) << std::setfill('0') << (unsigned)date.day()   << ' '
-       << month_abbrev_view(date.month())                              << ' '
-       << std::setw(4) << std::setfill('0') << (int)date.year()       << ' '
-       << std::setw(2) << std::setfill('0') << time.hours().count()   << ':'
-       << std::setw(2) << std::setfill('0') << time.minutes().count() << ':'
-       << std::setw(2) << std::setfill('0') << time.seconds().count() << ' '
-       << "GMT";
-    return os.str();
+    // Do not use ostringstream << int: under a C++ locale with thousands
+    // grouping, year 2026 becomes "2,026", which breaks If-Unmodified-Since
+    // matching and HTTP date parsing. std::format without L is locale-independent.
+    return std::format(
+        "{}, {:02} {} {:04} {:02}:{:02}:{:02} GMT",
+        detail::weekday_abbrev_view(weekday),
+        static_cast<unsigned>(date.day()),
+        detail::month_abbrev_view(date.month()),
+        static_cast<int>(date.year()),
+        time.hours().count(),
+        time.minutes().count(),
+        time.seconds().count());
 }
 
 // Parse RFC 1123 HTTP date format: "Tue, 31 Dec 2099 23:59:59 GMT"

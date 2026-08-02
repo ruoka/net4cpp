@@ -12,45 +12,6 @@ import :endpointstream;
 import :utils;
 import std;
 
-namespace {
-
-// True when ai_addr is an all-interfaces bind: IPv4 INADDR_ANY, IPv6 ::, or
-// IPv4-mapped ::ffff:0.0.0.0 (Linux accepts IPv4 clients on that mapped any).
-inline bool is_unspecified_bind_address(const net::posix::addrinfo& ai) noexcept
-{
-    if(ai.ai_addr == nullptr)
-        return false;
-
-    if(ai.ai_family == net::posix::af_inet)
-    {
-        const auto& addr = reinterpret_cast<const net::posix::sockaddr_in*>(ai.ai_addr)->sin_addr;
-        return addr.s_addr == static_cast<decltype(addr.s_addr)>(net::posix::inaddr_any);
-    }
-
-    if(ai.ai_family == net::posix::af_inet6)
-    {
-        const auto& addr = reinterpret_cast<const net::posix::sockaddr_in6*>(ai.ai_addr)->sin6_addr;
-        const auto bytes = std::span{
-            reinterpret_cast<const std::uint8_t*>(&addr), sizeof(addr)};
-        if(bytes.size() != 16)
-            return false;
-        if(std::ranges::all_of(bytes, [](std::uint8_t b) { return b == 0; }))
-            return true;
-        // ::ffff:0.0.0.0
-        return std::ranges::equal(bytes.first(10), std::array<std::uint8_t, 10>{})
-            and bytes[10] == 0xff
-            and bytes[11] == 0xff
-            and bytes[12] == 0
-            and bytes[13] == 0
-            and bytes[14] == 0
-            and bytes[15] == 0;
-    }
-
-    return false;
-}
-
-} // namespace
-
 export namespace net {
 
 const std::chrono::minutes default_accept_timeout{1};
@@ -62,6 +23,42 @@ const std::chrono::minutes default_accept_timeout{1};
 inline bool is_wildcard_bind_host(std::string_view host)
 {
     using namespace std::string_view_literals;
+
+    // Keep the addr check local to this exported function so it is not a
+    // TU-local entity exposed across module boundaries (anonymous namespace).
+    const auto is_unspecified_bind_address = [](const posix::addrinfo& ai) noexcept
+    {
+        if(ai.ai_addr == nullptr)
+            return false;
+
+        if(ai.ai_family == posix::af_inet)
+        {
+            const auto& addr = reinterpret_cast<const posix::sockaddr_in*>(ai.ai_addr)->sin_addr;
+            return addr.s_addr == static_cast<decltype(addr.s_addr)>(posix::inaddr_any);
+        }
+
+        if(ai.ai_family == posix::af_inet6)
+        {
+            const auto& addr = reinterpret_cast<const posix::sockaddr_in6*>(ai.ai_addr)->sin6_addr;
+            const auto bytes = std::span{
+                reinterpret_cast<const std::uint8_t*>(&addr), sizeof(addr)};
+            if(bytes.size() != 16)
+                return false;
+            if(std::ranges::all_of(bytes, [](std::uint8_t b) { return b == 0; }))
+                return true;
+            // ::ffff:0.0.0.0
+            return std::ranges::equal(bytes.first(10), std::array<std::uint8_t, 10>{})
+                and bytes[10] == 0xff
+                and bytes[11] == 0xff
+                and bytes[12] == 0
+                and bytes[13] == 0
+                and bytes[14] == 0
+                and bytes[15] == 0;
+        }
+
+        return false;
+    };
+
     const auto normalized = utils::trim(host);
     try
     {

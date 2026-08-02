@@ -202,19 +202,20 @@ inline auto correlation_id_middleware()
 // Type alias for rate limiting client identifier (e.g., IP address, user ID)
 using rate_limit_key_type = std::string;
 
-// Shared state for rate limiting (thread-safe tracker)
-struct request_tracker
+// Per-limiter state (thread-safe). One instance per logical rate limiter — not a
+// process-global singleton — so parallel tests / servers do not share counters.
+struct rate_limiter
 {
     std::mutex mutex;
     std::flat_map<rate_limit_key_type, std::vector<std::chrono::system_clock::time_point>> requests;
     std::size_t request_count = 0; // Counter for periodic cleanup
-    
+
     bool check_limit(const rate_limit_key_type& key, std::size_t max_requests, std::chrono::seconds window)
     {
         std::lock_guard<std::mutex> lock{mutex};
         const auto now = std::chrono::system_clock::now();
         const auto window_start = now - window;
-        
+
         // Remove old requests outside the window
         auto& key_requests = requests[key];
         key_requests.erase(
@@ -222,29 +223,30 @@ struct request_tracker
                 [window_start](const auto& timestamp) { return timestamp < window_start; }),
             key_requests.end()
         );
-        
+
         // Periodic cleanup: remove empty key entries to prevent memory leak
         if(++request_count % 1000 == 0)
         {
             std::erase_if(requests, [](const auto& pair) { return pair.second.empty(); });
         }
-        
+
         // Check if limit exceeded
         if(key_requests.size() >= max_requests)
         {
             return false; // Rate limit exceeded
         }
-        
+
         // Add current request
         key_requests.push_back(now);
         return true; // Within limit
     }
 };
 
-inline auto& rate_limit_tracker()
+using rate_limiter_ptr = std::shared_ptr<rate_limiter>;
+
+inline rate_limiter_ptr make_rate_limiter()
 {
-    static request_tracker tracker;
-    return tracker;
+    return std::make_shared<rate_limiter>();
 }
 
 // Default key extractor for rate limiting - extracts from common proxy headers
@@ -260,21 +262,26 @@ inline auto default_rate_limit_key_extractor(std::string_view, const headers& hd
 }
 
 // Middleware: Rate limiting - limits requests per key (e.g., IP address) within a time window
-// Returns 429 Too Many Requests if limit is exceeded
-// 
-// Template version using concepts for better performance (no type erasure overhead)
+// Returns 429 Too Many Requests if limit is exceeded.
+//
+// Pass a shared rate_limiter (from make_rate_limiter()) to share counters across
+// multiple route wrappers; omit it to give this factory its own isolated limiter.
 template<KeyExtractor KeyExtractorFunc>
 inline auto rate_limiting_middleware(
     std::size_t max_requests,
     std::chrono::seconds window_seconds,
-    KeyExtractorFunc&& key_extractor)
+    KeyExtractorFunc&& key_extractor,
+    rate_limiter_ptr limiter = nullptr)
 {
-    return [max_requests, window_seconds, key_extractor = std::forward<KeyExtractorFunc>(key_extractor)](callback_with_headers next)
+    if(not limiter)
+        limiter = make_rate_limiter();
+
+    return [max_requests, window_seconds, key_extractor = std::forward<KeyExtractorFunc>(key_extractor), limiter](callback_with_headers next)
     {
-        return [max_requests, window_seconds, key_extractor, next = std::move(next)](auto req, auto body, auto hdr) mutable
+        return [max_requests, window_seconds, key_extractor, limiter, next = std::move(next)](auto req, auto body, auto hdr) mutable
         {
             using namespace std::string_literals;
-            
+
             // Extract key for rate limiting (with error handling)
             std::string key;
             try
@@ -286,9 +293,9 @@ inline auto rate_limiting_middleware(
                 // If key extractor throws, use fallback key
                 key = "error"s;
             }
-            
+
             // Check rate limit
-            if(not rate_limit_tracker().check_limit(key, max_requests, window_seconds))
+            if(not limiter->check_limit(key, max_requests, window_seconds))
             {
                 // Rate limit exceeded - use standardized error response
                 auto error_message = std::format(
@@ -300,7 +307,7 @@ inline auto rate_limiting_middleware(
                 error_headers.set("retry-after"s, std::to_string(window_seconds.count()));
                 return make_error_response(status_too_many_requests, error_message, std::make_optional(error_headers));
             }
-            
+
             return next(req, body, hdr);
         };
     };

@@ -27,6 +27,34 @@ inline bool network_tests_enabled()
     return true;
 }
 
+// Bind 127.0.0.1:0. Uses a shared promise so a late listen callback cannot
+// set_value on a destroyed stack promise (std::terminate under --jobs>1).
+inline std::pair<std::thread, std::uint16_t> listen_ephemeral(const std::shared_ptr<http::server>& server)
+{
+    using namespace std::chrono_literals;
+    auto port = std::make_shared<std::uint16_t>(0);
+    auto bound = std::make_shared<std::promise<void>>();
+    auto bound_future = bound->get_future();
+    std::thread t{[server, port, bound]
+    {
+        try
+        {
+            server->listen("127.0.0.1"sv, "0"sv, [server, port, bound]
+            {
+                *port = server->bound_port();
+                try { bound->set_value(); } catch(...) {}
+            });
+        }
+        catch(...)
+        {
+            try { bound->set_value(); } catch(...) {}
+        }
+    }};
+    if(bound_future.wait_for(3s) != std::future_status::ready)
+        return {std::move(t), 0};
+    return {std::move(t), *port};
+}
+
 inline frame make_masked_text(std::string_view text, std::uint32_t key = 0x01020304u)
 {
     auto f = make_text_frame(text);
@@ -417,26 +445,15 @@ auto register_websocket_tests()
             return text_reply{std::string{msg}};
         });
 
-        std::promise<void> bound;
-        auto bound_future = bound.get_future();
-        std::thread server_thread{[server, &bound] {
-            try
-            {
-                server->listen("127.0.0.1"sv, "18090"sv, [&bound] { bound.set_value(); });
-            }
-            catch(...)
-            {
-                try { bound.set_value(); } catch(...) {}
-            }
-        }};
-
         using namespace std::chrono_literals;
-        require_true(bound_future.wait_for(3s) == std::future_status::ready);
+        auto [server_thread, port] = listen_ephemeral(server);
+        require_true(port != 0);
+        const auto port_s = std::to_string(port);
         std::this_thread::sleep_for(50ms);
 
-        auto client = net::connect("127.0.0.1", "18090");
+        auto client = net::connect("127.0.0.1", port_s);
         client << "GET /echo HTTP/1.1" << net::crlf
-               << "Host: 127.0.0.1:18090" << net::crlf
+               << "Host: 127.0.0.1:" << port_s << net::crlf
                << "Upgrade: websocket" << net::crlf
                << "Connection: Upgrade" << net::crlf
                << "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" << net::crlf
@@ -483,26 +500,15 @@ auto register_websocket_tests()
             return text_reply{};
         });
 
-        std::promise<void> bound;
-        auto bound_future = bound.get_future();
-        std::thread server_thread{[server, &bound] {
-            try
-            {
-                server->listen("127.0.0.1"sv, "18095"sv, [&bound] { bound.set_value(); });
-            }
-            catch(...)
-            {
-                try { bound.set_value(); } catch(...) {}
-            }
-        }};
-
         using namespace std::chrono_literals;
-        require_true(bound_future.wait_for(3s) == std::future_status::ready);
+        auto [server_thread, port] = listen_ephemeral(server);
+        require_true(port != 0);
+        const auto port_s = std::to_string(port);
         std::this_thread::sleep_for(50ms);
 
-        auto client = net::connect("127.0.0.1", "18095");
+        auto client = net::connect("127.0.0.1", port_s);
         client << "GET /echo HTTP/1.1" << net::crlf
-               << "Host: 127.0.0.1:18095" << net::crlf
+               << "Host: 127.0.0.1:" << port_s << net::crlf
                << "Upgrade: websocketx" << net::crlf
                << "Connection: upgradeable" << net::crlf
                << "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" << net::crlf
@@ -531,24 +537,13 @@ auto register_websocket_tests()
             return text_reply{std::string{msg}};
         });
 
-        std::promise<void> bound;
-        auto bound_future = bound.get_future();
-        std::thread server_thread{[server, &bound] {
-            try
-            {
-                server->listen("127.0.0.1"sv, "18091"sv, [&bound] { bound.set_value(); });
-            }
-            catch(...)
-            {
-                try { bound.set_value(); } catch(...) {}
-            }
-        }};
-
         using namespace std::chrono_literals;
-        require_true(bound_future.wait_for(3s) == std::future_status::ready);
+        auto [server_thread, port] = listen_ephemeral(server);
+        require_true(port != 0);
+        const auto port_s = std::to_string(port);
         std::this_thread::sleep_for(50ms);
 
-        auto ws = websocket::connect("127.0.0.1"sv, "18091"sv, "/events"sv);
+        auto ws = websocket::connect("127.0.0.1"sv, port_s, "/events"sv);
         require_true(static_cast<bool>(ws));
         require_true(ws.send("hello"sv));
         auto reply = ws.recv();
@@ -571,24 +566,13 @@ auto register_websocket_tests()
             return text_reply{std::string{msg}};
         });
 
-        std::promise<void> bound;
-        auto bound_future = bound.get_future();
-        std::thread server_thread{[server, &bound] {
-            try
-            {
-                server->listen("127.0.0.1"sv, "18093"sv, [&bound] { bound.set_value(); });
-            }
-            catch(...)
-            {
-                try { bound.set_value(); } catch(...) {}
-            }
-        }};
-
         using namespace std::chrono_literals;
-        require_true(bound_future.wait_for(3s) == std::future_status::ready);
+        auto [server_thread, port] = listen_ephemeral(server);
+        require_true(port != 0);
+        const auto port_s = std::to_string(port);
         std::this_thread::sleep_for(50ms);
 
-        auto ws = websocket::connect(net::uri{"ws://127.0.0.1:18093/events"});
+        auto ws = websocket::connect(net::uri{"ws://127.0.0.1:"s + port_s + "/events"s});
         require_true(static_cast<bool>(ws));
         require_true(ws.send("via-uri"sv));
         auto reply = ws.recv();
@@ -1004,28 +988,17 @@ auto register_websocket_tests()
             return text_reply{std::string{msg}};
         });
 
-        std::promise<void> bound;
-        auto bound_future = bound.get_future();
-        std::thread server_thread{[server, &bound] {
-            try
-            {
-                server->listen("127.0.0.1"sv, "18093"sv, [&bound] { bound.set_value(); });
-            }
-            catch(...)
-            {
-                try { bound.set_value(); } catch(...) {}
-            }
-        }};
-
         using namespace std::chrono_literals;
-        require_true(bound_future.wait_for(3s) == std::future_status::ready);
+        auto [server_thread, port] = listen_ephemeral(server);
+        require_true(port != 0);
+        const auto port_s = std::to_string(port);
         std::this_thread::sleep_for(50ms);
 
         auto payload = std::string(tcp_buffer_size + 2048, 'W');
         for(std::size_t i = 0; i < payload.size(); ++i)
             payload[i] = static_cast<char>('A' + static_cast<int>(i % 26));
 
-        auto ws = websocket::connect("127.0.0.1"sv, "18093"sv, "/big"sv);
+        auto ws = websocket::connect("127.0.0.1"sv, port_s, "/big"sv);
         require_true(ws.send(payload));
         auto reply = ws.recv();
         require_true(reply.has_value());
@@ -1048,24 +1021,13 @@ auto register_websocket_tests()
             return text_reply{std::string{msg} + "-" + std::to_string(*count)};
         });
 
-        std::promise<void> bound;
-        auto bound_future = bound.get_future();
-        std::thread server_thread{[server, &bound] {
-            try
-            {
-                server->listen("127.0.0.1"sv, "18092"sv, [&bound] { bound.set_value(); });
-            }
-            catch(...)
-            {
-                try { bound.set_value(); } catch(...) {}
-            }
-        }};
-
         using namespace std::chrono_literals;
-        require_true(bound_future.wait_for(3s) == std::future_status::ready);
+        auto [server_thread, port] = listen_ephemeral(server);
+        require_true(port != 0);
+        const auto port_s = std::to_string(port);
         std::this_thread::sleep_for(50ms);
 
-        auto ws = websocket::connect("127.0.0.1"sv, "18092"sv, "/events"sv);
+        auto ws = websocket::connect("127.0.0.1"sv, port_s, "/events"sv);
         require_true(ws.send("a"sv));
         require_true(ws.send("b"sv));
 

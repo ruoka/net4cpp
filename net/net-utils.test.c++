@@ -220,6 +220,43 @@ auto register_utils_tests()
         };
     };
 
+    // Regression: ostringstream << year under a grouping locale produced
+    // "2,026", which broke If-Unmodified-Since matching under --jobs>1 when
+    // xson tests temporarily call locale::global(grouping).
+    tester::bdd::scenario("RFC 1123 date formatting ignores locale grouping, [net]") = [] {
+        tester::bdd::given("A C++ locale with thousands separators") = [] {
+            tester::bdd::when("Formatting an RFC 1123 date") = [] {
+                tester::bdd::then("Year and day have no grouping commas") = [] {
+                    struct grouping_numpunct : std::numpunct<char>
+                    {
+                    protected:
+                        char do_thousands_sep() const override { return ','; }
+                        std::string do_grouping() const override { return "\3"; }
+                    };
+
+                    const auto grouping = std::locale{std::locale::classic(), new grouping_numpunct};
+                    const auto previous = std::locale::global(grouping);
+                    try
+                    {
+                        const auto tp = utils::parse_rfc1123_date("Sun, 02 Aug 2026 01:07:07 GMT"sv);
+                        // parse returns sys_time<seconds>; rfc1123_legacy takes system_clock::time_point.
+                        const auto formatted = utils::rfc1123_legacy(
+                            system_clock::time_point{tp.time_since_epoch()});
+                        // Weekday comma is required; year must stay "2026" not "2,026".
+                        check_eq("Sun, 02 Aug 2026 01:07:07 GMT"s, formatted);
+                        check_true(not formatted.contains("2,026"sv));
+                    }
+                    catch(...)
+                    {
+                        std::locale::global(previous);
+                        throw;
+                    }
+                    std::locale::global(previous);
+                };
+            };
+        };
+    };
+
     return true;
 }
 

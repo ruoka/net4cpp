@@ -4,6 +4,7 @@
 
 module net;
 import :address_info;
+import :acceptor;
 import :connector;
 import :posix;
 import :socket;
@@ -14,7 +15,6 @@ import std;
 using namespace net;
 
 namespace {
-using tester::basic::test_case;
 using tester::assertions::check_true;
 using tester::assertions::check_eq;
 using tester::assertions::check_nothrow;
@@ -32,20 +32,49 @@ auto register_connector_tests()
     if(not network_tests_enabled()) return false;
 
     tester::bdd::scenario("Connector basic construction, [net]") = [] {
-        tester::bdd::given("A connector to google.com:http") = [] {
-            const auto ctor = net::connector{"google.com","http"};
-            check_eq(ctor.host(), "google.com");
+        tester::bdd::given("A connector to example.host:http") = [] {
+            const auto ctor = net::connector{"example.host","http"};
+            check_eq(ctor.host(), "example.host");
             check_eq(ctor.service_or_port(), "http");
             check_eq(ctor.timeout(), default_connect_timeout);
         };
     };
 
+    // Local ephemeral accept/connect — no dependency on external DNS/HTTP.
     tester::bdd::scenario("Connecting to a host, [net]") = [] {
-        tester::bdd::given("A connection to google.com:http") = [] {
-            check_nothrow([] {
-                const auto s = net::connect("google.com","http");
-                check_true(not(not s));
+        tester::bdd::given("A local acceptor and connector") = [] {
+            using namespace std::chrono_literals;
+
+            auto ator = std::make_shared<net::acceptor>("127.0.0.1", "0");
+            ator->timeout(2s);
+            const auto port = ator->bound_port();
+            check_true(port != 0);
+
+            auto accepted = std::make_shared<std::atomic<bool>>(false);
+            std::thread acceptor_thread{[ator, accepted]
+            {
+                try
+                {
+                    auto [stream, host, peer_port] = ator->accept();
+                    (void)stream;
+                    (void)host;
+                    (void)peer_port;
+                    accepted->store(true);
+                }
+                catch(...)
+                {
+                }
+            }};
+
+            check_nothrow([port]
+            {
+                const auto s = net::connect("127.0.0.1", std::to_string(port));
+                check_true(static_cast<bool>(s));
             });
+
+            if(acceptor_thread.joinable())
+                acceptor_thread.join();
+            check_true(accepted->load());
         };
     };
 

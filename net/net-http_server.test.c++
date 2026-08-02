@@ -9,6 +9,22 @@ import std;
 
 using namespace net;
 
+namespace net::test {
+
+void publish_slog_capture(std::shared_ptr<std::ostream> sink)
+{
+    std::lock_guard lock{structured_log_stream::process_mutex()};
+    structured_log_stream::process_config().redirect_holder = std::move(sink);
+}
+
+void clear_slog_capture()
+{
+    std::lock_guard lock{structured_log_stream::process_mutex()};
+    structured_log_stream::process_config().redirect_holder.reset();
+}
+
+} // namespace net::test
+
 namespace {
 using namespace std::string_literals;
 using namespace std::string_view_literals;
@@ -24,6 +40,67 @@ inline bool network_tests_enabled()
         return std::string_view{v} != "1";
     return true;
 }
+
+// recursive: slog_capture may already hold this while listen_ephemeral locks again.
+inline std::recursive_mutex& slog_capture_mutex()
+{
+    static std::recursive_mutex mutex;
+    return mutex;
+}
+
+// Serialize HTTP listen windows under --jobs>1 so a published slog capture is
+// not polluted by other servers, and fixed-port races stay gone with :0 binds.
+inline std::tuple<std::thread, std::uint16_t, std::shared_ptr<std::unique_lock<std::recursive_mutex>>>
+listen_ephemeral(const std::shared_ptr<http::server>& server)
+{
+    using namespace std::chrono_literals;
+    auto gate = std::make_shared<std::unique_lock<std::recursive_mutex>>(slog_capture_mutex());
+    auto port = std::make_shared<std::uint16_t>(0);
+    auto bound = std::make_shared<std::promise<void>>();
+    auto bound_future = bound->get_future();
+    std::thread t{[server, port, bound]
+    {
+        try
+        {
+            server->listen("127.0.0.1", "0", [server, port, bound]
+            {
+                *port = server->bound_port();
+                try { bound->set_value(); } catch(...) {}
+            });
+        }
+        catch(...)
+        {
+            try { bound->set_value(); } catch(...) {}
+        }
+    }};
+    if(bound_future.wait_for(2s) != std::future_status::ready)
+        return {std::move(t), 0, std::move(gate)};
+    return {std::move(t), *port, std::move(gate)};
+}
+
+struct slog_capture
+{
+    explicit slog_capture(std::shared_ptr<std::stringstream> os)
+        : lock{slog_capture_mutex()}
+        , out{std::move(os)}
+    {
+        slog.app_name("httptest")
+            .log_level(syslog::severity::debug)
+            .format(log_format::jsonl)
+            .sd_id("http")
+            .redirect(*out);
+        test::publish_slog_capture(out);
+    }
+
+    ~slog_capture()
+    {
+        test::clear_slog_capture();
+        slog.redirect(std::clog);
+    }
+
+    std::lock_guard<std::recursive_mutex> lock;
+    std::shared_ptr<std::stringstream> out;
+};
 
 namespace view {
 const auto index = "<!DOCTYPE html><html><body><h1>Test</h1></body></html>";
@@ -76,23 +153,15 @@ auto register_server_tests()
             server->get("/").text("OK");
 
             tester::bdd::when("Server is started and stopped") = [server] {
-    std::promise<void> started;
-    auto started_future = started.get_future();
+                auto [t, port, _http_listen_gate] = listen_ephemeral(server);
 
-                std::thread t{[server, &started]{
-        try {
-            started.set_value();
-                        server->listen("8081");
-        } catch(...) {}
-    }};
-
-    using namespace std::chrono_literals;
-    if (started_future.wait_for(2s) == std::future_status::ready) {
-        std::this_thread::sleep_for(200ms);
+                using namespace std::chrono_literals;
+                if (port != 0) {
+                    std::this_thread::sleep_for(200ms);
                     server->stop();
-    }
-    
-    if (t.joinable()) t.join();
+                }
+
+                if (t.joinable()) t.join();
 
                 tester::bdd::then("Server is stopped") = [server] {
                     check_true(server->stopped());
@@ -154,23 +223,7 @@ auto register_server_tests()
             });
         server->timeout(std::chrono::seconds{1});
 
-        std::uint16_t port = 0;
-        std::promise<void> bound;
-        auto bound_future = bound.get_future();
-        std::thread t{[server, &bound, &port] {
-            try
-            {
-                server->listen("127.0.0.1", "0", [&bound, server, &port] {
-                    port = server->bound_port();
-                    bound.set_value();
-                });
-            }
-            catch(...)
-            {
-            }
-        }};
-
-        check_true(bound_future.wait_for(2s) == std::future_status::ready);
+        auto [t, port, _http_listen_gate] = listen_ephemeral(server);
         check_true(port != 0);
 
         try
@@ -206,23 +259,7 @@ auto register_server_tests()
         server->get("/").text("OK");
         server->timeout(std::chrono::seconds{1});
 
-        std::uint16_t port = 0;
-        std::promise<void> bound;
-        auto bound_future = bound.get_future();
-        std::thread t{[server, &bound, &port] {
-            try
-            {
-                server->listen("127.0.0.1", "0", [&bound, server, &port] {
-                    port = server->bound_port();
-                    bound.set_value();
-                });
-            }
-            catch(...)
-            {
-            }
-        }};
-
-        check_true(bound_future.wait_for(2s) == std::future_status::ready);
+        auto [t, port, _http_listen_gate] = listen_ephemeral(server);
         check_true(port != 0);
 
         // Open a connection and leave it idle in handle()'s request read.
@@ -266,23 +303,7 @@ auto register_server_tests()
             server->get("/").text("OK");
             server->timeout(std::chrono::seconds{1});
 
-            std::uint16_t port = 0;
-            std::promise<void> bound;
-            auto bound_future = bound.get_future();
-            std::thread t{[server, &bound, &port] {
-                try
-                {
-                    server->listen("127.0.0.1", "0", [&bound, server, &port] {
-                        port = server->bound_port();
-                        bound.set_value();
-                    });
-                }
-                catch(...)
-                {
-                }
-            }};
-
-            check_true(bound_future.wait_for(2s) == std::future_status::ready);
+            auto [t, port, _http_listen_gate] = listen_ephemeral(server);
             check_true(port != 0);
 
             constexpr int connectors = 8;
@@ -335,32 +356,32 @@ auto register_server_tests()
         server->get("/").text("alive");
         server->timeout(std::chrono::seconds{1});
 
-        std::uint16_t port = 0;
-        std::promise<void> bound;
-        auto bound_future = bound.get_future();
-        std::exception_ptr listen_error;
-        std::mutex listen_error_mutex;
+        auto port = std::make_shared<std::uint16_t>(0);
+        auto bound = std::make_shared<std::promise<void>>();
+        auto bound_future = bound->get_future();
+        auto listen_error = std::make_shared<std::exception_ptr>();
+        auto listen_error_mutex = std::make_shared<std::mutex>();
 
-        std::thread t{[server, &bound, &port, &listen_error, &listen_error_mutex] {
+        std::thread t{[server, bound, port, listen_error, listen_error_mutex] {
             try
             {
-                server->listen("127.0.0.1", "0", [server, &bound, &port] {
-                    port = server->bound_port();
-                    bound.set_value();
+                server->listen("127.0.0.1", "0", [server, bound, port] {
+                    *port = server->bound_port();
+                    try { bound->set_value(); } catch(...) {}
                 });
             }
             catch(...)
             {
                 {
-                    std::lock_guard lock{listen_error_mutex};
-                    listen_error = std::current_exception();
+                    std::lock_guard lock{*listen_error_mutex};
+                    *listen_error = std::current_exception();
                 }
-                try { bound.set_value(); } catch(...) {}
+                try { bound->set_value(); } catch(...) {}
             }
         }};
 
         check_true(bound_future.wait_for(2s) == std::future_status::ready);
-        check_true(port != 0);
+        check_true(*port != 0);
 
         auto previous = net::posix::rlimit{};
         check_true(net::posix::getrlimit(net::posix::rlimit_nofile, &previous) == 0);
@@ -385,7 +406,7 @@ auto register_server_tests()
             {
                 net::posix::sockaddr_in addr{};
                 addr.sin_family = net::posix::af_inet;
-                addr.sin_port = net::posix::htons(port);
+                addr.sin_port = net::posix::htons(*port);
                 addr.sin_addr.s_addr = net::posix::htonl(net::posix::inaddr_loopback);
                 (void)net::posix::connect(
                     client, reinterpret_cast<net::posix::sockaddr*>(&addr), sizeof addr);
@@ -401,12 +422,12 @@ auto register_server_tests()
         std::this_thread::sleep_for(150ms);
 
         {
-            std::lock_guard lock{listen_error_mutex};
-            check_true(listen_error == nullptr);
+            std::lock_guard lock{*listen_error_mutex};
+            check_true(*listen_error == nullptr);
         }
         check_true(not server->stopped());
 
-        auto stream = net::connect("127.0.0.1", std::to_string(port));
+        auto stream = net::connect("127.0.0.1", std::to_string(*port));
         stream << "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n" << net::flush;
         auto status_line = std::string{};
         std::getline(stream, status_line);
@@ -423,36 +444,24 @@ auto register_server_tests()
 
         tester::bdd::given("An HTTP server with logging configured") = [] {
     auto captured_output = std::make_shared<std::stringstream>();
-    
-    slog.app_name("httptest")
-        .log_level(syslog::severity::debug)
-        .format(log_format::jsonl)
-        .sd_id("http")
-        .redirect(captured_output);
 
             auto server = std::make_shared<http::server>();
             server->get("/test").text("OK");
             server->timeout(std::chrono::seconds{1});
 
             tester::bdd::when("An HTTP request is made with headers") = [server, captured_output] {
-    std::promise<void> started;
-    auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-        try {
-            started.set_value();
-                        server->listen("8082");
-        } catch(...) {}
-    }};
+    auto capture = slog_capture{captured_output};
+    auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+    const auto port_s = std::to_string(port);
 
     using namespace std::chrono_literals;
-    if (started_future.wait_for(2s) == std::future_status::ready) {
+    if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
         try {
-            auto stream = connect("127.0.0.1", "8082");
+            auto stream = connect("127.0.0.1", port_s);
             stream << "GET /test HTTP/1.1" << net::crlf
-                   << "Host: 127.0.0.1:8082" << net::crlf
+                   << "Host: 127.0.0.1:" << port_s << net::crlf
                    << "User-Agent: TestAgent/1.0" << net::crlf
                    << "Content-Type: application/json" << net::crlf
                    << "Accept: text/plain, application/json" << net::crlf
@@ -475,7 +484,6 @@ auto register_server_tests()
     }
 
     if (server_thread.joinable()) server_thread.join();
-    slog.redirect(std::clog);
 
                 tester::bdd::then("Logs contain structured fields") = [captured_output] {
     std::string output = captured_output->str();
@@ -522,12 +530,6 @@ auto register_server_tests()
 
         tester::bdd::given("An HTTP server with a slow endpoint") = [] {
     auto captured_output = std::make_shared<std::stringstream>();
-    
-    slog.app_name("httptest")
-        .log_level(syslog::severity::debug)
-        .format(log_format::jsonl)
-        .sd_id("http")
-        .redirect(captured_output);
 
             auto server = std::make_shared<http::server>();
             server->get("/slow").response_handler("text/plain", [](auto&&, auto&&, auto&&) {
@@ -537,24 +539,18 @@ auto register_server_tests()
             server->timeout(std::chrono::seconds{1});
 
             tester::bdd::when("A request is made to the slow endpoint") = [server, captured_output] {
-    std::promise<void> started;
-    auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-        try {
-            started.set_value();
-                        server->listen("8083");
-        } catch(...) {}
-    }};
+    auto capture = slog_capture{captured_output};
+    auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+    const auto port_s = std::to_string(port);
 
     using namespace std::chrono_literals;
-    if (started_future.wait_for(2s) == std::future_status::ready) {
+    if (port != 0) {
         std::this_thread::sleep_for(200ms);
 
         try {
-            auto stream = connect("127.0.0.1", "8083");
+            auto stream = connect("127.0.0.1", port_s);
             stream << "GET /slow HTTP/1.1" << net::crlf
-                   << "Host: 127.0.0.1:8083" << net::crlf
+                   << "Host: 127.0.0.1:" << port_s << net::crlf
                    << "Connection: close" << net::crlf
                    << net::crlf
                    << net::flush;
@@ -574,31 +570,33 @@ auto register_server_tests()
     }
 
     if (server_thread.joinable()) server_thread.join();
-    slog.redirect(std::clog);
 
                 tester::bdd::then("Duration is logged and is at least 50ms") = [captured_output] {
     std::string output = captured_output->str();
     check_contains(output, "\"msg_id\":\"HTTP_RESPONSE\"");
     check_contains(output, "\"duration_ms\"");
-    
+
+    // Under --jobs>1 other HTTP servers may briefly share the process redirect;
+    // require that at least one HTTP_RESPONSE reflects the 50ms handler sleep.
+    auto found_slow = false;
     std::istringstream iss(output);
     std::string line;
     while(std::getline(iss, line)) {
-        if(line.find("\"msg_id\":\"HTTP_RESPONSE\"") != std::string::npos) {
-            auto pos = line.find("\"duration_ms\":");
-            if(pos != std::string::npos) {
-                                pos += 14;
-                auto end_pos = line.find_first_of(",}", pos);
-                if(end_pos != std::string::npos) {
-                    std::string duration_str = line.substr(pos, end_pos - pos);
-                    try {
-                        long long duration = std::stoll(duration_str);
-                                        check_true(duration >= 50);
-                    } catch(...) {}
-                }
-            }
-        }
+        if(line.find("\"msg_id\":\"HTTP_RESPONSE\"") == std::string::npos)
+            continue;
+        auto pos = line.find("\"duration_ms\":");
+        if(pos == std::string::npos)
+            continue;
+        pos += 14;
+        auto end_pos = line.find_first_of(",}", pos);
+        if(end_pos == std::string::npos)
+            continue;
+        try {
+            if(std::stoll(line.substr(pos, end_pos - pos)) >= 50)
+                found_slow = true;
+        } catch(...) {}
     }
+    check_true(found_slow);
                 };
             };
         };
@@ -609,36 +607,24 @@ auto register_server_tests()
 
         tester::bdd::given("An HTTP server with logging configured") = [] {
     auto captured_output = std::make_shared<std::stringstream>();
-    
-    slog.app_name("httptest")
-        .log_level(syslog::severity::debug)
-        .format(log_format::jsonl)
-        .sd_id("http")
-        .redirect(captured_output);
 
             auto server = std::make_shared<http::server>();
             server->get("/test").text("OK");
             server->timeout(std::chrono::seconds{1});
 
             tester::bdd::when("A request is made without tracked headers") = [server, captured_output] {
-    std::promise<void> started;
-    auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-        try {
-            started.set_value();
-                        server->listen("8084");
-        } catch(...) {}
-    }};
+    auto capture = slog_capture{captured_output};
+    auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+    const auto port_s = std::to_string(port);
 
     using namespace std::chrono_literals;
-    if (started_future.wait_for(2s) == std::future_status::ready) {
+    if (port != 0) {
         std::this_thread::sleep_for(200ms);
 
         try {
-            auto stream = connect("127.0.0.1", "8084");
+            auto stream = connect("127.0.0.1", port_s);
             stream << "GET /test HTTP/1.1" << net::crlf
-                   << "Host: 127.0.0.1:8084" << net::crlf
+                   << "Host: 127.0.0.1:" << port_s << net::crlf
                    << "Connection: close" << net::crlf
                    << net::crlf
                    << net::flush;
@@ -658,7 +644,6 @@ auto register_server_tests()
     }
 
     if (server_thread.joinable()) server_thread.join();
-    slog.redirect(std::clog);
 
                 tester::bdd::then("HTTP_REQUEST_HEADERS is not logged") = [captured_output] {
     std::string output = captured_output->str();
@@ -675,36 +660,24 @@ auto register_server_tests()
 
         tester::bdd::given("An HTTP server with logging configured") = [] {
     auto captured_output = std::make_shared<std::stringstream>();
-    
-    slog.app_name("httptest")
-        .log_level(syslog::severity::debug)
-        .format(log_format::jsonl)
-        .sd_id("http")
-        .redirect(captured_output);
 
             auto server = std::make_shared<http::server>();
             server->get("/test").text("OK");
             server->timeout(std::chrono::seconds{1});
 
             tester::bdd::when("A request is made with only User-Agent header") = [server, captured_output] {
-    std::promise<void> started;
-    auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-        try {
-            started.set_value();
-                        server->listen("8085");
-        } catch(...) {}
-    }};
+    auto capture = slog_capture{captured_output};
+    auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+    const auto port_s = std::to_string(port);
 
     using namespace std::chrono_literals;
-    if (started_future.wait_for(2s) == std::future_status::ready) {
+    if (port != 0) {
         std::this_thread::sleep_for(200ms);
 
         try {
-            auto stream = connect("127.0.0.1", "8085");
+            auto stream = connect("127.0.0.1", port_s);
             stream << "GET /test HTTP/1.1" << net::crlf
-                   << "Host: 127.0.0.1:8085" << net::crlf
+                   << "Host: 127.0.0.1:" << port_s << net::crlf
                    << "User-Agent: PartialTest/1.0" << net::crlf
                    << "Connection: close" << net::crlf
                    << net::crlf
@@ -725,7 +698,6 @@ auto register_server_tests()
     }
 
     if (server_thread.joinable()) server_thread.join();
-    slog.redirect(std::clog);
 
                 tester::bdd::then("HTTP_REQUEST_HEADERS is logged with user_agent") = [captured_output] {
     std::string output = captured_output->str();
@@ -743,36 +715,24 @@ auto register_server_tests()
 
         tester::bdd::given("An HTTP server with logging configured") = [] {
     auto captured_output = std::make_shared<std::stringstream>();
-    
-    slog.app_name("httptest")
-        .log_level(syslog::severity::debug)
-        .format(log_format::jsonl)
-        .sd_id("http")
-        .redirect(captured_output);
 
             auto server = std::make_shared<http::server>();
             server->get("/test").text("OK");
             server->timeout(std::chrono::seconds{1});
 
             tester::bdd::when("A request is made with empty header values") = [server, captured_output] {
-    std::promise<void> started;
-    auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-        try {
-            started.set_value();
-                        server->listen("8086");
-        } catch(...) {}
-    }};
+    auto capture = slog_capture{captured_output};
+    auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+    const auto port_s = std::to_string(port);
 
     using namespace std::chrono_literals;
-    if (started_future.wait_for(2s) == std::future_status::ready) {
+    if (port != 0) {
         std::this_thread::sleep_for(200ms);
 
         try {
-            auto stream = connect("127.0.0.1", "8086");
+            auto stream = connect("127.0.0.1", port_s);
             stream << "GET /test HTTP/1.1" << net::crlf
-                   << "Host: 127.0.0.1:8086" << net::crlf
+                   << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "User-Agent: " << net::crlf
                                << "Content-Type: " << net::crlf
                                << "Accept: " << net::crlf
@@ -795,7 +755,6 @@ auto register_server_tests()
     }
 
     if (server_thread.joinable()) server_thread.join();
-    slog.redirect(std::clog);
 
                 tester::bdd::then("HTTP_REQUEST_HEADERS is not logged") = [captured_output] {
     std::string output = captured_output->str();
@@ -811,36 +770,24 @@ auto register_server_tests()
 
         tester::bdd::given("An HTTP server with logging configured") = [] {
             auto captured_output = std::make_shared<std::stringstream>();
-            
-            slog.app_name("httptest")
-                .log_level(syslog::severity::debug)
-                .format(log_format::jsonl)
-                .sd_id("http")
-                .redirect(captured_output);
 
             auto server = std::make_shared<http::server>();
             server->get("/test").text("OK");
             server->timeout(std::chrono::seconds{1});
 
             tester::bdd::when("A request is made without X-Correlation-ID header") = [server, captured_output] {
-                std::promise<void> started;
-                auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-                    try {
-                        started.set_value();
-                        server->listen("8087");
-                    } catch(...) {}
-                }};
+                auto capture = slog_capture{captured_output};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if (started_future.wait_for(2s) == std::future_status::ready) {
+                if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8087");
+                        auto stream = connect("127.0.0.1", port_s);
                         stream << "GET /test HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8087" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf
                                << net::flush;
@@ -860,7 +807,6 @@ auto register_server_tests()
                 }
 
                 if (server_thread.joinable()) server_thread.join();
-                slog.redirect(std::clog);
 
                 tester::bdd::then("Request is processed successfully") = [captured_output] {
                     std::string output = captured_output->str();
@@ -894,37 +840,25 @@ auto register_server_tests()
 
         tester::bdd::given("An HTTP server with logging configured") = [] {
             auto captured_output = std::make_shared<std::stringstream>();
-            
-            slog.app_name("httptest")
-                .log_level(syslog::severity::debug)
-                .format(log_format::jsonl)
-                .sd_id("http")
-                .redirect(captured_output);
 
             auto server = std::make_shared<http::server>();
             server->get("/test").text("OK");
             server->timeout(std::chrono::seconds{1});
 
             tester::bdd::when("A request is made with X-Correlation-ID header") = [server, captured_output] {
-                std::promise<void> started;
-                auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-                    try {
-                        started.set_value();
-                        server->listen("8088");
-                    } catch(...) {}
-                }};
+                auto capture = slog_capture{captured_output};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if (started_future.wait_for(2s) == std::future_status::ready) {
+                if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
                     try {
                         const std::string provided_correlation_id = "550e8400-e29b-41d4-a716-446655440000";
-                        auto stream = connect("127.0.0.1", "8088");
+                        auto stream = connect("127.0.0.1", port_s);
                         stream << "GET /test HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8088" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "X-Correlation-ID: " << provided_correlation_id << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf
@@ -945,7 +879,6 @@ auto register_server_tests()
                 }
 
                 if (server_thread.joinable()) server_thread.join();
-                slog.redirect(std::clog);
 
                 tester::bdd::then("CORRELATION_ID_GENERATED is not logged") = [captured_output] {
                     std::string output = captured_output->str();
@@ -970,24 +903,17 @@ auto register_server_tests()
             tester::bdd::when("A POST request is made to the GET-only route") = [server] {
                 auto response_status = std::make_shared<std::string>("");
                 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-                    try {
-                        started.set_value();
-                        server->listen("8085");
-                    } catch(...) {}
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if (started_future.wait_for(2s) == std::future_status::ready) {
+                if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8085");
+                        auto stream = connect("127.0.0.1", port_s);
                         stream << "POST /test405 HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8085" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "Accept: */*" << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf
@@ -1044,24 +970,17 @@ auto register_server_tests()
             tester::bdd::when("A GET request is made to a non-existent route") = [server] {
                 auto response_status = std::make_shared<std::string>("");
                 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-                    try {
-                        started.set_value();
-                        server->listen("8086");
-                    } catch(...) {}
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if (started_future.wait_for(2s) == std::future_status::ready) {
+                if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8086");
+                        auto stream = connect("127.0.0.1", port_s);
                         stream << "GET /nonexistent HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8086" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "Accept: */*" << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf
@@ -1118,22 +1037,15 @@ auto register_server_tests()
             tester::bdd::when("A GET request is made without a Host header") = [server] {
                 auto response_status = std::make_shared<std::string>("");
 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-                    try {
-                        started.set_value();
-                        server->listen("8089");
-                    } catch(...) {}
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if (started_future.wait_for(2s) == std::future_status::ready) {
+                if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8089");
+                        auto stream = connect("127.0.0.1", port_s);
                         stream << "GET /test HTTP/1.1" << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf
@@ -1177,24 +1089,17 @@ auto register_server_tests()
             tester::bdd::when("A POST request has a non-numeric Content-Length") = [server] {
                 auto response_status = std::make_shared<std::string>("");
 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-                    try {
-                        started.set_value();
-                        server->listen("8090");
-                    } catch(...) {}
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if (started_future.wait_for(2s) == std::future_status::ready) {
+                if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8090");
+                        auto stream = connect("127.0.0.1", port_s);
                         stream << "POST /test HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8090" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "Content-Length: not-a-number" << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf
@@ -1242,25 +1147,18 @@ auto register_server_tests()
             tester::bdd::when("A GET sends a header larger than the head limit") = [server] {
                 auto response_status = std::make_shared<std::string>("");
 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-                    try {
-                        started.set_value();
-                        server->listen("8095");
-                    } catch(...) {}
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if (started_future.wait_for(2s) == std::future_status::ready) {
+                if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8095");
+                        auto stream = connect("127.0.0.1", port_s);
                         const auto filler = std::string(512, 'A');
                         stream << "GET /test HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8095" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "X-Fill: " << filler << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf
@@ -1307,22 +1205,15 @@ auto register_server_tests()
                 auto response_status = std::make_shared<std::string>("");
                 auto response_body = std::make_shared<std::string>("");
 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-                    try {
-                        started.set_value();
-                        server->listen("8096");
-                    } catch(...) {}
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if (started_future.wait_for(2s) == std::future_status::ready) {
+                if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8096");
+                        auto stream = connect("127.0.0.1", port_s);
                         // Bare LF (no CR) — must not hang the server handler thread.
                         stream << "GET /lf HTTP/1.1\n"
                                << "Host: 127.0.0.1:8096\n"
@@ -1379,24 +1270,17 @@ auto register_server_tests()
             tester::bdd::when("A POST declares Content-Length above the limit without sending a body") = [server] {
                 auto response_status = std::make_shared<std::string>("");
 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-                    try {
-                        started.set_value();
-                        server->listen("8091");
-                    } catch(...) {}
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if (started_future.wait_for(2s) == std::future_status::ready) {
+                if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8091");
+                        auto stream = connect("127.0.0.1", port_s);
                         stream << "POST /test HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8091" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "Content-Length: 1048576" << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf
@@ -1440,24 +1324,17 @@ auto register_server_tests()
             tester::bdd::when("A GET request asks to close the connection") = [server] {
                 auto response_headers = std::make_shared<std::string>("");
 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-                    try {
-                        started.set_value();
-                        server->listen("8091");
-                    } catch(...) {}
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if (started_future.wait_for(2s) == std::future_status::ready) {
+                if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8091");
+                        auto stream = connect("127.0.0.1", port_s);
                         stream << "GET /test HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8091" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf
                                << net::flush;
@@ -1502,24 +1379,17 @@ auto register_server_tests()
             tester::bdd::when("A POST sends two Content-Length headers") = [server, handled] {
                 auto response_status = std::make_shared<std::string>("");
 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-                    try {
-                        started.set_value();
-                        server->listen("8092");
-                    } catch(...) {}
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if (started_future.wait_for(2s) == std::future_status::ready) {
+                if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8092");
+                        auto stream = connect("127.0.0.1", port_s);
                         stream << "POST /test HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8092" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "Content-Length: 4" << net::crlf
                                << "Content-Length: 0" << net::crlf
                                << "Connection: close" << net::crlf
@@ -1572,22 +1442,15 @@ auto register_server_tests()
             tester::bdd::when("A GET sends two Host headers") = [server, handled] {
                 auto response_status = std::make_shared<std::string>("");
 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-                    try {
-                        started.set_value();
-                        server->listen("8094");
-                    } catch(...) {}
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if (started_future.wait_for(2s) == std::future_status::ready) {
+                if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8094");
+                        auto stream = connect("127.0.0.1", port_s);
                         stream << "GET /test HTTP/1.1" << net::crlf
                                << "Host: victim.example" << net::crlf
                                << "Host: evil.attacker" << net::crlf
@@ -1640,24 +1503,17 @@ auto register_server_tests()
             tester::bdd::when("A POST declares Transfer-Encoding: chunked") = [server, handled] {
                 auto response_status = std::make_shared<std::string>("");
 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-                    try {
-                        started.set_value();
-                        server->listen("8093");
-                    } catch(...) {}
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if (started_future.wait_for(2s) == std::future_status::ready) {
+                if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8093");
+                        auto stream = connect("127.0.0.1", port_s);
                         stream << "POST /test HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8093" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "Transfer-Encoding: chunked" << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf
@@ -1725,24 +1581,17 @@ auto register_server_tests()
                 auto acao = std::make_shared<std::string>("");
                 auto acam = std::make_shared<std::string>("");
 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-                    try {
-                        started.set_value();
-                        server->listen("8094");
-                    } catch(...) {}
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if (started_future.wait_for(2s) == std::future_status::ready) {
+                if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8094");
+                        auto stream = connect("127.0.0.1", port_s);
                         stream << "OPTIONS /api/data HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8094" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "Origin: http://localhost:8080" << net::crlf
                                << "Access-Control-Request-Method: POST" << net::crlf
                                << "Access-Control-Request-Headers: content-type,authorization" << net::crlf
@@ -1810,24 +1659,17 @@ auto register_server_tests()
                 [server, handler_invoked] {
                 auto response_status = std::make_shared<std::string>("");
 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-                    try {
-                        started.set_value();
-                        server->listen("8095");
-                    } catch(...) {}
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if (started_future.wait_for(2s) == std::future_status::ready) {
+                if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8095");
+                        auto stream = connect("127.0.0.1", port_s);
                         stream << "OPTIONS /api/mutate HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8095" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "Origin: http://evil.example" << net::crlf
                                << "Access-Control-Request-Method: POST" << net::crlf
                                << "Connection: close" << net::crlf
@@ -1888,29 +1730,19 @@ auto register_server_tests()
                 auto body = std::make_shared<std::string>();
                 auto json_response = std::make_shared<std::string>();
 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-                std::thread server_thread{[server, &started] {
-                    try
-                    {
-                        started.set_value();
-                        server->listen("8098");
-                    }
-                    catch(...)
-                    {
-                    }
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if(started_future.wait_for(2s) == std::future_status::ready)
+                if(port != 0)
                 {
                     std::this_thread::sleep_for(200ms);
                     try
                     {
                         {
-                            auto stream = connect("127.0.0.1", "8098");
+                            auto stream = connect("127.0.0.1", port_s);
                             stream << "GET /events HTTP/1.1" << net::crlf
-                                   << "Host: 127.0.0.1:8098" << net::crlf
+                                   << "Host: 127.0.0.1:" << port_s << net::crlf
                                    << "Accept: text/event-stream" << net::crlf
                                    << "Last-Event-ID: 7" << net::crlf
                                    << "Origin: http://localhost:3000" << net::crlf
@@ -1941,9 +1773,9 @@ auto register_server_tests()
 
                         // Normal JSON route still uses Content-Length + keep-alive path.
                         {
-                            auto stream = connect("127.0.0.1", "8098");
+                            auto stream = connect("127.0.0.1", port_s);
                             stream << "GET /json HTTP/1.1" << net::crlf
-                                   << "Host: 127.0.0.1:8098" << net::crlf
+                                   << "Host: 127.0.0.1:" << port_s << net::crlf
                                    << "Connection: close" << net::crlf
                                    << net::crlf
                                    << net::flush;
@@ -2003,28 +1835,18 @@ auto register_server_tests()
             tester::bdd::when("The client reads one event and closes") = [server, stopped_cleanly] {
                 auto got_start = std::make_shared<std::atomic<bool>>(false);
 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-                std::thread server_thread{[server, &started] {
-                    try
-                    {
-                        started.set_value();
-                        server->listen("8099");
-                    }
-                    catch(...)
-                    {
-                    }
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if(started_future.wait_for(2s) == std::future_status::ready)
+                if(port != 0)
                 {
                     std::this_thread::sleep_for(200ms);
                     try
                     {
-                        auto stream = connect("127.0.0.1", "8099");
+                        auto stream = connect("127.0.0.1", port_s);
                         stream << "GET /stream HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8099" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf
                                << net::flush;
@@ -2087,24 +1909,17 @@ auto register_server_tests()
             tester::bdd::when("A GET declares Content-Length: 0") = [server] {
                 auto response_headers = std::make_shared<std::string>("");
 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-                    try {
-                        started.set_value();
-                        server->listen("8100");
-                    } catch(...) {}
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if (started_future.wait_for(2s) == std::future_status::ready) {
+                if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8100");
+                        auto stream = connect("127.0.0.1", port_s);
                         stream << "GET /echo-hdrs HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8100" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "Content-Length: 0" << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf
@@ -2156,24 +1971,17 @@ auto register_server_tests()
             tester::bdd::when("A GET hits the route") = [server] {
                 auto response_headers = std::make_shared<std::string>("");
 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-                    try {
-                        started.set_value();
-                        server->listen("8101");
-                    } catch(...) {}
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if (started_future.wait_for(2s) == std::future_status::ready) {
+                if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8101");
+                        auto stream = connect("127.0.0.1", port_s);
                         stream << "GET /split HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8101" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf
                                << net::flush;
@@ -2229,24 +2037,17 @@ auto register_server_tests()
             tester::bdd::when("A GET hits the route") = [server] {
                 auto response_headers = std::make_shared<std::string>("");
 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-
-                std::thread server_thread{[server, &started]{
-                    try {
-                        started.set_value();
-                        server->listen("8102");
-                    } catch(...) {}
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if (started_future.wait_for(2s) == std::future_status::ready) {
+                if (port != 0) {
                     std::this_thread::sleep_for(200ms);
 
                     try {
-                        auto stream = connect("127.0.0.1", "8102");
+                        auto stream = connect("127.0.0.1", port_s);
                         stream << "GET /hop HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8102" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf
                                << net::flush;
@@ -2308,30 +2109,20 @@ auto register_server_tests()
             tester::bdd::when("A client sends Origin with an embedded CR") = [server] {
                 auto headers_raw = std::make_shared<std::string>();
 
-                std::promise<void> started;
-                auto started_future = started.get_future();
-                std::thread server_thread{[server, &started] {
-                    try
-                    {
-                        started.set_value();
-                        server->listen("8104");
-                    }
-                    catch(...)
-                    {
-                    }
-                }};
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
 
                 using namespace std::chrono_literals;
-                if(started_future.wait_for(2s) == std::future_status::ready)
+                if(port != 0)
                 {
                     std::this_thread::sleep_for(200ms);
                     try
                     {
-                        auto stream = connect("127.0.0.1", "8104");
+                        auto stream = connect("127.0.0.1", port_s);
                         // Embedded CR after a matching port suffix: allowlist
                         // would accept this, but reflecting it splits headers.
                         stream << "GET /events HTTP/1.1" << net::crlf
-                               << "Host: 127.0.0.1:8104" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
                                << "Accept: text/event-stream" << net::crlf
                                << "Origin: http://127.0.0.1:8104\rX-Evil: 1" << net::crlf
                                << "Connection: close" << net::crlf
