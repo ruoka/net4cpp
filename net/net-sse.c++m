@@ -129,7 +129,15 @@ public:
 
     [[nodiscard]] bool closed() const noexcept
     {
-        return m_closed or not m_stream.good();
+        if(m_closed or not m_stream.good())
+            return true;
+        // http::server::stop() calls endpointstream::shutdown(), which does not
+        // set iostream failbit until the next write. Without this latch, MCP
+        // handlers that only poll closed() never observe stop() and
+        // wait_for_handlers() deadlocks (inbound-queue tests; custom transports).
+        if(auto* ep = dynamic_cast<const net::endpointstream*>(&m_stream))
+            return ep->shut_down();
+        return false;
     }
 
     [[nodiscard]] std::size_t bytes_out() const noexcept

@@ -149,6 +149,15 @@ public:
         if(m_buf)
             m_buf->shutdown();
     }
+
+    // True after shutdown() (or close()). Used by SSE/MCP closed() checks so
+    // stop() is visible without a write failing first — otherwise handlers that
+    // only poll closed() never exit and wait_for_handlers() deadlocks.
+    [[nodiscard]] bool shut_down() const noexcept
+    {
+        return not m_buf or m_buf->shut_down();
+    }
+
     bool wait_for(const std::chrono::milliseconds& timeout)
     {
         if(not m_buf) return false;
