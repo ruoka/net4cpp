@@ -138,7 +138,7 @@ auto register_mcp_tests()
 
             auto ss = std::stringstream{};
             auto stream = http::sse::session{ss};
-            auto state = std::make_shared<detail::session_state>(
+            auto state = std::make_shared<http::mcp::detail::session_state>(
                 "deadbeefdeadbeefdeadbeefdeadbeef");
             auto sess = session{state, stream};
 
