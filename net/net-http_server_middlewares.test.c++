@@ -770,6 +770,33 @@ auto register_middleware_tests()
         };
     };
 
+    // Regression: check_limit used to erase_if empty flat_map entries while still
+    // holding auto& into requests[key]. flat_map erase invalidates all references,
+    // so the subsequent size()/push_back was use-after-free on every 1000th call
+    // that removed at least one empty key.
+    tester::bdd::scenario("rate_limiter check_limit survives periodic empty-key cleanup, [net]") = [] {
+        tester::bdd::given("A limiter with one empty orphan key and 998 populated keys") = [] {
+            auto limiter = ::http::middleware::make_rate_limiter();
+            const auto window = std::chrono::seconds{60};
+
+            // max_requests == 0 denies without push_back → leaves an empty map entry.
+            check_false(limiter->check_limit("orphan", 0, window));
+
+            for(int i = 0; i < 998; ++i)
+                check_true(limiter->check_limit(std::format("k{}", i), 100, window));
+
+            tester::bdd::when("The 1000th check_limit erases the orphan via flat_map cleanup") = [limiter, window] {
+                // request_count hits 1000 here; erase_if removes "orphan".
+                check_true(limiter->check_limit("victim", 100, window));
+
+                tester::bdd::then("Further checks on the victim key remain well-defined") = [limiter, window] {
+                    check_true(limiter->check_limit("victim", 100, window));
+                    check_eq(limiter->requests.size(), 999uz); // 998 + victim; orphan gone
+                };
+            };
+        };
+    };
+
     tester::bdd::scenario("metrics_middleware - records OK request and scrape body, [net]") = [] {
         tester::bdd::given("A metrics middleware with a successful handler") = [] {
             auto registry = ::http::middleware::metrics_registry{};
