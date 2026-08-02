@@ -664,7 +664,16 @@ public:
         };
 
         if(timeout.count() <= 0)
-            m_state->cv.wait(lock, ready);
+        {
+            // Unbounded wait is only notified by POST enqueue or erase_session.
+            // TCP half-close / iostream failbit never notify the CV, so a plain
+            // cv.wait would ignore m_stream.closed() forever and leave the SSE
+            // handler stuck (blocking http::server::stop → wait_for_handlers).
+            // Slice the wait so ready() re-checks the stream.
+            constexpr auto slice = std::chrono::milliseconds{50};
+            while(not ready())
+                m_state->cv.wait_for(lock, slice, ready);
+        }
         else if(not m_state->cv.wait_for(lock, timeout, ready))
             return std::nullopt;
 

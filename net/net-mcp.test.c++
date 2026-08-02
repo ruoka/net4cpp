@@ -4,6 +4,7 @@
 
 module net;
 import :mcp;
+import :sse;
 import tester;
 import std;
 
@@ -123,6 +124,40 @@ inline std::vector<std::pair<std::string, std::string>> parse_sse_events(std::st
 auto register_mcp_tests()
 {
     using namespace tester::basic;
+
+    test_case("MCP session recv observes stream close without CV notify, [net]") = []
+    {
+        // Regression: recv() with the default unbounded timeout used cv.wait and
+        // was only woken by POST enqueue or erase_session. When the SSE stream
+        // failed (client disconnect after a write, or failbit set), ready()'s
+        // m_stream.closed() clause was never re-checked, so the handler thread
+        // hung and wait_for_handlers() could block forever after stop().
+        section("unbounded recv returns once SSE stream is not good") = []
+        {
+            using namespace std::chrono_literals;
+
+            auto ss = std::stringstream{};
+            auto stream = http::sse::session{ss};
+            auto state = std::make_shared<http::mcp::detail::session_state>(
+                "deadbeefdeadbeefdeadbeefdeadbeef");
+            auto sess = session{state, stream};
+
+            auto done = std::promise<std::optional<std::string>>{};
+            auto fut = done.get_future();
+            std::thread waiter{[&]
+            {
+                done.set_value(sess.recv());
+            }};
+
+            std::this_thread::sleep_for(20ms);
+            ss.setstate(std::ios::badbit);
+
+            require_eq(fut.wait_for(2s), std::future_status::ready);
+            check_false(fut.get().has_value());
+            if(waiter.joinable())
+                waiter.join();
+        };
+    };
 
     test_case("MCP query_param and session id helpers, [net]") = []
     {
