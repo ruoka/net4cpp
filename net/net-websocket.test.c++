@@ -488,6 +488,74 @@ auto register_websocket_tests()
             server_thread.join();
     };
 
+    // Regression: a Content-Length body on the upgrade request used to remain
+    // unread through 101, so run_text_session parsed those octets as the first
+    // client frames (message injection / proxy desync). Reject before upgrade.
+    tester::bdd::scenario("http server rejects WebSocket upgrade with Content-Length body, [net]") = [] {
+        if(not network_tests_enabled())
+            return;
+
+        auto server = std::make_shared<http::server>();
+        auto seen = std::make_shared<std::atomic<bool>>(false);
+        server->ws("/echo").ws([seen](std::string_view) {
+            seen->store(true);
+            return text_reply{};
+        });
+
+        using namespace std::chrono_literals;
+        auto [server_thread, port] = listen_ephemeral(server);
+        require_true(port != 0);
+        const auto port_s = std::to_string(port);
+        std::this_thread::sleep_for(50ms);
+
+        const auto injected = frame_bytes(make_masked_text("INJECTED"sv));
+        auto client = net::connect("127.0.0.1", port_s);
+        client << "GET /echo HTTP/1.1" << net::crlf
+               << "Host: 127.0.0.1:" << port_s << net::crlf
+               << "Upgrade: websocket" << net::crlf
+               << "Connection: Upgrade" << net::crlf
+               << "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" << net::crlf
+               << "Sec-WebSocket-Version: 13" << net::crlf
+               << "Content-Length: " << injected.size() << net::crlf
+               << net::crlf
+               << injected << net::flush;
+
+        auto version = ""s;
+        auto status_code = ""s;
+        auto reason = ""s;
+        client >> version >> status_code;
+        std::getline(client, reason);
+        check_eq(status_code, "400"s);
+        check_false(seen->load());
+
+        // Content-Length: 0 must still upgrade (no body octets to misread).
+        auto client0 = net::connect("127.0.0.1", port_s);
+        client0 << "GET /echo HTTP/1.1" << net::crlf
+                << "Host: 127.0.0.1:" << port_s << net::crlf
+                << "Upgrade: websocket" << net::crlf
+                << "Connection: Upgrade" << net::crlf
+                << "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" << net::crlf
+                << "Sec-WebSocket-Version: 13" << net::crlf
+                << "Content-Length: 0" << net::crlf
+                << net::crlf << net::flush;
+
+        version.clear();
+        status_code.clear();
+        reason.clear();
+        client0 >> version >> status_code;
+        std::getline(client0, reason);
+        check_eq(status_code, "101"s);
+
+        require_true(write_frame(client0, make_masked_close()));
+        auto close_reply = frame{};
+        require_true(read_frame(client0, close_reply) == frame_read::ok);
+        check_eq(close_reply.op, opcode::close);
+
+        server->stop();
+        if(server_thread.joinable())
+            server_thread.join();
+    };
+
     // Regression: Upgrade/Connection substring tokens must not switch protocols.
     tester::bdd::scenario("http server rejects substring WebSocket upgrade tokens, [net]") = [] {
         if(not network_tests_enabled())

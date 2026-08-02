@@ -943,6 +943,52 @@ private:
                         break;
                     }
 
+                    // Upgrade takes over the stream without reading an HTTP body.
+                    // A non-zero Content-Length leaves those octets buffered; they
+                    // would be parsed as the first client WebSocket frames
+                    // (message injection / proxy desync). Reject before 101.
+                    // Content-Length: 0 is harmless and still allowed.
+                    if(hs.contains("content-length"))
+                    {
+                        auto upgrade_cl_ok = true;
+                        long long upgrade_cl = 0;
+                        try
+                        {
+                            upgrade_cl = utils::stoll(hs["content-length"]);
+                            if(upgrade_cl < 0)
+                                upgrade_cl_ok = false;
+                        }
+                        catch(const std::exception&)
+                        {
+                            upgrade_cl_ok = false;
+                        }
+
+                        if(not upgrade_cl_ok or upgrade_cl > 0)
+                        {
+                            const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                            net::slog << net::warning("HTTP_WEBSOCKET_BODY_REJECTED")
+                                      << "WebSocket upgrade with Content-Length body rejected from "
+                                      << endpoint << ":" << port
+                                      << std::pair{"ip"sv, endpoint}
+                                      << std::pair{"port", port}
+                                      << std::pair{"method", method}
+                                      << std::pair{"uri", std::string{uri}}
+                                      << std::pair{"content_length_str", hs["content-length"]}
+                                      << std::pair{"status", status_bad_request}
+                                      << std::pair{"request_id", request_id}
+                                      << std::pair{"duration_ms", request_duration}
+                                      << net::flush;
+                            stream << "HTTP/1.1 " << status_bad_request << net::crlf
+                                   << "Date: " << date() << net::crlf
+                                   << "Server: " << host() << net::crlf
+                                   << "Content-Type: " << m_content_type << net::crlf
+                                   << "Content-Length: 0" << net::crlf
+                                   << "Connection: close" << net::crlf
+                                   << net::crlf << net::flush;
+                            break;
+                        }
+                    }
+
                     const auto accept = net::websocket::sec_websocket_accept(hs["sec-websocket-key"]);
                     net::slog << net::notice("HTTP_WEBSOCKET_UPGRADE") << "upgrading connection"
                               << std::pair{"ip"sv, endpoint}
