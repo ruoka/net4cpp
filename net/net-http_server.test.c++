@@ -48,9 +48,67 @@ inline std::recursive_mutex& slog_capture_mutex()
     return mutex;
 }
 
+// std::thread::~thread calls terminate if still joinable — any require_* throw
+// before an explicit join would abort the whole --jobs>1 run. Stop + join here.
+struct joining_server_thread
+{
+    std::shared_ptr<http::server> server;
+    std::thread thread;
+
+    joining_server_thread() = default;
+    joining_server_thread(std::shared_ptr<http::server> s, std::thread t)
+        : server{std::move(s)}
+        , thread{std::move(t)}
+    {
+    }
+
+    joining_server_thread(joining_server_thread&& other) noexcept
+        : server{std::move(other.server)}
+        , thread{std::move(other.thread)}
+    {
+    }
+
+    joining_server_thread& operator=(joining_server_thread&& other) noexcept
+    {
+        if(this != &other)
+        {
+            stop_and_join();
+            server = std::move(other.server);
+            thread = std::move(other.thread);
+        }
+        return *this;
+    }
+
+    ~joining_server_thread() { stop_and_join(); }
+
+    joining_server_thread(const joining_server_thread&) = delete;
+    joining_server_thread& operator=(const joining_server_thread&) = delete;
+
+    bool joinable() const noexcept { return thread.joinable(); }
+
+    void join()
+    {
+        if(thread.joinable())
+            thread.join();
+    }
+
+private:
+    void stop_and_join() noexcept
+    {
+        if(server)
+        {
+            try { server->stop(); } catch(...) {}
+        }
+        if(thread.joinable())
+        {
+            try { thread.join(); } catch(...) {}
+        }
+    }
+};
+
 // Serialize HTTP listen windows under --jobs>1 so a published slog capture is
 // not polluted by other servers, and fixed-port races stay gone with :0 binds.
-inline std::tuple<std::thread, std::uint16_t, std::shared_ptr<std::unique_lock<std::recursive_mutex>>>
+inline std::tuple<joining_server_thread, std::uint16_t, std::shared_ptr<std::unique_lock<std::recursive_mutex>>>
 listen_ephemeral(const std::shared_ptr<http::server>& server)
 {
     using namespace std::chrono_literals;
@@ -74,8 +132,8 @@ listen_ephemeral(const std::shared_ptr<http::server>& server)
         }
     }};
     if(bound_future.wait_for(2s) != std::future_status::ready)
-        return {std::move(t), 0, std::move(gate)};
-    return {std::move(t), *port, std::move(gate)};
+        return {joining_server_thread{server, std::move(t)}, 0, std::move(gate)};
+    return {joining_server_thread{server, std::move(t)}, *port, std::move(gate)};
 }
 
 struct slog_capture
@@ -179,17 +237,22 @@ auto register_server_tests()
         // Without listen-fd close, stop would wait up to this accept poll.
         server->timeout(std::chrono::seconds{30});
 
-        std::promise<void> bound;
-        auto bound_future = bound.get_future();
-        std::thread t{[server, &bound] {
+        auto bound = std::make_shared<std::promise<void>>();
+        auto bound_future = bound->get_future();
+        auto t = joining_server_thread{server, std::thread{[server, bound]
+        {
             try
             {
-                server->listen("127.0.0.1", "0", [&bound] { bound.set_value(); });
+                server->listen("127.0.0.1", "0", [bound]
+                {
+                    try { bound->set_value(); } catch(...) {}
+                });
             }
             catch(...)
             {
+                try { bound->set_value(); } catch(...) {}
             }
-        }};
+        }}};
 
         check_true(bound_future.wait_for(2s) == std::future_status::ready);
         std::this_thread::sleep_for(50ms);
@@ -362,10 +425,12 @@ auto register_server_tests()
         auto listen_error = std::make_shared<std::exception_ptr>();
         auto listen_error_mutex = std::make_shared<std::mutex>();
 
-        std::thread t{[server, bound, port, listen_error, listen_error_mutex] {
+        auto t = joining_server_thread{server, std::thread{[server, bound, port, listen_error, listen_error_mutex]
+        {
             try
             {
-                server->listen("127.0.0.1", "0", [server, bound, port] {
+                server->listen("127.0.0.1", "0", [server, bound, port]
+                {
                     *port = server->bound_port();
                     try { bound->set_value(); } catch(...) {}
                 });
@@ -378,7 +443,7 @@ auto register_server_tests()
                 }
                 try { bound->set_value(); } catch(...) {}
             }
-        }};
+        }}};
 
         check_true(bound_future.wait_for(2s) == std::future_status::ready);
         check_true(*port != 0);

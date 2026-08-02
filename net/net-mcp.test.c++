@@ -43,8 +43,66 @@ inline void hold_session_until_closed(session& sess)
     }
 }
 
+// std::thread::~thread calls terminate if still joinable — any require_* throw
+// before an explicit join would abort the whole --jobs>1 run. Stop + join here.
+struct joining_server_thread
+{
+    std::shared_ptr<http::server> server;
+    std::thread thread;
+
+    joining_server_thread() = default;
+    joining_server_thread(std::shared_ptr<http::server> s, std::thread t)
+        : server{std::move(s)}
+        , thread{std::move(t)}
+    {
+    }
+
+    joining_server_thread(joining_server_thread&& other) noexcept
+        : server{std::move(other.server)}
+        , thread{std::move(other.thread)}
+    {
+    }
+
+    joining_server_thread& operator=(joining_server_thread&& other) noexcept
+    {
+        if(this != &other)
+        {
+            stop_and_join();
+            server = std::move(other.server);
+            thread = std::move(other.thread);
+        }
+        return *this;
+    }
+
+    ~joining_server_thread() { stop_and_join(); }
+
+    joining_server_thread(const joining_server_thread&) = delete;
+    joining_server_thread& operator=(const joining_server_thread&) = delete;
+
+    bool joinable() const noexcept { return thread.joinable(); }
+
+    void join()
+    {
+        if(thread.joinable())
+            thread.join();
+    }
+
+private:
+    void stop_and_join() noexcept
+    {
+        if(server)
+        {
+            try { server->stop(); } catch(...) {}
+        }
+        if(thread.joinable())
+        {
+            try { thread.join(); } catch(...) {}
+        }
+    }
+};
+
 // Bind 127.0.0.1:0 and return {server_thread, bound_port}. Port 0 means bind failed.
-inline std::pair<std::thread, std::uint16_t> listen_ephemeral(const std::shared_ptr<http::server>& server)
+inline std::pair<joining_server_thread, std::uint16_t> listen_ephemeral(const std::shared_ptr<http::server>& server)
 {
     using namespace std::chrono_literals;
     auto port = std::make_shared<std::uint16_t>(0);
@@ -57,16 +115,17 @@ inline std::pair<std::thread, std::uint16_t> listen_ephemeral(const std::shared_
             server->listen("127.0.0.1", "0", [server, port, bound]
             {
                 *port = server->bound_port();
-                bound->set_value();
+                try { bound->set_value(); } catch(...) {}
             });
         }
         catch(...)
         {
+            try { bound->set_value(); } catch(...) {}
         }
     }};
     if(bound_future.wait_for(2s) != std::future_status::ready)
-        return {std::move(t), 0};
-    return {std::move(t), *port};
+        return {joining_server_thread{server, std::move(t)}, 0};
+    return {joining_server_thread{server, std::move(t)}, *port};
 }
 
 // Parse `event:` / `data:` pairs from an SSE body (v1 subset).

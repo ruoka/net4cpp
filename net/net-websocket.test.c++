@@ -27,9 +27,67 @@ inline bool network_tests_enabled()
     return true;
 }
 
+// std::thread::~thread calls terminate if still joinable — any require_* throw
+// before an explicit join would abort the whole --jobs>1 run. Stop + join here.
+struct joining_server_thread
+{
+    std::shared_ptr<http::server> server;
+    std::thread thread;
+
+    joining_server_thread() = default;
+    joining_server_thread(std::shared_ptr<http::server> s, std::thread t)
+        : server{std::move(s)}
+        , thread{std::move(t)}
+    {
+    }
+
+    joining_server_thread(joining_server_thread&& other) noexcept
+        : server{std::move(other.server)}
+        , thread{std::move(other.thread)}
+    {
+    }
+
+    joining_server_thread& operator=(joining_server_thread&& other) noexcept
+    {
+        if(this != &other)
+        {
+            stop_and_join();
+            server = std::move(other.server);
+            thread = std::move(other.thread);
+        }
+        return *this;
+    }
+
+    ~joining_server_thread() { stop_and_join(); }
+
+    joining_server_thread(const joining_server_thread&) = delete;
+    joining_server_thread& operator=(const joining_server_thread&) = delete;
+
+    bool joinable() const noexcept { return thread.joinable(); }
+
+    void join()
+    {
+        if(thread.joinable())
+            thread.join();
+    }
+
+private:
+    void stop_and_join() noexcept
+    {
+        if(server)
+        {
+            try { server->stop(); } catch(...) {}
+        }
+        if(thread.joinable())
+        {
+            try { thread.join(); } catch(...) {}
+        }
+    }
+};
+
 // Bind 127.0.0.1:0. Uses a shared promise so a late listen callback cannot
 // set_value on a destroyed stack promise (std::terminate under --jobs>1).
-inline std::pair<std::thread, std::uint16_t> listen_ephemeral(const std::shared_ptr<http::server>& server)
+inline std::pair<joining_server_thread, std::uint16_t> listen_ephemeral(const std::shared_ptr<http::server>& server)
 {
     using namespace std::chrono_literals;
     auto port = std::make_shared<std::uint16_t>(0);
@@ -51,8 +109,8 @@ inline std::pair<std::thread, std::uint16_t> listen_ephemeral(const std::shared_
         }
     }};
     if(bound_future.wait_for(3s) != std::future_status::ready)
-        return {std::move(t), 0};
-    return {std::move(t), *port};
+        return {joining_server_thread{server, std::move(t)}, 0};
+    return {joining_server_thread{server, std::move(t)}, *port};
 }
 
 inline frame make_masked_text(std::string_view text, std::uint32_t key = 0x01020304u)
