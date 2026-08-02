@@ -1,12 +1,13 @@
 # Release Policy
 
-## Current status: v3.0.0
+## Current status: v3.0.1
 
-**[`v3.0.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.0.0)** (1 August 2026) is the
-first SemVer tag for the Clang 21 + libc++ modules consume surface (`import net;`). Prior
-tags `v1.0` / `v2.0` / `v2.1` are historical (header / earlier C++23 lines).
+**[`v3.0.1`](https://github.com/ruoka/net4cpp/releases/tag/v3.0.1)** (2 August 2026) is the
+current SemVer tag for the Clang 21 + libc++ modules consume surface (`import net;`).
+[`v3.0.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.0.0) was the first modules-era
+cut. Prior tags `v1.0` / `v2.0` / `v2.1` are historical (header / earlier C++23 lines).
 
-Pin `v3.0.0` (or a later tag / deliberate commit). Nested `deps/tester` must match the
+Pin `v3.0.1` (or a later tag / deliberate commit). Nested `deps/tester` must match the
 parent tree’s tester pin — see
 [YarDB versioning](https://github.com/ruoka/YarDB/blob/master/docs/versioning.md).
 
