@@ -322,7 +322,9 @@ private:
             } else if constexpr (std::is_same_v<T, bool>) {
                 os << (arg ? "true" : "false");
             } else if constexpr (std::is_integral_v<T> or std::is_floating_point_v<T>) {
-                os << arg;
+                // Do not use ostream << under a grouping locale: 21120 becomes
+                // "21,120", which is not valid JSON and breaks field matchers.
+                os << std::format("{}", arg);
             }
         }, v);
     }
@@ -408,6 +410,7 @@ private:
     template<streamable T>
     static detail::value convert_to_value(const T& v) {
         auto ss = std::stringstream{};
+        ss.imbue(std::locale::classic());
         ss << v;
         return ss.str();
     }
@@ -419,6 +422,7 @@ private:
         const auto timestamp = generate_timestamp();
 
         std::stringstream full_line;
+        full_line.imbue(std::locale::classic());
 
         if (local.format == log_format::jsonl) {
             full_line << "{"
@@ -640,6 +644,8 @@ public:
             local.structured_fields.clear();
             local.human_message.str("");
             local.human_message.clear();
+            // Message ints must stay ungrouped even if locale::global sets separators.
+            local.human_message.imbue(std::locale::classic());
         });
 
         return *this;

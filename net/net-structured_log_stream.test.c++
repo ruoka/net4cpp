@@ -1127,6 +1127,53 @@ auto register_structured_log_stream_tests()
         };
     };
 
+    // Regression: under --jobs>1, xson tests call locale::global(grouping) and
+    // ostream << int briefly emits "12,345" into JSONL structured fields.
+    tester::bdd::scenario("JSONL numeric fields ignore locale grouping, [net]") = [] {
+        auto captured_output = std::make_shared<std::stringstream>();
+
+        tester::bdd::given("A grouping locale and a JSONL slog stream") = [captured_output] {
+            struct grouping_numpunct : std::numpunct<char>
+            {
+            protected:
+                char do_thousands_sep() const override { return ','; }
+                std::string do_grouping() const override { return "\3"; }
+            };
+
+            const auto grouping = std::locale{std::locale::classic(), new grouping_numpunct};
+            const auto previous = std::locale::global(grouping);
+            try
+            {
+                slog.app_name("testapp")
+                    .log_level(syslog::severity::debug)
+                    .format(log_format::jsonl)
+                    .redirect(*captured_output);
+
+                slog << net::info("LOCALE_NUM")
+                     << std::pair{"port", 21120}
+                     << std::pair{"user_id", 12345}
+                     << "Listening on port "
+                     << 21120
+                     << net::flush;
+
+                const auto output = captured_output->str();
+                check_contains(output, "\"port\":21120");
+                check_contains(output, "\"user_id\":12345");
+                check_contains(output, "Listening on port 21120");
+                check_true(not output.contains("21,120"));
+                check_true(not output.contains("12,345"));
+                slog.redirect(std::clog);
+            }
+            catch(...)
+            {
+                std::locale::global(previous);
+                slog.redirect(std::clog);
+                throw;
+            }
+            std::locale::global(previous);
+        };
+    };
+
     return true;
 }
 
