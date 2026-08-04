@@ -54,37 +54,59 @@ jobs:
       - name: Build project (${{ matrix.config }})
         run: ./tools/CB.sh ${{ matrix.config }} build
 
-      - name: Run tests with JSONL output (${{ matrix.config }})
+      # Scope to net tests only — full suite includes nested deps/tester
+      # [.jsonl-probe] intentional-failure probes (hidden unless selected).
+      # --jobs forwards to test_runner for parallel top-level cases; --junit=
+      # writes an additive xUnit report beside JSONL (see ruoka/tester CI).
+      - name: Run tests (${{ matrix.config }})
         run: |
           set -euo pipefail
-          # Scope to net tests only — full suite includes nested deps/tester
-          # [.jsonl-probe] intentional-failure probes (hidden unless selected).
-          # --jobs forwards to test_runner for parallel top-level cases.
           jobs="$(nproc)"
           echo "Running [net] tests with --jobs=${jobs}"
-          ./tools/CB.sh ${{ matrix.config }} test --jsonl=failures --jobs="${jobs}" --tags='\[net\]' > "test_results_${{ matrix.config }}.jsonl"
+          ./tools/CB.sh ${{ matrix.config }} test --jsonl=failures --jobs="${jobs}" \
+            --junit="test_results_${{ matrix.config }}.xml" \
+            --tags='\[net\]' > "test_results_${{ matrix.config }}.jsonl"
+          passed=$(jq -rs '[.[] | select(.type=="summary" or .type=="run_end")] | last | .passed' "test_results_${{ matrix.config }}.jsonl")
+          if [ "$passed" != "true" ]; then
+            echo "Tests failed (summary.passed=$passed)"
+            tail -20 "test_results_${{ matrix.config }}.jsonl"
+            exit 1
+          fi
+          echo "✓ Tests passed (jobs=${jobs})"
 
       - name: Validate JSONL output
         run: |
           set -euo pipefail
-          if [ ! -f "test_results_${{ matrix.config }}.jsonl" ]; then
+          f="test_results_${{ matrix.config }}.jsonl"
+          if [ ! -f "$f" ]; then
             echo "ERROR: JSONL output file not found!"
             exit 1
           fi
-          echo "JSONL lines: $(wc -l < "test_results_${{ matrix.config }}.jsonl")"
-          if command -v jq >/dev/null 2>&1; then
-            last_line="$(tail -1 "test_results_${{ matrix.config }}.jsonl")"
-            echo "$last_line" | jq -e '.type == "eof"' >/dev/null
-            summary_line="$(grep '"type":"summary"' "test_results_${{ matrix.config }}.jsonl" | tail -1)"
-            echo "$summary_line" | jq -e '.passed == true' >/dev/null
+          echo "JSONL lines ($f): $(wc -l < "$f")"
+          if ! tail -1 "$f" | jq -e '.type == "eof"' >/dev/null; then
+            echo "✗ EOF marker missing in $f — the stream was truncated"
+            tail -5 "$f"
+            exit 1
           fi
+          echo "✓ EOF marker found"
+
+      # show=all writes the test table into the job Summary on green runs too
+      # (default show=fail leaves only a tiny SVG badge when everything passes).
+      - name: Publish JUnit test summary
+        uses: test-summary/action@v2
+        if: always()
+        with:
+          show: all
+          paths: test_results_${{ matrix.config }}.xml
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results-${{ matrix.config }}
-          path: test_results_${{ matrix.config }}.jsonl
+          path: |
+            test_results_${{ matrix.config }}.jsonl
+            test_results_${{ matrix.config }}.xml
 
   static-analysis:
     runs-on: ubuntu-latest
