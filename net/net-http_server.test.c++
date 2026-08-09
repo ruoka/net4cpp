@@ -1613,8 +1613,8 @@ auto register_server_tests()
         };
     };
 
-    // CORS preflight must use options() + cors_middleware. Dispatching OPTIONS to
-    // GET/POST handlers (removed) executed application logic on unwrapped routes.
+    // CORS preflight: options() + cors_middleware, or GET wrapped in cors_middleware
+    // (OPTIONS falls back to GET; cors short-circuits before the GET body runs).
     tester::bdd::scenario("OPTIONS CORS preflight reaches cors_middleware via options(), [net]") = [] {
         if(not network_tests_enabled()) return;
 
@@ -1704,8 +1704,8 @@ auto register_server_tests()
         };
     };
 
-    // Regression: OPTIONS + Access-Control-Request-Method must not invoke a
-    // registered POST/GET handler when no options() route exists.
+    // Regression: OPTIONS on a POST-only path must not run the POST handler
+    // (no GET fallback → automatic 204).
     tester::bdd::scenario("OPTIONS preflight does not execute POST handler without options(), [net]") = [] {
         if(not network_tests_enabled()) return;
 
@@ -1761,9 +1761,9 @@ auto register_server_tests()
 
                 if (server_thread.joinable()) server_thread.join();
 
-                tester::bdd::then("Response is 405 and the POST handler is not run") =
+                tester::bdd::then("Response is 204 and the POST handler is not run") =
                     [response_status, handler_invoked] {
-                        check_eq(*response_status, "405");
+                        check_eq(*response_status, "204");
                         check_false(handler_invoked->load());
                     };
             };

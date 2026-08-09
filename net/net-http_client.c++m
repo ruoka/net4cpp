@@ -1,0 +1,177 @@
+// Copyright (c) 2025-2026 Kaius Ruokonen. All rights reserved.
+// SPDX-License-Identifier: MIT
+// See the LICENSE file in the project root for full license text.
+
+// Minimal HTTP/1.1 client: one request per connection (Connection: close).
+// Transport / parse failures throw (fail-fast). Non-2xx HTTP statuses are returned
+// to the caller — fail-closed policy belongs at the call site.
+export module net:http_client;
+
+import :connector;
+import :endpointstream;
+import :http_headers;
+import :uri;
+import :utils;
+import std;
+
+namespace http::client_detail
+{
+
+using namespace std::string_literals;
+using namespace std::string_view_literals;
+
+void ensure_header(http::headers& hdrs, std::string_view name, std::string_view value)
+{
+    const auto key = std::string{name};
+    if(not hdrs.contains(key))
+        hdrs.set(key, std::string{value});
+}
+
+struct parsed_status
+{
+    std::string status_line;
+    std::string version;
+    std::string status;
+    int status_code = 0;
+};
+
+parsed_status parse_status_line(std::string line)
+{
+    if(line.ends_with('\r'))
+        line.pop_back();
+    if(line.empty())
+        throw std::runtime_error{"empty HTTP response status line"};
+
+    parsed_status out;
+    out.status_line = line;
+
+    const auto sp1 = line.find(' ');
+    if(sp1 == std::string::npos)
+        throw std::runtime_error{"malformed HTTP status line"};
+    out.version = line.substr(0, sp1);
+    out.status = line.substr(sp1 + 1);
+    if(out.status.empty())
+        throw std::runtime_error{"malformed HTTP status line (no status)"};
+
+    const auto sp2 = out.status.find(' ');
+    const auto code_sv = sp2 == std::string::npos
+        ? std::string_view{out.status}
+        : std::string_view{out.status}.substr(0, sp2);
+    auto [ptr, ec] = std::from_chars(code_sv.data(), code_sv.data() + code_sv.size(), out.status_code);
+    if(ec != std::errc{} or ptr != code_sv.data() + code_sv.size())
+        throw std::runtime_error{"malformed HTTP status code"};
+    return out;
+}
+
+std::string read_body(std::istream& stream, const http::headers& hdrs)
+{
+    if(hdrs.contains("content-length"s))
+    {
+        const auto& len_s = hdrs["content-length"s];
+        std::size_t length = 0;
+        auto [ptr, ec] = std::from_chars(len_s.data(), len_s.data() + len_s.size(), length);
+        if(ec != std::errc{} or ptr != len_s.data() + len_s.size())
+            throw std::runtime_error{"invalid Content-Length"};
+        auto body = std::string{};
+        body.resize(length);
+        stream.read(body.data(), static_cast<std::streamsize>(length));
+        if(static_cast<std::size_t>(stream.gcount()) != length)
+            throw std::runtime_error{"truncated HTTP response body"};
+        return body;
+    }
+    return std::string{std::istreambuf_iterator<char>{stream}, {}};
+}
+
+} // namespace http::client_detail
+
+export namespace http::client
+{
+
+struct response
+{
+    std::string status_line; // "HTTP/1.1 200 OK"
+    std::string version;     // "HTTP/1.1"
+    std::string status;      // "200 OK"
+    int status_code = 0;
+    headers headers;
+    std::string body;
+
+    bool ok() const noexcept
+    {
+        return status_code >= 200 and status_code < 300;
+    }
+};
+
+inline response request(
+    std::string_view host,
+    std::string_view port,
+    std::string_view method,
+    std::string_view target,
+    headers hdrs = {},
+    std::string_view body = {},
+    const std::chrono::milliseconds& timeout = net::default_connect_timeout)
+{
+    using namespace std::string_view_literals;
+    using http::client_detail::ensure_header;
+    using http::client_detail::parse_status_line;
+    using http::client_detail::read_body;
+
+    if(host.empty() or method.empty() or target.empty())
+        throw std::invalid_argument{"http::client::request requires host, method, and target"};
+
+    ensure_header(hdrs, "host"sv, std::format("{}:{}", host, port));
+    ensure_header(hdrs, "connection"sv, "close"sv);
+    ensure_header(hdrs, "accept"sv, "application/json"sv);
+    if(not body.empty())
+    {
+        ensure_header(hdrs, "content-length"sv, std::format("{}", body.size()));
+        ensure_header(hdrs, "content-type"sv, "application/json"sv);
+    }
+
+    auto stream = net::connect(host, port, timeout);
+    stream << method << ' ' << target << " HTTP/1.1" << net::crlf
+           << hdrs
+           << net::crlf
+           << body
+           << net::flush;
+
+    auto status_line = std::string{};
+    if(not std::getline(stream, status_line))
+        throw std::runtime_error{"empty HTTP response"};
+    auto parsed = parse_status_line(std::move(status_line));
+    auto out = response{
+        .status_line = std::move(parsed.status_line),
+        .version = std::move(parsed.version),
+        .status = std::move(parsed.status),
+        .status_code = parsed.status_code,
+        .headers = {},
+        .body = {},
+    };
+    stream >> out.headers >> net::crlf;
+    out.body = read_body(stream, out.headers);
+    return out;
+}
+
+inline response request(
+    const net::uri& url,
+    std::string_view method,
+    std::string_view target,
+    headers hdrs = {},
+    std::string_view body = {},
+    const std::chrono::milliseconds& timeout = net::default_connect_timeout)
+{
+    using namespace std::string_literals;
+    using namespace std::string_view_literals;
+    auto host = std::string{static_cast<std::string_view>(url.host)};
+    auto port = std::string{static_cast<std::string_view>(url.port)};
+    if(host.empty())
+        throw std::invalid_argument{"http::client::request uri missing host"};
+    if(port.empty())
+    {
+        const auto scheme = std::string{static_cast<std::string_view>(url.scheme)};
+        port = (scheme == "https"sv) ? "443"s : "80"s;
+    }
+    return request(host, port, method, target, std::move(hdrs), body, timeout);
+}
+
+} // namespace http::client

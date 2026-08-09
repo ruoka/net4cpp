@@ -125,6 +125,16 @@ auto register_uri_tests()
         }
     };
 
+    tester::bdd::scenario("query_param returns views into the source, [net]") = [] {
+        const auto raw = "/balances?account=NDA-SAFE-001&x=a%2Bb"s;
+        const auto u = net::uri{raw};
+        check_eq(*query_param(u, "account"), "NDA-SAFE-001");
+        check_eq(*query_param(u, "x"), "a%2Bb");
+        check_eq(url_decode(*query_param(u, "x")), "a+b");
+        check_false(query_param(u, "missing").has_value());
+        check_false(query_param(net::uri{"/balances"}, "account").has_value());
+    };
+
     return true;
 }
 

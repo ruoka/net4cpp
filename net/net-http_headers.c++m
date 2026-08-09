@@ -23,11 +23,29 @@ public:
     
     value& operator[](const name& n) { return m_values[n]; }
     
-    void set(const name& n, const value& v)
+    void set(std::string_view n, std::string_view v)
     {
-        auto lower_name = n;
+        auto lower_name = std::string{n};
         utils::ascii_to_lower(lower_name);
-        m_values[lower_name] = v;
+        m_values[std::move(lower_name)] = std::string{v};
+    }
+
+    // Missing → nullopt. Name is matched case-insensitively (same as set).
+    std::optional<std::string_view> try_get(std::string_view n) const
+    {
+        auto key = std::string{n};
+        utils::ascii_to_lower(key);
+        if(auto it = m_values.find(key); it != m_values.end())
+            return std::string_view{it->second};
+        return std::nullopt;
+    }
+
+    // Missing → default_value. Never invents auth/origin — callers choose the default.
+    value value_or(std::string_view n, value default_value) const
+    {
+        if(auto v = try_get(n))
+            return value{*v};
+        return default_value;
     }
 
     // Iterator support for range-based for loops

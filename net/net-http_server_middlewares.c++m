@@ -95,20 +95,20 @@ inline auto authentication_middleware(
                 return next(req, body, hdr);
             }
             
-            // Extract Authorization header (use string_view to avoid unnecessary copy)
-            std::string_view authorization{};
-            if(hdr.contains("authorization"s))
-            {
-                authorization = hdr["authorization"s];
-            }
-            
+            // Missing Authorization → deny (fail-closed). Present but invalid → 401.
+            const auto authorization = hdr.try_get("authorization"sv).value_or(""sv);
+
             // Validate token
             if(authorization.empty() or not validate_token(authorization))
             {
                 // Return 401 Unauthorized with WWW-Authenticate header
                 auto error_headers = headers{};
                 error_headers.set("www-authenticate"s, "Basic realm=\""s + realm + "\""s);
-                return make_error_response(status_unauthorized, "Unauthorized"sv, std::make_optional(error_headers));
+                return make_error_response(
+                    status_unauthorized,
+                    "Unauthorized"sv,
+                    "Authentication required"sv,
+                    std::make_optional(error_headers));
             }
             
             // Authentication passed, continue to next handler

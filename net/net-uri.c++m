@@ -174,5 +174,19 @@ inline auto url_decode(std::string_view encoded)
     return decoded;
 }
 
+// View into u's source string. Decode with url_decode when needed.
+inline std::optional<std::string_view> query_param(const uri& u, std::string_view key)
+{
+    for(std::string_view part : u.query)
+    {
+        const auto eq = part.find('=');
+        const auto k = eq == std::string_view::npos ? part : part.substr(0, eq);
+        const auto v = eq == std::string_view::npos ? std::string_view{} : part.substr(eq + 1);
+        if(k == key)
+            return v;
+    }
+    return std::nullopt;
+}
+
 } // namespace net
 

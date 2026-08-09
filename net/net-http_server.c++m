@@ -44,6 +44,7 @@ const auto status_not_found = "404 Not Found"s;
 const auto status_method_not_allowed = "405 Method Not Allowed"s;
 const auto status_not_acceptable = "406 Not Acceptable"s;
 const auto status_conflict = "409 Conflict"s;
+const auto status_gone = "410 Gone"s;
 const auto status_precondition_failed = "412 Precondition Failed"s;
 const auto status_payload_too_large = "413 Payload Too Large"s;
 const auto status_unprocessable_entity = "422 Unprocessable Entity"s;
@@ -73,14 +74,72 @@ using callback = std::function<response_with_headers(request_view, body_view, he
 // Legacy alias for backwards compatibility
 using callback_with_headers = callback;
 
-// Helper function for standardized error responses
-// Returns a consistent error response format across all middlewares
+namespace detail
+{
+
+inline std::string json_escape_string(std::string_view value)
+{
+    auto out = std::string{};
+    out.reserve(value.size() + 8);
+    for(unsigned char ch : value)
+    {
+        switch(ch)
+        {
+        case '"': out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\b': out += "\\b"; break;
+        case '\f': out += "\\f"; break;
+        case '\n': out += "\\n"; break;
+        case '\r': out += "\\r"; break;
+        case '\t': out += "\\t"; break;
+        default:
+            if(ch < 0x20)
+                out += std::format("\\u{:04x}", ch);
+            else
+                out.push_back(static_cast<char>(ch));
+            break;
+        }
+    }
+    return out;
+}
+
+inline std::string json_error_body(std::string_view error, std::string_view message)
+{
+    return std::format(
+        R"({{"error":"{}","message":"{}"}})",
+        json_escape_string(error),
+        json_escape_string(message));
+}
+
+} // namespace detail
+
+// Standardized JSON error: {"error":"...","message":"..."}.
+// Overloads keep (status, text, headers) call sites working — message defaults to error.
 inline response_with_headers make_error_response(
     const status& status_code,
-    std::string_view error_message,
+    std::string_view error,
+    std::string_view message,
     std::optional<headers> custom_headers = std::nullopt)
 {
-    return {status_code, std::string{error_message}, custom_headers};
+    return {
+        status_code,
+        detail::json_error_body(error, message.empty() ? error : message),
+        std::move(custom_headers)};
+}
+
+inline response_with_headers make_error_response(
+    const status& status_code,
+    std::string_view error,
+    std::optional<headers> custom_headers)
+{
+    return make_error_response(status_code, error, error, std::move(custom_headers));
+}
+
+inline response_with_headers make_error_response(
+    const status& status_code,
+    std::string_view error)
+{
+    return make_error_response(status_code, error, error, std::nullopt);
 }
 
 // Helper function for responses with optional headers
@@ -293,9 +352,9 @@ public:
         return m_router[std::string{path}][method_delete];
     }
 
-    // Register an OPTIONS handler (e.g. cors_middleware around a no-op or shared
-    // callback). Do not rely on GET/POST handlers for browser preflight — that
-    // would execute application logic when the route is not CORS-wrapped.
+    // Optional explicit OPTIONS handler. When omitted, dispatch falls back to
+    // GET (same as HEAD) so cors_middleware can answer preflight without running
+    // the GET body; if there is no GET either, the server returns 204.
     controller& options(std::string_view path)
     {
         m_methods.insert(method_options);
@@ -1293,13 +1352,19 @@ private:
                     bool route_found = false;
                     bool method_allowed = false;
 
+                    // Match path only — query string is for handlers, not the router
+                    // (same as WebSocket/SSE takeover above).
+                    const auto path_only = std::string{uri.substr(0, uri.find('?'))};
                     for(const auto& [path, methods_map] : m_router)
-                        if(std::regex_match(std::string{uri}, std::regex(path)))
+                        if(std::regex_match(path_only, std::regex(path)))
                         {
                             route_found = true;
                             auto it = methods_map.find(method);
-                            // If HEAD method not found, try GET as fallback for HEAD requests
-                            if(it == methods_map.end() and method == method_head)
+                            // HEAD / OPTIONS without a dedicated handler: reuse GET.
+                            // cors_middleware short-circuits OPTIONS preflight before
+                            // the inner GET callback runs.
+                            if(it == methods_map.end()
+                               and (method == method_head or method == method_options))
                                 it = methods_map.find(method_get);
 
                             if(it != methods_map.end())
@@ -1335,10 +1400,10 @@ private:
                             }
                         }
 
-                    // OPTIONS with no matching path: 204. (No handler runs, so
-                    // cors_middleware cannot attach ACAO here — register options()
-                    // with cors_middleware on paths that need preflight ACAO.)
-                    if(method == method_options and not route_found and res_type.empty())
+                    // OPTIONS with no handler (and no GET fallback): 204. Prefer a
+                    // cors-wrapped GET so preflight gets ACAO; bare POST-only paths
+                    // get 204 without running application handlers.
+                    if(method == method_options and not method_allowed and res_type.empty())
                     {
                         res_status = status_no_content;
                         res_content = "";

@@ -232,7 +232,9 @@ auto register_middleware_tests()
                 
                 tester::bdd::then("Request is rejected with 401") = [status, content, headers_opt] {
                     check_eq(status, ::http::status_unauthorized);
-                    check_eq(content, "Unauthorized"s);
+                    check_eq(
+                        content,
+                        R"({"error":"Unauthorized","message":"Authentication required"})"s);
                     check_true(headers_opt.has_value());
                     if(headers_opt.has_value())
                     {
@@ -335,7 +337,9 @@ auto register_middleware_tests()
                 
                 tester::bdd::then("Request is rejected with 401") = [status, content] {
                     check_eq(status, ::http::status_unauthorized);
-                    check_eq(content, "Unauthorized"s);
+                    check_eq(
+                        content,
+                        R"({"error":"Unauthorized","message":"Authentication required"})"s);
                 };
             };
         };

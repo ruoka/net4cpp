@@ -10,11 +10,32 @@ using namespace net;
 
 namespace {
 using namespace std::string_literals;
+using namespace std::string_view_literals;
 using tester::basic::test_case;
 using tester::basic::section;
 using tester::assertions::check_eq;
 using tester::assertions::check_false;
 using tester::assertions::check_true;
+}
+
+auto register_header_access_tests()
+{
+    test_case("headers try_get and value_or, [net][http-headers]") = [] {
+        http::headers hs;
+        hs.set("Authorization"sv, "Basic Zm9vOmJhcg=="sv);
+
+        check_true(hs.try_get("authorization"sv).has_value());
+        check_eq(std::string{*hs.try_get("AUTHORIZATION"sv)}, "Basic Zm9vOmJhcg=="s);
+        check_false(hs.try_get("origin"sv).has_value());
+        check_eq(hs.value_or("origin"sv, ""s), ""s);
+        check_eq(hs.value_or("authorization"sv, ""s), "Basic Zm9vOmJhcg=="s);
+
+        // set owns copies — string and string_view callers both work
+        hs.set("X-Trace"s, "abc"s);
+        check_eq(std::string{*hs.try_get("x-trace"sv)}, "abc"s);
+    };
+
+    return true;
 }
 
 auto register_malformed_headers_tests()
@@ -104,4 +125,5 @@ auto register_malformed_headers_tests()
     return true;
 }
 
+const auto _access = register_header_access_tests();
 const auto _ = register_malformed_headers_tests();
