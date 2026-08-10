@@ -1352,11 +1352,12 @@ private:
                     bool route_found = false;
                     bool method_allowed = false;
 
-                    // Match path only — query string is for handlers, not the router
-                    // (same as WebSocket/SSE takeover above).
-                    const auto path_only = std::string{uri.substr(0, uri.find('?'))};
+                    // Match the full request-target. Route regexes may include a
+                    // query pattern; a match is also a guarantee to the handler
+                    // that path (and query, when patterned) are well-formed.
+                    // Path-only matching (626b26f) broke that contract.
                     for(const auto& [path, methods_map] : m_router)
-                        if(std::regex_match(path_only, std::regex(path)))
+                        if(std::regex_match(std::string{uri}, std::regex(path)))
                         {
                             route_found = true;
                             auto it = methods_map.find(method);

@@ -1091,6 +1091,75 @@ auto register_server_tests()
         };
     };
 
+    // Regression for 626b26f: dispatch matches the full request-target so a
+    // query-bearing route regex is also a validity guarantee for the handler.
+    tester::bdd::scenario("Router matches full request-target including query pattern, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server with a query-bearing GET route") = [] {
+            auto server = std::make_shared<http::server>();
+            server->get(R"(/sell/[A-Z]+/[A-Z]{4}\?qty=[0-9]+&px=[0-9.]+)"s).response_with_headers(
+                "text/plain"sv,
+                [](auto, auto, auto&) {
+                    return http::make_response(http::status_ok, "sell"s);
+                });
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("GET /sell/SAMPO/XHEL?qty=13&px=13.1300 and GET without query") = [server] {
+                auto ok_status = std::make_shared<std::string>("");
+                auto bad_status = std::make_shared<std::string>("");
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                using namespace std::chrono_literals;
+                const auto status_of = [&](std::string_view target) {
+                    auto stream = connect("127.0.0.1", port_s);
+                    stream << "GET " << target << " HTTP/1.1" << net::crlf
+                           << "Host: 127.0.0.1:" << port_s << net::crlf
+                           << "Connection: close" << net::crlf
+                           << net::crlf << net::flush;
+                    std::string line;
+                    if(stream and std::getline(stream, line))
+                    {
+                        if(not line.empty() and line.back() == '\r')
+                            line.pop_back();
+                        auto space1 = line.find(' ');
+                        if(space1 != std::string::npos)
+                        {
+                            auto space2 = line.find(' ', space1 + 1);
+                            return space2 != std::string::npos
+                                ? line.substr(space1 + 1, space2 - space1 - 1)
+                                : line.substr(space1 + 1);
+                        }
+                    }
+                    return std::string{};
+                };
+
+                if(port != 0)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    try
+                    {
+                        *ok_status = status_of("/sell/SAMPO/XHEL?qty=13&px=13.1300"sv);
+                        *bad_status = status_of("/sell/SAMPO/XHEL"sv);
+                    }
+                    catch(...) {}
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if(server_thread.joinable())
+                    server_thread.join();
+
+                tester::bdd::then("Valid query matches; missing query is 404") = [ok_status, bad_status] {
+                    check_eq(*ok_status, "200");
+                    check_eq(*bad_status, "404");
+                };
+            };
+        };
+    };
+
     tester::bdd::scenario("400 Bad Request when Host header is missing, [net]") = [] {
         if(not network_tests_enabled()) return;
 
