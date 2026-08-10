@@ -84,7 +84,10 @@ auto register_uri_tests()
             check_eq(static_cast<std::string_view>(parsed.scheme), "FIXT.1.1");
             check_eq(static_cast<std::string_view>(parsed.userinfo), "KAKE");
             check_eq(static_cast<std::string_view>(parsed.host), "");
+            check_false(static_cast<bool>(parsed.host));
             check_eq(static_cast<std::string_view>(parsed.port), "2112");
+            check_true(static_cast<bool>(parsed.port));
+            check_true(static_cast<bool>(parsed.path));
             check_eq(static_cast<std::string_view>(parsed.path), "/xxx");
             check_eq(static_cast<std::string_view>(parsed.query), "tail=10");
             check_eq(static_cast<std::string_view>(parsed.fragment), "");

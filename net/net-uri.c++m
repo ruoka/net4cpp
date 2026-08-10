@@ -16,6 +16,13 @@ public:
     public:
         operator T () const { return m_value; }
         auto operator == (const T& value) const { return m_value == value; }
+
+        // String-like presence: if(uri.host) / if(not uri.port). Bool uses operator T().
+        explicit operator bool() const
+            requires requires(const T& value) { value.empty(); }
+        {
+            return not m_value.empty();
+        }
     protected:
         T m_value;
     private:
