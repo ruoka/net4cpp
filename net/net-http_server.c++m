@@ -57,6 +57,17 @@ const auto status_service_unavailable = "503 Service Unavailable"s;
 // server before max_request_body_size applies.
 inline constexpr auto default_max_request_head_size = std::size_t{16 * 1024};
 
+// Cap Content-Length before the body is allocated. The previous default was
+// unlimited, so one declared length near 2^63 allocated until bad_alloc.
+// 1 MiB matches the YarDB limit. Raise it with max_request_body_size().
+inline constexpr auto default_max_request_body_size = std::size_t{1024 * 1024};
+
+// Fixed product token. gethostname() leaked the machine name to every scanner.
+inline constexpr auto server_token = "net"sv;
+
+// Protocol errors and 404s. "*/*" is not a media type and invites MIME sniffing.
+inline constexpr auto error_content_type = "text/plain; charset=utf-8"sv;
+
 using status = std::string;
 using content = std::string;
 using content_type = std::string;
@@ -505,8 +516,8 @@ public:
     }
 
     // Cap Content-Length before allocating/reading the body. Middleware that
-    // inspects body.size() cannot prevent the allocation — set this on the
-    // server (YarDB uses 1 MiB). Default is unlimited for backward compatibility.
+    // inspects body.size() cannot prevent the allocation — the check below
+    // runs first. Default is default_max_request_body_size (1 MiB).
     std::size_t max_request_body_size() const
     {
         return m_max_request_body_size;
@@ -698,18 +709,6 @@ private:
         }
     }
 
-    const auto& host() const
-    {
-        static auto s_host = []() {
-            char buffer[net::posix::ni_maxhost];
-            if (net::posix::gethostname(buffer, net::posix::ni_maxhost) == 0) {
-                return std::string{buffer};
-            }
-            return std::string{"localhost"};
-        }();
-        return s_host;
-    }
-
     auto methods() const
     {
         auto tmp = ""s;
@@ -760,7 +759,8 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_request_header_fields_too_large << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << host() << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
@@ -812,7 +812,8 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << host() << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
@@ -846,7 +847,8 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << host() << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
@@ -869,7 +871,8 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << host() << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
@@ -895,7 +898,8 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << host() << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
@@ -923,7 +927,8 @@ private:
                     {
                         stream << "HTTP/1.1 " << status_not_found << net::crlf
                                << "Date: " << date() << net::crlf
-                               << "Server: " << host() << net::crlf
+                               << "Server: " << server_token << net::crlf
+                               << "X-Content-Type-Options: nosniff" << net::crlf
                                << "Content-Type: " << m_content_type << net::crlf
                                << "Content-Length: 0" << net::crlf
                                << "Connection: close" << net::crlf
@@ -935,7 +940,8 @@ private:
                     {
                         stream << "HTTP/1.1 " << status_bad_request << net::crlf
                                << "Date: " << date() << net::crlf
-                               << "Server: " << host() << net::crlf
+                               << "Server: " << server_token << net::crlf
+                               << "X-Content-Type-Options: nosniff" << net::crlf
                                << "Content-Type: " << m_content_type << net::crlf
                                << "Content-Length: 0" << net::crlf
                                << "Connection: close" << net::crlf
@@ -953,7 +959,8 @@ private:
 
                     stream << "HTTP/1.1 " << status_switching_protocols << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << host() << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Upgrade: websocket" << net::crlf
                            << "Connection: Upgrade" << net::crlf
                            << "Sec-WebSocket-Accept: " << accept << net::crlf
@@ -991,7 +998,8 @@ private:
                                 auto [st, body, custom_h] = std::move(*denied);
                                 stream << "HTTP/1.1 " << st << net::crlf
                                        << "Date: " << date() << net::crlf
-                                       << "Server: " << host() << net::crlf
+                                       << "Server: " << server_token << net::crlf
+                                       << "X-Content-Type-Options: nosniff" << net::crlf
                                        << "Content-Type: " << m_content_type << net::crlf
                                        << "Content-Length: " << body.size() << net::crlf
                                        << "Connection: close" << net::crlf;
@@ -1023,7 +1031,8 @@ private:
                         // match after an embedded CR (response header injection).
                         stream << "HTTP/1.1 " << status_ok << net::crlf
                                << "Date: " << date() << net::crlf
-                               << "Server: " << host() << net::crlf
+                               << "Server: " << server_token << net::crlf
+                               << "X-Content-Type-Options: nosniff" << net::crlf
                                << "Content-Type: text/event-stream" << net::crlf
                                << "Cache-Control: no-cache" << net::crlf
                                << "Connection: keep-alive" << net::crlf;
@@ -1034,6 +1043,7 @@ private:
                                and sse_ctrl.cors_origin()(origin))
                             {
                                 stream << "Access-Control-Allow-Origin: " << origin << net::crlf
+                                       << "Vary: Origin" << net::crlf
                                        << "Access-Control-Allow-Credentials: true" << net::crlf;
                             }
                         }
@@ -1138,7 +1148,8 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << host() << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
@@ -1162,7 +1173,8 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_payload_too_large << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << host() << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
@@ -1205,7 +1217,8 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << host() << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
@@ -1237,7 +1250,8 @@ private:
                     // the client still holds the socket open (websocket substring test).
                     stream << "HTTP/1.1 505 HTTP Version Not Supported" << net::crlf
                            << "Date: "         << date()                << net::crlf
-                           << "Server: "       << host()                << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Content-Type: " << m_content_type        << net::crlf
                            << "Content-Length: 0"                       << net::crlf
                            << "Connection: close" << net::crlf
@@ -1258,7 +1272,8 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: "         << date()                    << net::crlf
-                           << "Server: "       << host()                    << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Content-Type: " << m_content_type            << net::crlf
                            << "Content-Length: 0"                           << net::crlf
                            << "Connection: close" << net::crlf
@@ -1279,7 +1294,8 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_not_found << net::crlf
                            << "Date: "         << date()         << net::crlf
-                           << "Server: "       << host()         << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0"                << net::crlf
                            << "Connection: close" << net::crlf
@@ -1390,7 +1406,8 @@ private:
                         
                         stream << "HTTP/1.1 " << res_status                                   << net::crlf
                                << "Date: " << date()                                          << net::crlf
-                               << "Server: " << host()                                        << net::crlf
+                               << "Server: " << server_token << net::crlf
+                               << "X-Content-Type-Options: nosniff" << net::crlf
                                << "Content-Type: " << res_type                                << net::crlf
                                << "Content-Length: " << res_content.length()                  << net::crlf
                                << "Connection: " << (close_connection ? "close"sv : "keep-alive"sv) << net::crlf;
@@ -1418,7 +1435,8 @@ private:
                                   << net::flush;
                         stream << "HTTP/1.1 " << status_not_found << net::crlf
                                << "Date: " << date()                                          << net::crlf
-                               << "Server: " << host()                                        << net::crlf
+                               << "Server: " << server_token << net::crlf
+                               << "X-Content-Type-Options: nosniff" << net::crlf
                                << "Content-Type: " << m_content_type                          << net::crlf
                                << "Content-Length: 0"                                         << net::crlf
                                << "Connection: " << (close_connection ? "close"sv : "keep-alive"sv) << net::crlf
@@ -1449,7 +1467,8 @@ private:
             {
                 stream << "HTTP/1.1 " << status_internal_server_error << net::crlf
                        << "Date: " << date()                   << net::crlf
-                       << "Server: " << host()                 << net::crlf
+                       << "Server: " << server_token << net::crlf
+                       << "X-Content-Type-Options: nosniff" << net::crlf
                        << "Content-Type: " << m_content_type   << net::crlf
                        << "Content-Length: 0"                  << net::crlf
                        << net::crlf << net::flush;
@@ -1473,7 +1492,8 @@ private:
             {
                 stream << "HTTP/1.1 " << status_internal_server_error << net::crlf
                        << "Date: " << date()                   << net::crlf
-                       << "Server: " << host()                 << net::crlf
+                       << "Server: " << server_token << net::crlf
+                       << "X-Content-Type-Options: nosniff" << net::crlf
                        << "Content-Type: " << m_content_type   << net::crlf
                        << "Content-Length: 0"                  << net::crlf
                        << net::crlf << net::flush;
@@ -1497,7 +1517,8 @@ private:
             {
                 stream << "HTTP/1.1 " << status_internal_server_error << net::crlf
                        << "Date: " << date()                   << net::crlf
-                       << "Server: " << host()                 << net::crlf
+                       << "Server: " << server_token << net::crlf
+                       << "X-Content-Type-Options: nosniff" << net::crlf
                        << "Content-Type: " << m_content_type   << net::crlf
                        << "Content-Length: 0"                  << net::crlf
                        << net::crlf << net::flush;
@@ -1528,10 +1549,10 @@ private:
     using method_map_type = std::flat_map<method_type, controller>;
     using router_type = std::flat_map<path_type, method_map_type>;
     router_type m_router = {};
-    std::string m_content_type = "*/*";
+    std::string m_content_type{error_content_type};
     std::flat_set<method_type> m_methods = {method_head, method_options};
     std::chrono::seconds m_timeout = std::chrono::seconds{0};
-    std::size_t m_max_request_body_size = std::numeric_limits<std::size_t>::max();
+    std::size_t m_max_request_body_size = default_max_request_body_size;
     std::size_t m_max_request_head_size = default_max_request_head_size;
     std::atomic<bool> m_stop{false};
     std::atomic<std::size_t> m_active_handlers{0};

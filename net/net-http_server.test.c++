@@ -1378,6 +1378,149 @@ auto register_server_tests()
         };
     };
 
+    tester::bdd::scenario("default max_request_body_size is 1 MiB, [net]") = [] {
+        tester::bdd::given("A new HTTP server") = [] {
+            auto server = std::make_shared<http::server>();
+
+            tester::bdd::when("The body limit is read") = [server] {
+                const auto limit = server->max_request_body_size();
+
+                tester::bdd::then("The default is 1 MiB") = [limit] {
+                    check_eq(limit, http::default_max_request_body_size);
+                    check_eq(limit, std::size_t{1024 * 1024});
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("default body limit rejects Content-Length above 1 MiB, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server left on the default body limit") = [] {
+            auto server = std::make_shared<http::server>();
+            server->post("/test").text("OK");
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A POST declares Content-Length one byte over 1 MiB and sends no body") = [server] {
+                auto response_status = std::make_shared<std::string>("");
+                auto response_headers = std::make_shared<std::string>("");
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                using namespace std::chrono_literals;
+                if (port != 0) {
+                    std::this_thread::sleep_for(200ms);
+
+                    try {
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream << "POST /test HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
+                               << "Content-Length: " << (http::default_max_request_body_size + 1) << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+
+                        std::string line;
+                        if(stream and std::getline(stream, line)) {
+                            if(not line.empty() and line.back() == '\r')
+                                line.pop_back();
+                            auto space1 = line.find(' ');
+                            if(space1 != std::string::npos) {
+                                auto space2 = line.find(' ', space1 + 1);
+                                *response_status = space2 != std::string::npos
+                                    ? line.substr(space1 + 1, space2 - space1 - 1)
+                                    : line.substr(space1 + 1);
+                            }
+                        }
+                        int line_count = 0;
+                        while(line_count < 20 and stream and std::getline(stream, line)) {
+                            *response_headers += line + "\n";
+                            line_count++;
+                            if(line.empty() or line == "\r") break;
+                        }
+                    } catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if (server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("Response is 413 with a plain-text nosniff error") = [response_status, response_headers] {
+                    check_eq(*response_status, "413");
+                    check_contains(*response_headers, "Server: net\r");
+                    check_contains(*response_headers, "X-Content-Type-Options: nosniff");
+                    check_contains(*response_headers, "Content-Type: text/plain; charset=utf-8");
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("responses send a fixed Server token and nosniff, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server with one text route") = [] {
+            auto server = std::make_shared<http::server>();
+            server->get("/ok").text("OK");
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A client GETs the route and an unknown path") = [server] {
+                auto ok_headers = std::make_shared<std::string>("");
+                auto missing_headers = std::make_shared<std::string>("");
+
+                auto read_headers = [](std::uint16_t port, std::string_view path) {
+                    auto headers = ""s;
+                    const auto port_s = std::to_string(port);
+                    auto stream = connect("127.0.0.1", port_s);
+                    stream << "GET " << path << " HTTP/1.1" << net::crlf
+                           << "Host: 127.0.0.1:" << port_s << net::crlf
+                           << "Connection: close" << net::crlf
+                           << net::crlf
+                           << net::flush;
+                    std::string line;
+                    auto line_count = 0;
+                    while(line_count < 20 and stream and std::getline(stream, line)) {
+                        headers += line + "\n";
+                        line_count++;
+                        if(line.empty() or line == "\r") break;
+                    }
+                    return headers;
+                };
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+
+                using namespace std::chrono_literals;
+                if (port != 0) {
+                    std::this_thread::sleep_for(200ms);
+                    try {
+                        *ok_headers = read_headers(port, "/ok");
+                        *missing_headers = read_headers(port, "/missing");
+                    } catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if (server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("Both responses hide the hostname and set nosniff") = [ok_headers, missing_headers] {
+                    check_contains(*ok_headers, "200");
+                    check_contains(*ok_headers, "Server: net\r");
+                    check_contains(*ok_headers, "X-Content-Type-Options: nosniff");
+                    check_contains(*ok_headers, "Content-Type: text/plain");
+                    check_false(ok_headers->contains("Content-Type: */*"sv));
+
+                    check_contains(*missing_headers, "404");
+                    check_contains(*missing_headers, "Server: net\r");
+                    check_contains(*missing_headers, "X-Content-Type-Options: nosniff");
+                    check_contains(*missing_headers, "Content-Type: text/plain; charset=utf-8");
+                    check_false(missing_headers->contains("Content-Type: */*"sv));
+                };
+            };
+        };
+    };
+
     tester::bdd::scenario("Connection header is echoed on successful responses, [net]") = [] {
         if(not network_tests_enabled()) return;
 
@@ -1866,6 +2009,9 @@ auto register_server_tests()
                         check_contains(*headers_raw, "Content-Type: text/event-stream");
                         check_contains(*headers_raw, "Cache-Control: no-cache");
                         check_contains(*headers_raw, "Access-Control-Allow-Origin: http://localhost:3000");
+                        check_contains(*headers_raw, "Vary: Origin");
+                        check_contains(*headers_raw, "Server: net\n");
+                        check_contains(*headers_raw, "X-Content-Type-Options: nosniff");
                         check_false(headers_raw->contains("Content-Length:"sv));
                         check_contains(*body, ": ok\n");
                         check_contains(*body, "event: tick\ndata: 1\nid: 1\n\n");

@@ -354,6 +354,52 @@ inline auto resolve_cors_origin(const headers& hdr, OriginValidatorFunc& allowed
     return std::string{origin};
 }
 
+// True when a Vary field already lists Origin or is the wildcard.
+inline bool vary_lists_origin(std::string_view value)
+{
+    auto lower = std::string{value};
+    for(auto& c : lower)
+    {
+        if(c >= 'A' and c <= 'Z')
+            c = static_cast<char>(c - 'A' + 'a');
+    }
+
+    auto rest = std::string_view{lower};
+    while(not rest.empty())
+    {
+        const auto comma = rest.find(',');
+        const auto token = comma == std::string_view::npos ? rest : rest.substr(0, comma);
+        const auto begin = token.find_first_not_of(" \t"sv);
+        if(begin != std::string_view::npos)
+        {
+            const auto end = token.find_last_not_of(" \t"sv);
+            const auto trimmed = token.substr(begin, end - begin + 1);
+            if(trimmed == "origin"sv or trimmed == "*"sv)
+                return true;
+        }
+        if(comma == std::string_view::npos)
+            break;
+        rest.remove_prefix(comma + 1);
+    }
+    return false;
+}
+
+// Reflecting ACAO without Vary lets a cache serve one origin's header to another.
+inline void set_vary_origin(headers& out)
+{
+    if(not out.contains("vary"s))
+    {
+        out.set("vary"s, "Origin"s);
+        return;
+    }
+
+    const auto existing = out["vary"s];
+    if(vary_lists_origin(existing))
+        return;
+
+    out.set("vary"s, existing + ", Origin"s);
+}
+
 // Apply Allow-* CORS headers only when the request Origin is permitted.
 inline void apply_cors_allow_headers(
     headers& out,
@@ -364,6 +410,8 @@ inline void apply_cors_allow_headers(
     std::optional<int> max_age)
 {
     out.set("access-control-allow-origin"s, origin_value);
+    // A shared cache must not reuse a reflected ACAO for a different Origin.
+    set_vary_origin(out);
 
     if(not allowed_methods.empty())
         out.set("access-control-allow-methods"s, join_cors_list(allowed_methods));
