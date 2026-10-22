@@ -69,6 +69,11 @@ inline constexpr auto default_max_request_body_size = std::size_t{1024 * 1024};
 // when they take over the socket.
 inline constexpr auto default_read_timeout = std::chrono::milliseconds{30'000};
 
+// Handler threads for accepted connections. Each one is its own thread, so an
+// open cap lets a Slowloris against the origin port spawn without bound.
+// Zero means no cap.
+inline constexpr auto default_max_connections = std::size_t{128};
+
 // Fixed product token. gethostname() leaked the machine name to every scanner.
 inline constexpr auto server_token = "net"sv;
 
@@ -401,7 +406,30 @@ public:
                     // destroy server-owned state (routes, MCP sessions) while a
                     // detached handle() is still running — that UAF showed up as
                     // flaky SIGSEGV/SIGABRT under parallel test --jobs.
-                    m_active_handlers.fetch_add(1, std::memory_order_acq_rel);
+                    // The same count is the connection cap. A full cap is answered
+                    // here, on the accept thread, so it does not take another thread.
+                    if(not reserve_connection())
+                    {
+                        try
+                        {
+                            auto& stream = std::get<0>(client);
+                            const auto& peer = std::get<1>(client);
+                            const auto& peer_port = std::get<2>(client);
+                            net::slog << net::warning("HTTP_CONNECTION_LIMIT") << "connection cap reached from " << peer << ":" << peer_port
+                                      << std::pair{"ip"sv, peer}
+                                      << std::pair{"port", peer_port}
+                                      << std::pair{"max_connections", static_cast<long long>(m_max_connections)}
+                                      << std::pair{"status", status_service_unavailable}
+                                      << net::flush;
+                            // date() is auto and defined later, so the bytes live with the other writers.
+                            write_service_unavailable(stream);
+                        }
+                        catch(const std::exception& e)
+                        {
+                            net::slog << net::warning("HTTP_CONNECTION_LIMIT") << "failed to write connection-cap response: " << e.what() << net::flush;
+                        }
+                        continue;
+                    }
                     try
                     {
                         std::thread{[client_data = std::move(client), this]() mutable
@@ -572,6 +600,18 @@ public:
         m_frame_options = enabled;
     }
 
+    // In-flight accepted connections. Default is default_max_connections.
+    // Zero disables the cap. Set this before listen().
+    std::size_t max_connections() const
+    {
+        return m_max_connections;
+    }
+
+    void max_connections(std::size_t n)
+    {
+        m_max_connections = n;
+    }
+
     // Signal the listen loop to exit and close listen sockets so accept wait
     // wakes immediately (Docker SIGTERM / join). Thread-safe vs listen().
     // Also endpointstream::shutdown()s live clients so idle keep-alive handlers
@@ -607,6 +647,29 @@ public:
     }
 
 private:
+
+    // Reserve one handler slot. False when the cap is already full.
+    // Zero max_connections does not cap.
+    bool reserve_connection()
+    {
+        if(m_max_connections == 0)
+        {
+            m_active_handlers.fetch_add(1, std::memory_order_acq_rel);
+            return true;
+        }
+
+        auto current = m_active_handlers.load(std::memory_order_acquire);
+        while(current < m_max_connections)
+        {
+            if(m_active_handlers.compare_exchange_weak(
+                   current,
+                   current + 1,
+                   std::memory_order_acq_rel,
+                   std::memory_order_acquire))
+                return true;
+        }
+        return false;
+    }
 
     void handler_finished()
     {
@@ -784,6 +847,25 @@ private:
                 return expect_kind::unsupported;
         }
         return saw_continue ? expect_kind::continue_ok : expect_kind::absent;
+    }
+
+    void write_service_unavailable(net::endpointstream& stream) const
+    {
+        stream << "HTTP/1.1 " << status_service_unavailable << net::crlf
+               << "Date: " << date() << net::crlf
+               << "Server: " << server_token << net::crlf
+               << "X-Content-Type-Options: nosniff" << net::crlf
+               << "Referrer-Policy: no-referrer" << net::crlf
+               << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+        if(m_frame_options)
+        {
+            stream << "X-Frame-Options: DENY" << net::crlf;
+        }
+        stream << "Content-Type: " << m_content_type << net::crlf
+               << "Content-Length: 0" << net::crlf
+               << "Retry-After: 1" << net::crlf
+               << "Connection: close" << net::crlf
+               << net::crlf << net::flush;
     }
 
     void write_request_timeout(net::endpointstream& stream)
@@ -1129,6 +1211,50 @@ private:
                                << "Connection: close" << net::crlf
                                << net::crlf << net::flush;
                         break;
+                    }
+
+                    // Same optional gate as SSE. Absent by default so non-browser
+                    // clients that send no Origin still upgrade. A browser-facing
+                    // route installs a gate that rejects a missing or unlisted Origin.
+                    const auto& ws_ctrl = m_router.at(*matched_path).at(method_ws);
+                    if(ws_ctrl.has_gate())
+                    {
+                        if(auto denied = ws_ctrl.sse_gate_fn()(uri, hs))
+                        {
+                            auto [st, body, custom_h] = std::move(*denied);
+                            if(header_value_has_ctl(st))
+                            {
+                                st = status_internal_server_error;
+                                body.clear();
+                                custom_h.reset();
+                            }
+                            const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                            net::slog << net::warning("HTTP_WEBSOCKET_REJECTED") << "websocket upgrade rejected from " << endpoint << ":" << port
+                                      << std::pair{"ip"sv, endpoint}
+                                      << std::pair{"port", port}
+                                      << std::pair{"uri", std::string{uri}}
+                                      << std::pair{"status", st}
+                                      << std::pair{"request_id", request_id}
+                                      << std::pair{"duration_ms", request_duration}
+                                      << net::flush;
+                            stream << "HTTP/1.1 " << st << net::crlf
+                                   << "Date: " << date() << net::crlf
+                                   << "Server: " << server_token << net::crlf
+                                   << "X-Content-Type-Options: nosniff" << net::crlf
+                                   << "Referrer-Policy: no-referrer" << net::crlf
+                                   << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                            if(m_frame_options)
+                            {
+                                stream << "X-Frame-Options: DENY" << net::crlf;
+                            }
+                            stream << "Content-Type: " << m_content_type << net::crlf
+                                   << "Content-Length: " << body.size() << net::crlf
+                                   << "Connection: close" << net::crlf;
+                            if(custom_h.has_value())
+                                write_custom_response_headers(stream, custom_h.value());
+                            stream << net::crlf << body << net::flush;
+                            break;
+                        }
                     }
 
                     const auto accept = net::websocket::sec_websocket_accept(hs["sec-websocket-key"]);
@@ -1907,6 +2033,7 @@ private:
     std::size_t m_max_request_body_size = default_max_request_body_size;
     std::size_t m_max_request_head_size = default_max_request_head_size;
     bool m_frame_options = true;
+    std::size_t m_max_connections = default_max_connections;
     std::atomic<bool> m_stop{false};
     std::atomic<std::size_t> m_active_handlers{0};
     std::mutex m_handlers_mutex;

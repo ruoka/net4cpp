@@ -2,7 +2,7 @@
 
 **Branch:** `docs/http-server-scan-improvements`  
 **Repo:** [ruoka/net4cpp](https://github.com/ruoka/net4cpp)  
-**Status:** Items 1, 3, 4, 7, 8, 9, and 10 are implemented. Item 2 applies a 30s idle read timeout and answers `Expect: 100-continue`. Still open: a connection cap, rate-limit keys (item 5), and WebSocket `Origin` (item 6). `Content-Security-Policy` and `Strict-Transport-Security` stay off this server. Item 11 stays on the proxy.  
+**Status:** Items 1 through 4 and 6 through 10 are implemented. Item 2 includes a 30s idle read timeout, `Expect: 100-continue`, and a 128-connection cap. Item 5 is not a code change when a TLS proxy overwrites `X-Forwarded-For` and the origin port is private. `Content-Security-Policy` and `Strict-Transport-Security` stay off this server. Item 11 stays on the proxy.  
 **Date:** 2026-10-22
 
 ## Scope
@@ -42,15 +42,11 @@ The `413` response was already in place; the default is what changed.
 
 ## 2. Time out and cap accepted connections
 
-The read deadline is in place. `http::server` sets `endpointstream::read_timeout` from `read_timeout()` (default 30s, separate from the accept poll). A partial head or body gets `408`. An idle keep-alive with no bytes is closed without a response. WebSocket and SSE clear the timeout when they take the socket. `Expect: 100-continue` gets `100 Continue` before the body is read, when that body will be accepted. Any other expectation is `417` and the body is not read. There is still no connection cap.
+Implemented. `http::server` sets `endpointstream::read_timeout` from `read_timeout()` (default 30s, separate from the accept poll). A partial head or body gets `408`. An idle keep-alive with no bytes is closed without a response. WebSocket and SSE clear the timeout when they take the socket. `Expect: 100-continue` gets `100 Continue` before the body is read, when that body will be accepted. Any other expectation is `417` and the body is not read.
 
-`server::timeout` only bounds the accept `select`. Each connection is still its own thread, with no cap.
+Accepted connections are capped by `max_connections()` (default `default_max_connections`, 128). Zero disables the cap. A connection past the cap gets `503` with `Retry-After: 1` on the accept thread and does not start another handler. `server::timeout` still only bounds the accept `select`.
 
-Public Slowloris probes usually die at the proxy idle timeout. The same probe against
-the origin port hangs one thread per connection.
-
-Still open: a maximum number of in-flight connections. The read deadline and
-`Expect` handling are done.
+Public Slowloris probes usually die at the proxy idle timeout. The cap is what stops the same probe against the origin port from spawning a thread per connection.
 
 ## 3. Stop putting the machine name in `Server`
 
@@ -73,27 +69,17 @@ talks to.
 
 ## 5. Rate-limit on a trusted client address
 
-`default_rate_limit_key_extractor` keys on the raw `X-Forwarded-For` or `X-Real-IP`
-value. It never sees the TCP peer. Rotating the header skips the bucket. Omitting it
-puts every such client in `"unknown"`. A proxy that appends the real address still
-leaves the first value client-controlled unless it overwrites the header. Distinct
-values also accumulate in the limiter map; cleanup only drops empty keys.
+Not a code change for the usual deployment. `rate_limiting_middleware` is opt-in, and `default_rate_limit_key_extractor` is only the key when the app uses it. A TLS proxy that overwrites `X-Forwarded-For` or `X-Real-IP` is the thing the origin sees, so the key is the client address the proxy chose. The origin port stays private, so a client cannot open a socket and supply its own header.
 
-Pass the accepted peer address into the middleware. Trust forwarding headers only
-when the app opts in and says how many proxy hops to skip (use the last untrusted
-value, not the whole header). Cap the number of keys.
+It is a real bypass only when one of these is true: the origin port is reachable, or the proxy appends the client address instead of overwriting the header (each spoofed prefix is then a distinct key). Omitting the header puts those requests in one `"unknown"` bucket, which is strict rather than a bypass, and a proxy that always sets the header does not hit that path. The key map can still grow with distinct clients; that is ordinary limiter state, not something a public scan reaches if the proxy is doing its job.
+
+Leave the extractor as it is. The proxy checklist still says to overwrite the forwarding headers.
 
 ## 6. Check `Origin` on WebSocket upgrade
 
-`is_websocket_upgrade` accepts the connection from `Upgrade` and `Connection` plus
-`Sec-WebSocket-Key`. There is no `Origin` check. SSE already has an optional `gate()`
-for Host and Origin. WebSocket does not.
+Implemented with the same optional `controller::gate()` SSE already uses. It runs after the route and `Sec-WebSocket-Key` check and before `101`. No gate means a missing `Origin` still upgrades, so non-browser clients keep working. A browser-facing route installs a gate that returns `403` when `Origin` is missing or not on the allowlist.
 
-A browser can open a cross-site WebSocket, and a page on another host can reach the
-origin port directly (DNS rebinding). The TLS proxy does not cover that raw port.
-
-Apply the same kind of gate used for SSE before `101 Switching Protocols`, and reject
-the upgrade when `Origin` is missing or not allowed.
+`is_websocket_upgrade` still only looks at `Upgrade`, `Connection`, and the key. The gate is what applies the origin rule. A page on another host can otherwise open a cross-site WebSocket straight to the origin port. The TLS proxy does not cover that raw port.
 
 ## 7. Send `Vary: Origin` when CORS reflects an origin
 
@@ -135,7 +121,7 @@ Not code in this library. A public scan fails these when the proxy is left at de
 
 - `Strict-Transport-Security` on the HTTPS response.
 - HTTP on port 80 redirects to HTTPS. This server does not redirect.
-- Idle timeout and a body-size cap in front of the origin. The server now has both, and still has no connection cap.
+- Idle timeout, a body-size cap, and a connection cap in front of the origin. The server now has all three as well.
 - `Server` is the fixed token `net`. Replace it at the proxy only if a scan still wants it gone.
-- Overwrite `X-Forwarded-For` / `X-Real-IP` rather than appending, until item 5 exists.
+- Overwrite `X-Forwarded-For` / `X-Real-IP` rather than appending, if the app uses `rate_limiting_middleware`.
 - Keep the origin port off the public internet. Cleartext listen defaults to `0.0.0.0`.

@@ -2967,6 +2967,134 @@ auto register_server_tests()
         };
     };
 
+    tester::bdd::scenario("default connection cap is 128, [net]") = [] {
+        tester::bdd::given("A new HTTP server") = [] {
+            auto server = std::make_shared<http::server>();
+
+            tester::bdd::when("The connection cap is read and cleared") = [server] {
+                const auto limit = server->max_connections();
+                server->max_connections(0);
+
+                tester::bdd::then("The default is 128 and zero means unlimited") = [limit, server] {
+                    check_eq(limit, http::default_max_connections);
+                    check_eq(limit, std::size_t{128});
+                    check_eq(server->max_connections(), std::size_t{0});
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("connection cap answers 503 without another handler, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("A server whose cap is one held connection") = [] {
+            auto server = std::make_shared<http::server>();
+            auto entered = std::make_shared<std::atomic<bool>>(false);
+            auto release = std::make_shared<std::atomic<bool>>(false);
+            server->max_connections(1);
+            server->get("/hold").response_handler("text/plain",
+                [entered, release](std::string_view, std::string_view, http::headers&) {
+                    entered->store(true);
+                    while(not release->load())
+                        std::this_thread::sleep_for(std::chrono::milliseconds{10});
+                    return http::make_response(http::status_ok, "OK"s);
+                });
+            server->read_timeout(std::chrono::seconds{5});
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A second client connects while the first handler is still running") = [server, entered, release] {
+                auto response_status = std::make_shared<std::string>();
+                auto response_headers = std::make_shared<std::string>();
+                auto held = std::make_shared<std::atomic<bool>>(false);
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                std::thread holder;
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    holder = std::thread{[port_s, held] {
+                        try
+                        {
+                            auto stream = connect("127.0.0.1", port_s);
+                            stream.read_timeout(3s);
+                            stream << "GET /hold HTTP/1.1" << net::crlf
+                                   << "Host: 127.0.0.1:" << port_s << net::crlf
+                                   << "Connection: close" << net::crlf
+                                   << net::crlf
+                                   << net::flush;
+                            std::string line;
+                            if(stream and std::getline(stream, line))
+                                held->store(true);
+                        }
+                        catch(...) {}
+                    }};
+
+                    auto spins = 0;
+                    while(not entered->load() and spins < 200)
+                    {
+                        std::this_thread::sleep_for(10ms);
+                        ++spins;
+                    }
+
+                    try
+                    {
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream.read_timeout(2s);
+                        stream << "GET /other HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+                        std::string line;
+                        if(stream and std::getline(stream, line))
+                        {
+                            if(not line.empty() and line.back() == '\r')
+                                line.pop_back();
+                            const auto space1 = line.find(' ');
+                            if(space1 != std::string::npos)
+                            {
+                                const auto space2 = line.find(' ', space1 + 1);
+                                *response_status = space2 == std::string::npos
+                                    ? line.substr(space1 + 1)
+                                    : line.substr(space1 + 1, space2 - space1 - 1);
+                            }
+                        }
+                        auto line_count = 0;
+                        while(line_count < 20 and stream and std::getline(stream, line))
+                        {
+                            *response_headers += line + "\n";
+                            ++line_count;
+                            if(line.empty() or line == "\r")
+                                break;
+                        }
+                    }
+                    catch(...) {}
+
+                    release->store(true);
+                }
+
+                if(holder.joinable())
+                    holder.join();
+                if(port != 0)
+                {
+                    server->stop();
+                }
+                if(server_thread.joinable())
+                    server_thread.join();
+
+                tester::bdd::then("The second response is 503 and the first handler was the one in flight") = [response_status, response_headers, entered, held] {
+                    check_true(entered->load());
+                    check_eq(*response_status, "503");
+                    check_contains(*response_headers, "Retry-After: 1");
+                    check_true(held->load());
+                };
+            };
+        };
+    };
+
     return true;
 }
 
