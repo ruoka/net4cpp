@@ -49,6 +49,7 @@ using ::shutdown;
 using ::pipe;
 using ::fcntl;
 using ::socket;
+using ::socketpair;
 using ::inet_pton;
 using ::inet_ntop;
 using ::getaddrinfo;
@@ -110,6 +111,7 @@ inline void fd_set_bit(int fd, fd_set* set) noexcept { FD_SET(fd, set); }
 inline bool fd_isset(int fd, const fd_set* set) noexcept { return FD_ISSET(fd, set); }
 
 // Common constants
+constexpr auto af_unix          = AF_UNIX;
 constexpr auto af_inet          = AF_INET;
 constexpr auto af_inet6         = AF_INET6;
 constexpr auto af_unspec        = AF_UNSPEC;

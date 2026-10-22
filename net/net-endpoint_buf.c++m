@@ -19,6 +19,27 @@ public:
         return m_socket.wait_for(timeout);
     }
 
+    // Idle timeout for the next blocking recv. Zero (the default) blocks in
+    // recv as before, so WebSocket, SSE, and MCP keep waiting. A positive
+    // value makes underflow / xsgetn return after that long with no bytes.
+    void read_timeout(std::chrono::milliseconds timeout) noexcept
+    {
+        m_read_timeout = timeout;
+    }
+
+    [[nodiscard]] std::chrono::milliseconds read_timeout() const noexcept
+    {
+        return m_read_timeout;
+    }
+
+    // True after a read stopped because read_timeout() elapsed with no bytes.
+    // A peer close or shutdown() does not set this. Cleared when a later recv
+    // returns data.
+    [[nodiscard]] bool read_timed_out() const noexcept
+    {
+        return m_read_timed_out.load(std::memory_order_acquire);
+    }
+
     // Wake blocking I/O on this buffer's socket (see socket::shutdown).
     // Also latches shut_down() so observers (e.g. SSE/MCP session::closed)
     // notice stop() without waiting for a write to set iostream failbit.
@@ -34,8 +55,63 @@ public:
     }
 
 protected:
+    // select before recv when a read timeout is set. A fresh timeval is built
+    // from the deadline on every attempt: Linux select writes the remaining
+    // time back into the timeval, macOS leaves it unchanged. Recomputing makes
+    // the wait the same on both. EINTR retries against that same deadline.
+    // timeout <= 0 skips select so recv blocks, preserving the old behaviour.
+    bool wait_readable()
+    {
+        if(m_read_timeout.count() <= 0)
+            return true;
+
+        const int fd = m_socket;
+        if(fd < 0)
+            return false;
+
+        using clock = std::chrono::steady_clock;
+        const auto deadline = clock::now() + m_read_timeout;
+        for(;;)
+        {
+            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - clock::now());
+            if(remaining.count() <= 0)
+            {
+                m_read_timed_out.store(true, std::memory_order_release);
+                return false;
+            }
+
+            posix::fd_set fds{};
+            posix::fd_zero(&fds);
+            posix::fd_set_bit(fd, &fds);
+            posix::timeval tv{
+                .tv_sec = static_cast<decltype(tv.tv_sec)>(remaining.count() / 1000),
+                .tv_usec = static_cast<decltype(tv.tv_usec)>((remaining.count() % 1000) * 1000)
+            };
+            const auto ready = posix::select(fd + 1, &fds, nullptr, nullptr, &tv);
+            if(ready > 0)
+            {
+                m_read_timed_out.store(false, std::memory_order_release);
+                return true;
+            }
+            if(ready < 0 and posix::get_errno() == posix::eintr)
+                continue;
+
+            if(ready == 0)
+                m_read_timed_out.store(true, std::memory_order_release);
+            return false;
+        }
+    }
+
+    void clear_read_timed_out() noexcept
+    {
+        m_read_timed_out.store(false, std::memory_order_release);
+    }
+
     socket m_socket;
+    std::chrono::milliseconds m_read_timeout{0};
     std::atomic<bool> m_shut_down{false};
+    std::atomic<bool> m_read_timed_out{false};
 };
 
 constexpr std::size_t tcp_buffer_size = 4096;
@@ -82,8 +158,11 @@ protected:
         // istream::read set failbit even though more bytes are still in flight.
         if (count >= static_cast<std::streamsize>(N)) {
             while (count > 0) {
+                if (not wait_readable())
+                    return total;
                 auto received = posix::recv(m_socket, dest, static_cast<std::size_t>(count), 0);
                 if (received > 0) {
+                    clear_read_timed_out();
                     dest += received;
                     count -= received;
                     total += received;
@@ -97,6 +176,11 @@ protected:
                 if (err == posix::eintr)
                     continue;
                 if (err == posix::ewouldblock or err == posix::eagain) {
+                    // A configured idle timeout already ran in wait_readable.
+                    // The 60s wait remains for a non-blocking socket with no
+                    // idle timeout (recv returns EAGAIN immediately).
+                    if (read_timeout().count() > 0)
+                        continue;
                     // wait_for selects for readability (wait() is for writable).
                     if (not m_socket.wait_for(std::chrono::milliseconds{60'000}))
                         return total;
@@ -146,11 +230,29 @@ protected:
     int_type underflow() override {
         if (gptr() < egptr()) return traits_type::to_int_type(*gptr());
 
-        auto received = posix::recv(m_socket, m_input.data(), N, 0);
-        if (received <= 0) return traits_type::eof();
+        for (;;) {
+            if (not wait_readable())
+                return traits_type::eof();
 
-        setg(m_input.data(), m_input.data(), m_input.data() + received);
-        return traits_type::to_int_type(m_input[0]);
+            const auto received = posix::recv(m_socket, m_input.data(), N, 0);
+            if (received > 0) {
+                clear_read_timed_out();
+                setg(m_input.data(), m_input.data(), m_input.data() + received);
+                return traits_type::to_int_type(m_input[0]);
+            }
+            if (received == 0)
+                return traits_type::eof();
+
+            const auto err = posix::get_errno();
+            if (err == posix::eintr)
+                continue;
+            // Idle timeout is already enforced by wait_readable. EAGAIN here is
+            // a spurious wakeup; wait again. With no timeout, EAGAIN stays EOF
+            // so a non-blocking socket does not loop forever in get().
+            if ((err == posix::ewouldblock or err == posix::eagain) and read_timeout().count() > 0)
+                continue;
+            return traits_type::eof();
+        }
     }
 
     int_type overflow(int_type ch = traits_type::eof()) override {

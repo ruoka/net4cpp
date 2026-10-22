@@ -2,7 +2,7 @@
 
 **Branch:** `docs/http-server-scan-improvements`  
 **Repo:** [ruoka/net4cpp](https://github.com/ruoka/net4cpp)  
-**Status:** Items 1, 3, 4 (nosniff and error `Content-Type`), and 7 are implemented on this branch. The rest are still proposed.  
+**Status:** Items 1, 3, 4 (nosniff and error `Content-Type`), and 7 are implemented. Item 2 applies a 30s idle read timeout on accepted HTTP connections. A connection cap and `Expect: 100-continue` are still open. The rest are still proposed.  
 **Date:** 2026-10-22
 
 ## Scope
@@ -42,11 +42,9 @@ The `413` response was already in place; the default is what changed.
 
 ## 2. Time out and cap accepted connections
 
-`server::timeout` only bounds the accept `select`. Accepted sockets have no read
-deadline. `read_request_head` and the body loop block one byte at a time, each
-connection is its own thread, and there is no connection cap. `Expect: 100-continue`
-is ignored, so a client that waits for `100` holds a thread until something else
-closes the socket.
+The read deadline is in place. `http::server` sets `endpointstream::read_timeout` from `read_timeout()` (default 30s, separate from the accept poll). A partial head or body gets `408`. An idle keep-alive with no bytes is closed without a response. WebSocket and SSE clear the timeout when they take the socket. There is still no connection cap.
+
+`server::timeout` only bounds the accept `select`. Each connection is still its own thread, with no cap. `Expect: 100-continue` is ignored, so a client that waits for `100` holds a thread until something else closes the socket.
 
 Public Slowloris probes usually die at the proxy idle timeout. The same probe against
 the origin port hangs one thread per connection.
