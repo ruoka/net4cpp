@@ -2,7 +2,7 @@
 
 **Branch:** `docs/http-server-scan-improvements`  
 **Repo:** [ruoka/net4cpp](https://github.com/ruoka/net4cpp)  
-**Status:** Items 1, 3, 4 (nosniff and error `Content-Type`), and 7 are implemented. Item 2 applies a 30s idle read timeout on accepted HTTP connections. A connection cap and `Expect: 100-continue` are still open. The rest are still proposed.  
+**Status:** Items 1, 3, 4, 7, 8, 9, and 10 are implemented. Item 2 applies a 30s idle read timeout and answers `Expect: 100-continue`. Still open: a connection cap, rate-limit keys (item 5), and WebSocket `Origin` (item 6). `Content-Security-Policy` and `Strict-Transport-Security` stay off this server. Item 11 stays on the proxy.  
 **Date:** 2026-10-22
 
 ## Scope
@@ -42,16 +42,15 @@ The `413` response was already in place; the default is what changed.
 
 ## 2. Time out and cap accepted connections
 
-The read deadline is in place. `http::server` sets `endpointstream::read_timeout` from `read_timeout()` (default 30s, separate from the accept poll). A partial head or body gets `408`. An idle keep-alive with no bytes is closed without a response. WebSocket and SSE clear the timeout when they take the socket. There is still no connection cap.
+The read deadline is in place. `http::server` sets `endpointstream::read_timeout` from `read_timeout()` (default 30s, separate from the accept poll). A partial head or body gets `408`. An idle keep-alive with no bytes is closed without a response. WebSocket and SSE clear the timeout when they take the socket. `Expect: 100-continue` gets `100 Continue` before the body is read, when that body will be accepted. Any other expectation is `417` and the body is not read. There is still no connection cap.
 
-`server::timeout` only bounds the accept `select`. Each connection is still its own thread, with no cap. `Expect: 100-continue` is ignored, so a client that waits for `100` holds a thread until something else closes the socket.
+`server::timeout` only bounds the accept `select`. Each connection is still its own thread, with no cap.
 
 Public Slowloris probes usually die at the proxy idle timeout. The same probe against
 the origin port hangs one thread per connection.
 
-Add a read deadline on the accepted stream (separate from the accept poll), a maximum
-number of in-flight connections, and an immediate `100 Continue` or `417` for
-`Expect: 100-continue` so the server does not wait in silence.
+Still open: a maximum number of in-flight connections. The read deadline and
+`Expect` handling are done.
 
 ## 3. Stop putting the machine name in `Server`
 
@@ -65,17 +64,7 @@ Send a fixed token (`net`) or omit `Server`. Do not include the hostname or a ve
 
 ## 4. Default browser headers, and a real error `Content-Type`
 
-Partly implemented. Every response sends `X-Content-Type-Options: nosniff`. Protocol errors and `404`s use `text/plain; charset=utf-8`. `Referrer-Policy`, `X-Frame-Options`, and `Content-Security-Policy` are still open.
-
-`Referrer-Policy`, `X-Frame-Options`, `Permissions-Policy`, and
-`Content-Security-Policy` are still absent. Observatory-style scans still fail those
-when the proxy only forwards origin headers.
-
-Still open:
-
-- `Referrer-Policy: no-referrer`
-- `X-Frame-Options: DENY` for API use. Apps that embed HTML need a way to turn this off.
-- `Permissions-Policy`
+Implemented, except `Content-Security-Policy`. Every response sends `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, and `Permissions-Policy: camera=(), microphone=(), geolocation=()`. Protocol errors and `404`s use `text/plain; charset=utf-8`. `frame_options(false)` omits `X-Frame-Options` so an embedded page can set its own. A custom `Referrer-Policy` or `Permissions-Policy` does not replace the server values.
 
 `Content-Security-Policy` stays opt-in. A default of `default-src 'none'` breaks
 `.html()` pages that load scripts. `Strict-Transport-Security` stays on the proxy:
@@ -120,31 +109,25 @@ returns true for every origin, or for `null`, reopens the finding.
 
 ## 8. Reject obsolete line folding
 
-Header lines with no colon are skipped. A folded continuation (`Content-Length: 5`
-then a line ` 0`) is ignored rather than rejected. RFC 9112 says a server rejects
-obs-fold or unfolds it. Current proxies reject it, so this is a low desync note, not
-a usual public-scan hit. Reject the request with `400` when a line is a continuation
-or has no colon.
+Implemented. A header line that starts with a space or tab, has no colon, or has an empty name throws. `http::server` already turns that into `400` and closes.
+
+Header lines with no colon used to be skipped. A folded continuation (`Content-Length: 5`
+then a line ` 0`) was ignored rather than rejected. RFC 9112 says a server rejects
+obs-fold or unfolds it.
 
 ## 9. Filter the status line and `Content-Type` the same way as custom headers
 
-`write_custom_response_headers` drops CR, LF, and NUL. The status line and
-`Content-Type` are written directly from the handler result. Built-in statuses are
-safe. A handler that copies request data into the status string or the content type
-can split the response.
+Implemented. CR, LF, or NUL in the handler status or content type becomes `500` with the stock status text and `text/plain; charset=utf-8`. The injected line is not written. The same check applies to an SSE gate denial status.
 
-Run the same control-character check on `res_status` and `res_type` before writing
-them. On failure, send `500` with the stock status text.
+`write_custom_response_headers` already dropped CR, LF, and NUL. The status line and
+`Content-Type` used to be written directly from the handler result.
 
 ## 10. Basic auth: CSRF and realm quoting
 
-Only when `authentication_middleware` is used. Browsers resend `Authorization` on
-cross-site requests, so state-changing routes show up as CSRF. The middleware has no
-CSRF check.
+Implemented as far as this library goes. `"` and `\` in the realm are escaped, and CR, LF, and NUL are omitted, before `WWW-Authenticate` is built. The middleware comment states that browsers resend `Authorization` on cross-site requests and that this middleware does not issue a CSRF token. State-changing routes need that defense outside it.
 
-Document that Basic is a browser-credential scheme and that state-changing routes
-need a CSRF defense outside this middleware. Escape `"` and `\` in the realm before
-building `WWW-Authenticate` (CR and LF are already dropped later).
+Only when `authentication_middleware` is used. Browsers resend `Authorization` on
+cross-site requests, so state-changing routes show up as CSRF.
 
 ## 11. Proxy checklist
 
@@ -152,7 +135,7 @@ Not code in this library. A public scan fails these when the proxy is left at de
 
 - `Strict-Transport-Security` on the HTTPS response.
 - HTTP on port 80 redirects to HTTPS. This server does not redirect.
-- Idle timeout and a body-size cap in front of the origin, until items 1 and 2 exist.
-- Replace or drop `Server` if item 3 is not done yet.
+- Idle timeout and a body-size cap in front of the origin. The server now has both, and still has no connection cap.
+- `Server` is the fixed token `net`. Replace it at the proxy only if a scan still wants it gone.
 - Overwrite `X-Forwarded-For` / `X-Real-IP` rather than appending, until item 5 exists.
 - Keep the origin port off the public internet. Cleartext listen defaults to `0.0.0.0`.

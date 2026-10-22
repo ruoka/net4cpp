@@ -52,25 +52,39 @@ inline std::istream& operator >> (std::istream &is,  headers &hdrs)
         if (not std::getline(is, line) or line == "\r" or line.empty()) break;
         
         auto sv = std::string_view{line};
-        auto pos = sv.find(':');
-        if (pos != std::string_view::npos) {
-            const auto name_sv = utils::trim(sv.substr(0, pos));
-            const auto value_sv = utils::trim(sv.substr(pos + 1));
+        if(not sv.empty() and sv.back() == '\r')
+            sv.remove_suffix(1);
+        if(sv.empty())
+            break;
 
-            auto name = std::string{name_sv};
-            utils::ascii_to_lower(name);
-            // RFC 7230 §3.3.2 / §3.3.3: multiple Content-Length values with a
-            // differing field-value must be rejected. Collapsing via last-wins
-            // enables request smuggling when a front-end proxy uses the first.
-            if(name == "content-length" and hdrs.m_values.contains(name))
-                throw std::runtime_error{"duplicate Content-Length header"};
-            // RFC 7230 §5.4: more than one Host header field must be rejected.
-            // Last-wins lets a second Host poison absolute URLs / cache keys
-            // while a first-Host proxy still routes to the victim authority.
-            if(name == "host" and hdrs.m_values.contains(name))
-                throw std::runtime_error{"duplicate Host header"};
-            hdrs.m_values[std::move(name)] = std::string{value_sv};
-        }
+        // RFC 9112 §5.2: a field line that begins with SP or HTAB is obsolete
+        // line folding. Reject it. Skipping the continuation drops a second
+        // Content-Length token that a proxy may still honor.
+        if(sv.front() == ' ' or sv.front() == '\t')
+            throw std::runtime_error{"obsolete line folding"};
+
+        const auto pos = sv.find(':');
+        if(pos == std::string_view::npos)
+            throw std::runtime_error{"malformed header line"};
+
+        const auto name_sv = utils::trim(sv.substr(0, pos));
+        const auto value_sv = utils::trim(sv.substr(pos + 1));
+        if(name_sv.empty())
+            throw std::runtime_error{"malformed header line"};
+
+        auto name = std::string{name_sv};
+        utils::ascii_to_lower(name);
+        // RFC 7230 §3.3.2 / §3.3.3: multiple Content-Length values with a
+        // differing field-value must be rejected. Collapsing via last-wins
+        // enables request smuggling when a front-end proxy uses the first.
+        if(name == "content-length" and hdrs.m_values.contains(name))
+            throw std::runtime_error{"duplicate Content-Length header"};
+        // RFC 7230 §5.4: more than one Host header field must be rejected.
+        // Last-wins lets a second Host poison absolute URLs / cache keys
+        // while a first-Host proxy still routes to the victim authority.
+        if(name == "host" and hdrs.m_values.contains(name))
+            throw std::runtime_error{"duplicate Host header"};
+        hdrs.m_values[std::move(name)] = std::string{value_sv};
     }
     return is;
 }

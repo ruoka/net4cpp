@@ -244,6 +244,31 @@ auto register_middleware_tests()
         };
     };
 
+    tester::bdd::scenario("authentication_middleware - quotes the realm, [net]") = [] {
+        tester::bdd::given("A realm containing a quote, a backslash, and a CR") = [] {
+            auto is_public = [](std::string_view){ return false; };
+            auto reject = [](std::string_view){ return false; };
+            auto mw = ::http::middleware::authentication_middleware(is_public, reject, "a\"b\\c\r"sv);
+            auto handler = [](auto&&, auto&&, auto&&){
+                return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
+            };
+            auto wrapped = mw(handler);
+
+            tester::bdd::when("An unauthenticated request is rejected") = [wrapped]() mutable {
+                auto headers = ::http::headers{};
+                auto [status, content, headers_opt] = wrapped("/protected"sv, ""sv, headers);
+
+                tester::bdd::then("WWW-Authenticate is a quoted-string without the CR") = [status, content, headers_opt] {
+                    check_eq(status, ::http::status_unauthorized);
+                    check_eq(content, "Unauthorized"s);
+                    check_true(headers_opt.has_value());
+                    if(headers_opt.has_value())
+                        check_eq(headers_opt.value()["www-authenticate"s], "Basic realm=\"a\\\"b\\\\c\""s);
+                };
+            };
+        };
+    };
+
     tester::bdd::scenario("authentication_middleware - allows public paths, [net]") = [] {
         tester::bdd::given("A middleware with public paths") = [] {
             auto is_public = [](std::string_view path){

@@ -47,6 +47,7 @@ const auto status_conflict = "409 Conflict"s;
 const auto status_precondition_failed = "412 Precondition Failed"s;
 const auto status_request_timeout = "408 Request Timeout"s;
 const auto status_payload_too_large = "413 Payload Too Large"s;
+const auto status_expectation_failed = "417 Expectation Failed"s;
 const auto status_unprocessable_entity = "422 Unprocessable Entity"s;
 const auto status_too_many_requests = "429 Too Many Requests"s;
 const auto status_request_header_fields_too_large = "431 Request Header Fields Too Large"s;
@@ -559,6 +560,18 @@ public:
         m_max_request_head_size = bytes;
     }
 
+    // X-Frame-Options: DENY on every response. Turn this off for HTML that is
+    // embedded. A handler may then set its own X-Frame-Options.
+    bool frame_options() const
+    {
+        return m_frame_options;
+    }
+
+    void frame_options(bool enabled)
+    {
+        m_frame_options = enabled;
+    }
+
     // Signal the listen loop to exit and close listen sockets so accept wait
     // wakes immediately (Docker SIGTERM / join). Thread-safe vs listen().
     // Also endpointstream::shutdown()s live clients so idle keep-alive handlers
@@ -719,14 +732,58 @@ private:
         return has_ctl(name) or has_ctl(value);
     }
 
-    static void write_custom_response_headers(std::ostream& os, const headers& hdrs)
+    static bool header_value_has_ctl(std::string_view s)
+    {
+        return std::ranges::any_of(s, [](char c)
+        {
+            return c == '\r' or c == '\n' or c == '\0';
+        });
+    }
+
+    // Server-owned browser headers. A later custom copy would override the
+    // default. X-Frame-Options stays available to the handler when the
+    // default DENY is turned off.
+    bool is_server_owned_header(std::string_view name) const
+    {
+        auto lower = std::string{name};
+        utils::ascii_to_lower(lower);
+        if(lower == "x-content-type-options"sv or lower == "referrer-policy"sv
+           or lower == "permissions-policy"sv)
+            return true;
+        return m_frame_options and lower == "x-frame-options"sv;
+    }
+
+    void write_custom_response_headers(std::ostream& os, const headers& hdrs) const
     {
         for(const auto& [name, value] : hdrs)
         {
-            if(is_unsafe_response_header(name, value))
+            if(is_unsafe_response_header(name, value) or is_server_owned_header(name))
                 continue;
             os << name << ": " << value << net::crlf;
         }
+    }
+
+    // Expect is a comma-separated list. Only 100-continue is understood.
+    enum class expect_kind { absent, continue_ok, unsupported };
+
+    static expect_kind classify_expect(std::string_view field)
+    {
+        auto saw_continue = false;
+        while(not field.empty())
+        {
+            const auto comma = field.find(',');
+            const auto token = utils::trim(comma == std::string_view::npos ? field : field.substr(0, comma));
+            field = comma == std::string_view::npos ? std::string_view{} : field.substr(comma + 1);
+            if(token.empty())
+                continue;
+            auto lower = std::string{token};
+            utils::ascii_to_lower(lower);
+            if(lower == "100-continue"sv)
+                saw_continue = true;
+            else
+                return expect_kind::unsupported;
+        }
+        return saw_continue ? expect_kind::continue_ok : expect_kind::absent;
     }
 
     void write_request_timeout(net::endpointstream& stream)
@@ -737,7 +794,13 @@ private:
                << "Date: " << date() << net::crlf
                << "Server: " << server_token << net::crlf
                << "X-Content-Type-Options: nosniff" << net::crlf
-               << "Content-Type: " << m_content_type << net::crlf
+               << "Referrer-Policy: no-referrer" << net::crlf
+               << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+        if(m_frame_options)
+        {
+            stream << "X-Frame-Options: DENY" << net::crlf;
+        }
+        stream << "Content-Type: " << m_content_type << net::crlf
                << "Content-Length: 0" << net::crlf
                << "Connection: close" << net::crlf
                << net::crlf << net::flush;
@@ -798,7 +861,13 @@ private:
                            << "Date: " << date() << net::crlf
                            << "Server: " << server_token << net::crlf
                            << "X-Content-Type-Options: nosniff" << net::crlf
-                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -891,7 +960,13 @@ private:
                            << "Date: " << date() << net::crlf
                            << "Server: " << server_token << net::crlf
                            << "X-Content-Type-Options: nosniff" << net::crlf
-                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -926,7 +1001,13 @@ private:
                            << "Date: " << date() << net::crlf
                            << "Server: " << server_token << net::crlf
                            << "X-Content-Type-Options: nosniff" << net::crlf
-                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -950,7 +1031,13 @@ private:
                            << "Date: " << date() << net::crlf
                            << "Server: " << server_token << net::crlf
                            << "X-Content-Type-Options: nosniff" << net::crlf
-                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -977,7 +1064,13 @@ private:
                            << "Date: " << date() << net::crlf
                            << "Server: " << server_token << net::crlf
                            << "X-Content-Type-Options: nosniff" << net::crlf
-                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -1006,7 +1099,13 @@ private:
                                << "Date: " << date() << net::crlf
                                << "Server: " << server_token << net::crlf
                                << "X-Content-Type-Options: nosniff" << net::crlf
-                               << "Content-Type: " << m_content_type << net::crlf
+                               << "Referrer-Policy: no-referrer" << net::crlf
+                               << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                        if(m_frame_options)
+                        {
+                            stream << "X-Frame-Options: DENY" << net::crlf;
+                        }
+                        stream << "Content-Type: " << m_content_type << net::crlf
                                << "Content-Length: 0" << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf << net::flush;
@@ -1019,7 +1118,13 @@ private:
                                << "Date: " << date() << net::crlf
                                << "Server: " << server_token << net::crlf
                                << "X-Content-Type-Options: nosniff" << net::crlf
-                               << "Content-Type: " << m_content_type << net::crlf
+                               << "Referrer-Policy: no-referrer" << net::crlf
+                               << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                        if(m_frame_options)
+                        {
+                            stream << "X-Frame-Options: DENY" << net::crlf;
+                        }
+                        stream << "Content-Type: " << m_content_type << net::crlf
                                << "Content-Length: 0" << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf << net::flush;
@@ -1038,7 +1143,13 @@ private:
                            << "Date: " << date() << net::crlf
                            << "Server: " << server_token << net::crlf
                            << "X-Content-Type-Options: nosniff" << net::crlf
-                           << "Upgrade: websocket" << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Upgrade: websocket" << net::crlf
                            << "Connection: Upgrade" << net::crlf
                            << "Sec-WebSocket-Accept: " << accept << net::crlf
                            << net::crlf << net::flush;
@@ -1075,11 +1186,23 @@ private:
                             if(auto denied = sse_ctrl.sse_gate_fn()(uri, hs))
                             {
                                 auto [st, body, custom_h] = std::move(*denied);
+                                if(header_value_has_ctl(st))
+                                {
+                                    st = status_internal_server_error;
+                                    body.clear();
+                                    custom_h.reset();
+                                }
                                 stream << "HTTP/1.1 " << st << net::crlf
                                        << "Date: " << date() << net::crlf
                                        << "Server: " << server_token << net::crlf
                                        << "X-Content-Type-Options: nosniff" << net::crlf
-                                       << "Content-Type: " << m_content_type << net::crlf
+                                       << "Referrer-Policy: no-referrer" << net::crlf
+                                       << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                                if(m_frame_options)
+                                {
+                                    stream << "X-Frame-Options: DENY" << net::crlf;
+                                }
+                                stream << "Content-Type: " << m_content_type << net::crlf
                                        << "Content-Length: " << body.size() << net::crlf
                                        << "Connection: close" << net::crlf;
                                 // Same filter as normal responses (#50): gate deny
@@ -1112,7 +1235,13 @@ private:
                                << "Date: " << date() << net::crlf
                                << "Server: " << server_token << net::crlf
                                << "X-Content-Type-Options: nosniff" << net::crlf
-                               << "Content-Type: text/event-stream" << net::crlf
+                               << "Referrer-Policy: no-referrer" << net::crlf
+                               << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                        if(m_frame_options)
+                        {
+                            stream << "X-Frame-Options: DENY" << net::crlf;
+                        }
+                        stream << "Content-Type: text/event-stream" << net::crlf
                                << "Cache-Control: no-cache" << net::crlf
                                << "Connection: keep-alive" << net::crlf;
                         if(sse_ctrl.has_cors_origin() and hs.contains("origin"s))
@@ -1231,7 +1360,13 @@ private:
                            << "Date: " << date() << net::crlf
                            << "Server: " << server_token << net::crlf
                            << "X-Content-Type-Options: nosniff" << net::crlf
-                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -1256,11 +1391,56 @@ private:
                            << "Date: " << date() << net::crlf
                            << "Server: " << server_token << net::crlf
                            << "X-Content-Type-Options: nosniff" << net::crlf
-                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
                     break;
+                }
+
+                if(hs.contains("expect"))
+                {
+                    const auto expect = classify_expect(hs["expect"]);
+                    if(expect == expect_kind::unsupported)
+                    {
+                        const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                        net::slog << net::warning("HTTP_EXPECTATION_FAILED") << "unsupported Expect from " << endpoint << ":" << port
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"expect", hs["expect"]}
+                                  << std::pair{"status", status_expectation_failed}
+                                  << std::pair{"request_id", request_id}
+                                  << std::pair{"duration_ms", request_duration}
+                                  << net::flush;
+                        stream << "HTTP/1.1 " << status_expectation_failed << net::crlf
+                               << "Date: " << date() << net::crlf
+                               << "Server: " << server_token << net::crlf
+                               << "X-Content-Type-Options: nosniff" << net::crlf
+                               << "Referrer-Policy: no-referrer" << net::crlf
+                               << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                        if(m_frame_options)
+                        {
+                            stream << "X-Frame-Options: DENY" << net::crlf;
+                        }
+                        stream << "Content-Type: " << m_content_type << net::crlf
+                               << "Content-Length: 0" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf << net::flush;
+                        break;
+                    }
+                    // Interim response before the body, only when the body will
+                    // be read. A final 4xx above is the rejection instead of 100.
+                    if(expect == expect_kind::continue_ok and content_length > 0)
+                    {
+                        stream << "HTTP/1.1 100 Continue" << net::crlf
+                               << net::crlf << net::flush;
+                    }
                 }
 
                 std::string body(static_cast<std::size_t>(content_length), ' ');
@@ -1317,7 +1497,13 @@ private:
                            << "Date: " << date() << net::crlf
                            << "Server: " << server_token << net::crlf
                            << "X-Content-Type-Options: nosniff" << net::crlf
-                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -1350,7 +1536,13 @@ private:
                            << "Date: "         << date()                << net::crlf
                            << "Server: " << server_token << net::crlf
                            << "X-Content-Type-Options: nosniff" << net::crlf
-                           << "Content-Type: " << m_content_type        << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type        << net::crlf
                            << "Content-Length: 0"                       << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -1372,7 +1564,13 @@ private:
                            << "Date: "         << date()                    << net::crlf
                            << "Server: " << server_token << net::crlf
                            << "X-Content-Type-Options: nosniff" << net::crlf
-                           << "Content-Type: " << m_content_type            << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type            << net::crlf
                            << "Content-Length: 0"                           << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -1394,7 +1592,13 @@ private:
                            << "Date: "         << date()         << net::crlf
                            << "Server: " << server_token << net::crlf
                            << "X-Content-Type-Options: nosniff" << net::crlf
-                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0"                << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -1480,6 +1684,25 @@ private:
 
                     if(not res_type.empty())
                     {
+                        // Same control-character rule as custom headers. A handler
+                        // that copies request data into the status or content type
+                        // would otherwise split the response. Stock 500 instead.
+                        if(header_value_has_ctl(res_status) or header_value_has_ctl(res_type))
+                        {
+                            net::slog << net::warning("HTTP_UNSAFE_RESPONSE") << "status or content-type contained a control character"
+                                      << std::pair{"ip"sv, endpoint}
+                                      << std::pair{"port", port}
+                                      << std::pair{"method", method}
+                                      << std::pair{"uri", std::string{uri}}
+                                      << std::pair{"status", status_internal_server_error}
+                                      << std::pair{"request_id", request_id}
+                                      << net::flush;
+                            res_status = status_internal_server_error;
+                            res_content.clear();
+                            res_type = std::string{error_content_type};
+                            custom_headers = std::nullopt;
+                        }
+
                         // Extract status code from status string (e.g., "200 OK" -> 200)
                         auto status_code = 200ll;
                         try {
@@ -1506,7 +1729,13 @@ private:
                                << "Date: " << date()                                          << net::crlf
                                << "Server: " << server_token << net::crlf
                                << "X-Content-Type-Options: nosniff" << net::crlf
-                               << "Content-Type: " << res_type                                << net::crlf
+                               << "Referrer-Policy: no-referrer" << net::crlf
+                               << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                        if(m_frame_options)
+                        {
+                            stream << "X-Frame-Options: DENY" << net::crlf;
+                        }
+                        stream << "Content-Type: " << res_type                                << net::crlf
                                << "Content-Length: " << res_content.length()                  << net::crlf
                                << "Connection: " << (close_connection ? "close"sv : "keep-alive"sv) << net::crlf;
 
@@ -1535,7 +1764,13 @@ private:
                                << "Date: " << date()                                          << net::crlf
                                << "Server: " << server_token << net::crlf
                                << "X-Content-Type-Options: nosniff" << net::crlf
-                               << "Content-Type: " << m_content_type                          << net::crlf
+                               << "Referrer-Policy: no-referrer" << net::crlf
+                               << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                        if(m_frame_options)
+                        {
+                            stream << "X-Frame-Options: DENY" << net::crlf;
+                        }
+                        stream << "Content-Type: " << m_content_type                          << net::crlf
                                << "Content-Length: 0"                                         << net::crlf
                                << "Connection: " << (close_connection ? "close"sv : "keep-alive"sv) << net::crlf
                                << "Cache-Control: private"                                    << net::crlf
@@ -1567,7 +1802,13 @@ private:
                        << "Date: " << date()                   << net::crlf
                        << "Server: " << server_token << net::crlf
                        << "X-Content-Type-Options: nosniff" << net::crlf
-                       << "Content-Type: " << m_content_type   << net::crlf
+                       << "Referrer-Policy: no-referrer" << net::crlf
+                       << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                if(m_frame_options)
+                {
+                    stream << "X-Frame-Options: DENY" << net::crlf;
+                }
+                stream << "Content-Type: " << m_content_type   << net::crlf
                        << "Content-Length: 0"                  << net::crlf
                        << net::crlf << net::flush;
             }
@@ -1592,7 +1833,13 @@ private:
                        << "Date: " << date()                   << net::crlf
                        << "Server: " << server_token << net::crlf
                        << "X-Content-Type-Options: nosniff" << net::crlf
-                       << "Content-Type: " << m_content_type   << net::crlf
+                       << "Referrer-Policy: no-referrer" << net::crlf
+                       << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                if(m_frame_options)
+                {
+                    stream << "X-Frame-Options: DENY" << net::crlf;
+                }
+                stream << "Content-Type: " << m_content_type   << net::crlf
                        << "Content-Length: 0"                  << net::crlf
                        << net::crlf << net::flush;
             }
@@ -1617,7 +1864,13 @@ private:
                        << "Date: " << date()                   << net::crlf
                        << "Server: " << server_token << net::crlf
                        << "X-Content-Type-Options: nosniff" << net::crlf
-                       << "Content-Type: " << m_content_type   << net::crlf
+                       << "Referrer-Policy: no-referrer" << net::crlf
+                       << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                if(m_frame_options)
+                {
+                    stream << "X-Frame-Options: DENY" << net::crlf;
+                }
+                stream << "Content-Type: " << m_content_type   << net::crlf
                        << "Content-Length: 0"                  << net::crlf
                        << net::crlf << net::flush;
             }
@@ -1653,6 +1906,7 @@ private:
     std::chrono::milliseconds m_read_timeout = default_read_timeout;
     std::size_t m_max_request_body_size = default_max_request_body_size;
     std::size_t m_max_request_head_size = default_max_request_head_size;
+    bool m_frame_options = true;
     std::atomic<bool> m_stop{false};
     std::atomic<std::size_t> m_active_handlers{0};
     std::mutex m_handlers_mutex;

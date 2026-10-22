@@ -65,6 +65,25 @@ inline callback_with_headers wrap(callback_with_headers endpoint, std::span<cons
 
 // Optional middleware factories for common HTTP server needs
 
+// Quote a Basic realm. " and \ are escaped. CR, LF, and NUL are omitted so the
+// challenge is not dropped later by the response-header control-character filter.
+// Browsers resend Authorization on cross-site requests. This middleware does not
+// issue a CSRF token; state-changing routes need a defense outside it.
+inline std::string quoted_basic_realm(std::string_view realm)
+{
+    auto escaped = std::string{};
+    escaped.reserve(realm.size());
+    for(const char c : realm)
+    {
+        if(c == '\r' or c == '\n' or c == '\0')
+            continue;
+        if(c == '"' or c == '\\')
+            escaped.push_back('\\');
+        escaped.push_back(c);
+    }
+    return "Basic realm=\"" + escaped + "\"";
+}
+
 // Middleware: Authentication - validates requests based on path and authorization header
 // Returns 401 Unauthorized if authentication fails
 // Parameters:
@@ -107,7 +126,7 @@ inline auto authentication_middleware(
             {
                 // Return 401 Unauthorized with WWW-Authenticate header
                 auto error_headers = headers{};
-                error_headers.set("www-authenticate"s, "Basic realm=\""s + realm + "\""s);
+                error_headers.set("www-authenticate"s, quoted_basic_realm(realm));
                 return make_error_response(status_unauthorized, "Unauthorized"sv, std::make_optional(error_headers));
             }
             
