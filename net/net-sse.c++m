@@ -12,32 +12,71 @@ export namespace http::sse
 using namespace std::string_literals;
 using namespace std::string_view_literals;
 
-// Append one SSE field line (`name: value\n`). Values must not contain CR/LF;
-// multi-line payloads use multiple `data:` fields via format_event / session.
+namespace detail
+{
+
+inline void append_without(std::string& out, std::string_view text, std::string_view dropped)
+{
+    for(auto pos = text.find_first_of(dropped); pos != std::string_view::npos; pos = text.find_first_of(dropped))
+    {
+        out.append(text.substr(0, pos));
+        text.remove_prefix(pos + 1);
+    }
+    out.append(text);
+}
+
+// Calls `line` for each line of `text`. SSE ends a line on CRLF, a bare CR, or
+// a bare LF, so splitting on `\n` alone lets a CR start an attacker's field.
+// A trailing line ending yields a final empty line.
+inline void for_each_line(std::string_view text, const auto& line)
+{
+    for(;;)
+    {
+        const auto pos = text.find_first_of("\r\n"sv);
+        line(text.substr(0, pos));
+        if(pos == std::string_view::npos)
+            return;
+        text.remove_prefix(pos + (text.substr(pos, 2) == "\r\n"sv ? 2 : 1));
+    }
+}
+
+} // namespace detail
+
+// Append one SSE field line (`name: value\n`). CR and LF are dropped from both,
+// so a value cannot end the line and start another field. Multi-line payloads
+// go through format_event, which emits one `data:` field per line.
 inline void append_field(std::string& out, std::string_view name, std::string_view value)
 {
-    out.append(name);
+    detail::append_without(out, name, "\r\n"sv);
     out.append(": "sv);
-    out.append(value);
+    detail::append_without(out, value, "\r\n"sv);
     out.push_back('\n');
 }
 
 // Comment line (`: text\n`). Empty text yields `:\n` (valid heartbeat).
+// Multi-line text becomes one comment line per line.
 inline std::string format_comment(std::string_view text = {})
 {
-    auto out = ":"s;
-    if(not text.empty())
-    {
-        out.push_back(' ');
-        out.append(text);
-    }
-    out.push_back('\n');
+    if(text.empty())
+        return ":\n"s;
+
+    auto out = ""s;
+    detail::for_each_line(text, [&out](std::string_view line) {
+        out.push_back(':');
+        if(not line.empty())
+        {
+            out.push_back(' ');
+            out.append(line);
+        }
+        out.push_back('\n');
+    });
     return out;
 }
 
 // Full event block ending with a blank line (dispatches to the client).
-// `data` may contain `\n`; each segment becomes its own `data:` field.
-// `event` / `id` are omitted when empty. `retry_ms` omitted when nullopt.
+// Each line of `data` (CRLF, CR, or LF) becomes its own `data:` field.
+// CR and LF are dropped from `event` and `id`, and NUL from `id` (clients
+// ignore an id containing NUL). Both are omitted when empty, `retry_ms` when nullopt.
 inline std::string format_event(
     std::string_view data,
     std::string_view event = {},
@@ -45,31 +84,20 @@ inline std::string format_event(
     std::optional<std::chrono::milliseconds> retry_ms = std::nullopt)
 {
     auto out = ""s;
+    out.reserve(data.size() + event.size() + id.size() + 32);
     if(not event.empty())
         append_field(out, "event"sv, event);
 
-    if(data.empty())
-        append_field(out, "data"sv, ""sv);
-    else
-    {
-        auto rest = data;
-        while(not rest.empty())
-        {
-            const auto pos = rest.find('\n');
-            if(pos == std::string_view::npos)
-            {
-                append_field(out, "data"sv, rest);
-                break;
-            }
-            append_field(out, "data"sv, rest.substr(0, pos));
-            rest.remove_prefix(pos + 1);
-            if(rest.empty())
-                append_field(out, "data"sv, ""sv);
-        }
-    }
+    detail::for_each_line(data, [&out](std::string_view line) {
+        append_field(out, "data"sv, line);
+    });
 
     if(not id.empty())
-        append_field(out, "id"sv, id);
+    {
+        auto clean_id = ""s;
+        detail::append_without(clean_id, id, "\0"sv);
+        append_field(out, "id"sv, clean_id);
+    }
 
     if(retry_ms.has_value())
         append_field(out, "retry"sv, std::to_string(retry_ms->count()));
