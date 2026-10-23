@@ -292,11 +292,12 @@ private:
         return false;
     }
 
-    static std::string json_escape(std::string_view s) {
+    // Backslash before each character in `quoted`, control escapes for the rest.
+    static std::string escape(std::string_view s, std::string_view quoted) {
         std::string esc;
         esc.reserve(s.size());
         for (char c : s) {
-            if (c == '"' or c == '\\') {
+            if (quoted.contains(c)) {
                 esc += '\\';
                 esc += c;
             } else if (not append_control_escape(esc, c)) {
@@ -305,32 +306,14 @@ private:
         }
         return esc;
     }
+
+    static std::string json_escape(std::string_view s) { return escape(s, "\"\\"); }
 
     // RFC 5424 PARAM-VALUE: `"`, `\`, and `]` are escaped with a backslash.
-    static std::string sd_escape(std::string_view s) {
-        std::string esc;
-        esc.reserve(s.size());
-        for (char c : s) {
-            if (c == '"' or c == '\\' or c == ']') {
-                esc += '\\';
-                esc += c;
-            } else if (not append_control_escape(esc, c)) {
-                esc += c;
-            }
-        }
-        return esc;
-    }
+    static std::string sd_escape(std::string_view s) { return escape(s, "\"\\]"); }
 
     // Syslog MSG part: free text, so only control characters need escaping.
-    static std::string msg_escape(std::string_view s) {
-        std::string esc;
-        esc.reserve(s.size());
-        for (char c : s) {
-            if (not append_control_escape(esc, c))
-                esc += c;
-        }
-        return esc;
-    }
+    static std::string msg_escape(std::string_view s) { return escape(s, ""); }
 
     static std::string value_to_str(const detail::value& v) {
         return std::visit([](auto&& arg){

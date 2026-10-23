@@ -83,10 +83,10 @@ constexpr bool is_field_value_char(char ch) noexcept
 // Optional whitespace is SP / HTAB only; utils::trim would also strip \v and \f.
 constexpr std::string_view trim_ows(std::string_view s) noexcept
 {
-    const auto first = s.find_first_not_of(" \t");
-    if(first == std::string_view::npos)
-        return {};
-    return s.substr(first, s.find_last_not_of(" \t") - first + 1);
+    const auto ows = [](char c) { return c == ' ' or c == '\t'; };
+    const auto first = std::ranges::find_if_not(s, ows);
+    const auto last = std::ranges::find_if_not(s | std::views::reverse, ows).base();
+    return first < last ? std::string_view{first, last} : std::string_view{};
 }
 
 } // namespace detail

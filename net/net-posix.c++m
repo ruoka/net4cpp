@@ -117,9 +117,7 @@ constexpr auto pollnval         = POLLNVAL;
 // poll() timeout in ms: negative waits forever, larger values clamp to int.
 constexpr int poll_timeout(std::chrono::milliseconds timeout) noexcept
 {
-    if(timeout.count() < 0)
-        return -1;
-    return static_cast<int>(std::min<std::chrono::milliseconds::rep>(timeout.count(), std::numeric_limits<int>::max()));
+    return static_cast<int>(std::clamp<std::chrono::milliseconds::rep>(timeout.count(), -1, std::numeric_limits<int>::max()));
 }
 
 // Common constants

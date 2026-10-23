@@ -277,23 +277,17 @@ inline rate_limiter_ptr make_rate_limiter()
 // pass a custom extractor there.
 inline auto default_rate_limit_key_extractor(std::string_view, const headers& hdr)
 {
-    const auto trim = [](std::string_view s) {
-        const auto ows = [](char c) { return c == ' ' or c == '\t'; };
-        const auto first = std::ranges::find_if_not(s, ows);
-        const auto last = std::ranges::find_if_not(s | std::views::reverse, ows).base();
-        return first < last ? std::string_view{first, last} : std::string_view{};
-    };
     if(const auto forwarded = hdr.try_get("x-forwarded-for"sv))
     {
         auto last = std::string_view{};
         for(const auto entry : *forwarded | std::views::split(','))
             last = std::string_view{entry};
-        if(const auto client = trim(last); not client.empty())
+        if(const auto client = ::http::detail::trim_ows(last); not client.empty())
             return std::string{client};
     }
     if(const auto real_ip = hdr.try_get("x-real-ip"sv))
     {
-        if(const auto value = trim(*real_ip); not value.empty())
+        if(const auto value = ::http::detail::trim_ows(*real_ip); not value.empty())
             return std::string{value};
     }
     return "unknown"s; // Indicates missing client identification

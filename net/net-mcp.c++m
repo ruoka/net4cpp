@@ -390,11 +390,11 @@ inline std::size_t json_string_length(std::string_view text)
             return 0;
         if(text[i] == 'u')
         {
-            if(i + 4 >= text.size())
+            const auto hex = text.substr(i + 1, 4);
+            const auto is_hex = [](char c) { return "0123456789abcdefABCDEF"sv.contains(c); };
+            if(hex.size() < 4 or not std::ranges::all_of(hex, is_hex))
                 return 0;
-            for(auto n = 0; n < 4; ++n)
-                if(not "0123456789abcdefABCDEF"sv.contains(text[++i]))
-                    return 0;
+            i += 4;
         }
         else if(not R"("\/bfnrt)"sv.contains(text[i]))
             return 0;
