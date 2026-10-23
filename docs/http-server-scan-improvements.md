@@ -71,7 +71,7 @@ talks to.
 
 Not a code change for the usual deployment. `rate_limiting_middleware` is opt-in, and `default_rate_limit_key_extractor` is only the key when the app uses it. A TLS proxy that overwrites `X-Forwarded-For` or `X-Real-IP` is the thing the origin sees, so the key is the client address the proxy chose. The origin port stays private, so a client cannot open a socket and supply its own header.
 
-It is a real bypass only when one of these is true: the origin port is reachable, or the proxy appends the client address instead of overwriting the header (each spoofed prefix is then a distinct key). Omitting the header puts those requests in one `"unknown"` bucket, which is strict rather than a bypass, and a proxy that always sets the header does not hit that path. The key map can still grow with distinct clients; that is ordinary limiter state, not something a public scan reaches if the proxy is doing its job.
+It is a real bypass only when the origin port is reachable. An appending proxy used to be a second bypass (each spoofed prefix was a distinct key); `default_rate_limit_key_extractor` now keys on the rightmost `X-Forwarded-For` entry, which only the proxy wrote. Omitting the header puts those requests in one `"unknown"` bucket, which is strict rather than a bypass, and a proxy that always sets the header does not hit that path. The key map can still grow with distinct clients; that is ordinary limiter state, not something a public scan reaches if the proxy is doing its job.
 
 Leave the extractor as it is. The proxy checklist still says to overwrite the forwarding headers.
 

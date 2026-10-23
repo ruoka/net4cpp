@@ -865,6 +865,57 @@ auto register_middleware_tests()
         };
     };
 
+    tester::bdd::scenario("default_rate_limit_key_extractor keys on the proxy-added address, [net]") = [] {
+        tester::bdd::given("Forwarding headers as an appending proxy leaves them") = [] {
+            const auto key = [](std::initializer_list<std::pair<std::string_view, std::string_view>> fields) {
+                auto hdr = ::http::headers{};
+                for(const auto& [name, value] : fields)
+                    hdr.set(name, value);
+                return ::http::middleware::default_rate_limit_key_extractor("/"sv, hdr);
+            };
+
+            tester::bdd::then("Only the rightmost X-Forwarded-For entry counts") = [key] {
+                check_eq(key({{"X-Forwarded-For", "203.0.113.7"}}), "203.0.113.7"s);
+                check_eq(key({{"X-Forwarded-For", "spoofed-1, 203.0.113.7"}}), "203.0.113.7"s);
+                check_eq(key({{"X-Forwarded-For", "a,b,c,\t203.0.113.7 "}}), "203.0.113.7"s);
+                check_eq(key({{"X-Forwarded-For", "2001:db8::1"}}), "2001:db8::1"s);
+            };
+
+            tester::bdd::then("Empty values fall back to X-Real-IP, then unknown") = [key] {
+                check_eq(key({{"X-Forwarded-For", "spoofed, "}, {"X-Real-IP", " 198.51.100.2 "}}), "198.51.100.2"s);
+                check_eq(key({{"X-Real-IP", "198.51.100.2"}}), "198.51.100.2"s);
+                check_eq(key({{"X-Forwarded-For", ""}}), "unknown"s);
+                check_eq(key({}), "unknown"s);
+            };
+        };
+    };
+
+    tester::bdd::scenario("rate_limiting_middleware - spoofed X-Forwarded-For prefixes share one limit, [net]") = [] {
+        tester::bdd::given("The default key extractor and a limit of 2") = [] {
+            auto mw = ::http::middleware::rate_limiting_middleware(
+                2, std::chrono::seconds{60}, ::http::middleware::default_rate_limit_key_extractor);
+            auto wrapped = mw([](auto&&, auto&&, auto&&) {
+                return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
+            });
+
+            tester::bdd::when("One client sends a new prefix on every request") = [wrapped]() mutable {
+                auto statuses = std::vector<std::string>{};
+                for(auto i = 0; i < 3; ++i)
+                {
+                    auto hdr = ::http::headers{};
+                    hdr.set("x-forwarded-for"sv, std::format("spoof-{}, 203.0.113.7", i));
+                    statuses.push_back(std::get<0>(wrapped("/"sv, ""sv, hdr)));
+                }
+
+                tester::bdd::then("The third request is limited") = [statuses] {
+                    check_eq(statuses[0], ::http::status_ok);
+                    check_eq(statuses[1], ::http::status_ok);
+                    check_eq(statuses[2], ::http::status_too_many_requests);
+                };
+            };
+        };
+    };
+
     tester::bdd::scenario("metrics_middleware - records OK request and scrape body, [net]") = [] {
         tester::bdd::given("A metrics middleware with a successful handler") = [] {
             auto registry = ::http::middleware::metrics_registry{};
