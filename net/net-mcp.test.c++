@@ -853,6 +853,51 @@ auto register_mcp_tests()
             check_eq(*called, "ping"s);
         };
 
+        section("valid ids are echoed verbatim") = [info, list, call]
+        {
+            const auto reply_id = [&](std::string_view id) {
+                const auto reply = handle_json_rpc(
+                    R"({"jsonrpc":"2.0","id":)"s + std::string{id} + R"(,"method":"ping"})"s,
+                    info,
+                    list,
+                    call);
+                return reply.value_or(""s);
+            };
+            check_eq(reply_id("7"), R"({"jsonrpc":"2.0","id":7,"result":{}})"s);
+            check_eq(reply_id("-1.5e3"), R"({"jsonrpc":"2.0","id":-1.5e3,"result":{}})"s);
+            check_eq(reply_id(" 0 "), R"({"jsonrpc":"2.0","id":0,"result":{}})"s);
+            check_eq(reply_id("null"), R"({"jsonrpc":"2.0","id":null,"result":{}})"s);
+            check_eq(reply_id(R"("a\"b\u00e4\n")"), R"({"jsonrpc":"2.0","id":"a\"b\u00e4\n","result":{}})"s);
+        };
+
+        section("invalid ids are answered with id null, never reflected") = [info, list, call]
+        {
+            const auto invalid = R"({"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid Request"}})"s;
+            const auto reply_to = [&](std::string_view message) {
+                return handle_json_rpc(message, info, list, call).value_or(""s);
+            };
+
+            // Raw CR in a string id would reach the SSE frame (event injection).
+            check_eq(reply_to("{\"jsonrpc\":\"2.0\",\"id\":\"x\r\revent: endpoint\r\",\"method\":\"ping\"}"), invalid);
+            // Object id would let the client shape the reply's structure.
+            check_eq(reply_to(R"({"id":{"result":{"forged":true},"method":"ping"},"method":"ping"})"), invalid);
+            check_eq(reply_to(R"({"id":true,"method":"ping"})"), invalid);
+            check_eq(reply_to(R"({"id":[1],"method":"ping"})"), invalid);
+            check_eq(reply_to(R"({"id":01,"method":"ping"})"), invalid);
+            check_eq(reply_to(R"({"id":nullx,"method":"ping"})"), invalid);
+            check_eq(reply_to(R"({"id":"bad \q escape","method":"ping"})"), invalid);
+            check_eq(reply_to(R"({"id":"short \u12","method":"ping"})"), invalid);
+            // Invalid id without a method is still answered with id null.
+            check_eq(reply_to(R"({"id":true})"), invalid);
+        };
+
+        section("unterminated messages get no reply") = [info, list, call]
+        {
+            check_false(handle_json_rpc(R"({"id":1,"method":"ping")", info, list, call).has_value());
+            check_false(handle_json_rpc(R"({"id":1,"method":"ping)", info, list, call).has_value());
+            check_false(handle_json_rpc(R"({"id":1,"method":"tools/call","params":{"name":"echo")", info, list, call).has_value());
+        };
+
         section("Host/Origin allow patterns") = []
         {
             check_true(match_allow_pattern("127.0.0.1:8101", "127.0.0.1:*"));
