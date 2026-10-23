@@ -72,7 +72,8 @@ catch(const exception& e)
 
 `http::server` maps a request path to a response body. `get("/").text(...)` answers
 `GET /` with status `200` and `text/plain`, and `listen` accepts connections on that
-address.
+address. Route paths are regular expressions matched against the whole request
+target, tried in registration order; the first route with a handler for the method wins.
 
 ```cpp
 import net;

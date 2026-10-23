@@ -1434,19 +1434,19 @@ private:
                 if(method == method_get and net::websocket::is_websocket_upgrade(hs))
                 {
                     const auto path_only = std::string{uri.substr(0, uri.find('?'))};
-                    auto matched_path = std::optional<std::string>{};
-                    for(const auto& [path, route] : m_router)
+                    const route_entry* matched = nullptr;
+                    for(const auto& route : m_router)
                     {
                         if(not std::regex_match(path_only, route.pattern))
                             continue;
                         if(route.methods.contains(method_ws) and route.methods.at(method_ws).has_websocket())
                         {
-                            matched_path = path;
+                            matched = &route;
                             break;
                         }
                     }
 
-                    if(not matched_path)
+                    if(not matched)
                     {
                         stream << "HTTP/1.1 " << status_not_found << net::crlf
                                << "Date: " << date() << net::crlf
@@ -1487,7 +1487,7 @@ private:
                     // Same optional gate as SSE. Absent by default so non-browser
                     // clients that send no Origin still upgrade. A browser-facing
                     // route installs a gate that rejects a missing or unlisted Origin.
-                    const auto& ws_ctrl = m_router.at(*matched_path).methods.at(method_ws);
+                    const auto& ws_ctrl = matched->methods.at(method_ws);
                     if(ws_ctrl.has_gate())
                     {
                         if(auto denied = ws_ctrl.sse_gate_fn()(uri, hs))
@@ -1566,7 +1566,7 @@ private:
                            << "Sec-WebSocket-Accept: " << accept << net::crlf
                            << net::crlf << net::flush;
 
-                    const auto ws_handler = m_router.at(*matched_path).methods.at(method_ws).websocket_handler();
+                    const auto ws_handler = ws_ctrl.websocket_handler();
                     // The session replaces the HTTP idle timeout with ping keep-alive,
                     // so a quiet but live peer stays and a vanished one is dropped.
                     net::websocket::run_text_session(stream, ws_handler, m_websocket_limits);
@@ -1577,21 +1577,21 @@ private:
                 if(method == method_get)
                 {
                     const auto path_only = std::string{uri.substr(0, uri.find('?'))};
-                    auto matched_path = std::optional<std::string>{};
-                    for(const auto& [path, route] : m_router)
+                    const route_entry* matched = nullptr;
+                    for(const auto& route : m_router)
                     {
                         if(not std::regex_match(path_only, route.pattern))
                             continue;
                         if(route.methods.contains(method_sse) and route.methods.at(method_sse).has_sse())
                         {
-                            matched_path = path;
+                            matched = &route;
                             break;
                         }
                     }
 
-                    if(matched_path)
+                    if(matched)
                     {
-                        const auto& sse_ctrl = m_router.at(*matched_path).methods.at(method_sse);
+                        const auto& sse_ctrl = matched->methods.at(method_sse);
                         if(sse_ctrl.has_gate())
                         {
                             if(auto denied = sse_ctrl.sse_gate_fn()(uri, hs))
@@ -2045,10 +2045,9 @@ private:
                     // query pattern; a match is also a guarantee to the handler
                     // that path (and query, when patterned) are well-formed.
                     // Path-only matching (626b26f) broke that contract.
-                    for(const auto& [path, route] : m_router)
-                        if(std::regex_match(uri, route.pattern))
+                    for(const auto& [path, pattern, methods_map] : m_router)
+                        if(std::regex_match(uri, pattern))
                         {
-                            const auto& methods_map = route.methods;
                             route_found = true;
                             auto it = methods_map.find(method);
                             // HEAD / OPTIONS without a dedicated handler: reuse GET.
@@ -2329,9 +2328,9 @@ private:
         }
     }
 
-    // Router: path -> (compiled pattern, method -> controller)
-    // Node-based maps: get()/post()/... hand out controller& that must survive
-    // later registrations. flat_map relocates values on insert.
+    // Router: routes in registration order; the first matching route wins.
+    // Node-based containers: get()/post()/... hand out controller& that must
+    // survive later registrations. flat_map and vector relocate on insert.
     using path_type = std::string;           // Route path regex (e.g., "/api/users/[0-9]+")
     using method_type = std::string_view;    // HTTP method (e.g., "GET", "POST")
 
@@ -2339,20 +2338,21 @@ private:
 
     struct route_entry
     {
+        path_type path;
         std::regex pattern;
         method_map_type methods;
     };
 
-    using router_type = std::map<path_type, route_entry, std::less<>>;
+    using router_type = std::list<route_entry>;
 
     // Compile the pattern once, on first registration. An invalid regex throws
     // std::regex_error here instead of on every matching request.
     method_map_type& route_for(std::string_view path)
     {
-        auto it = m_router.find(path);
+        auto it = std::ranges::find(m_router, path, &route_entry::path);
         if(it == m_router.end())
-            it = m_router.emplace(std::string{path}, route_entry{std::regex{path.begin(), path.end()}, {}}).first;
-        return it->second.methods;
+            it = m_router.insert(m_router.end(), route_entry{std::string{path}, std::regex{path.begin(), path.end()}, {}});
+        return it->methods;
     }
 
     router_type m_router = {};

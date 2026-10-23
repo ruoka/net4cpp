@@ -236,6 +236,65 @@ auto register_server_tests()
         };
     };
 
+    // Regression: a sorted router tried "/[a-z]+" before "/foo" because '[' < 'f',
+    // whatever the registration order.
+    tester::bdd::scenario("Overlapping routes match in registration order, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("A specific route registered before a wider one") = [] {
+            auto server = std::make_shared<http::server>();
+            server->get("/foo").json(R"({"route":"foo"})");
+            server->get("/[a-z]+").text("wide");
+            server->timeout(std::chrono::seconds{1});
+
+            auto read_headers = [](std::uint16_t port, std::string_view path) {
+                auto headers = ""s;
+                const auto port_s = std::to_string(port);
+                auto stream = connect("127.0.0.1", port_s);
+                stream << "GET " << path << " HTTP/1.1" << net::crlf
+                       << "Host: 127.0.0.1:" << port_s << net::crlf
+                       << "Connection: close" << net::crlf
+                       << net::crlf
+                       << net::flush;
+                std::string line;
+                auto line_count = 0;
+                while(line_count < 30 and stream and std::getline(stream, line))
+                {
+                    headers += line + "\n";
+                    line_count++;
+                    if(line.empty() or line == "\r") break;
+                }
+                return headers;
+            };
+
+            tester::bdd::when("A client GETs /foo and /bar") = [server, read_headers] {
+                auto foo_headers = std::make_shared<std::string>();
+                auto bar_headers = std::make_shared<std::string>();
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    try
+                    {
+                        *foo_headers = read_headers(port, "/foo");
+                        *bar_headers = read_headers(port, "/bar");
+                    }
+                    catch(...) {}
+                    server->stop();
+                }
+                if(server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("/foo hits the first route and /bar the wider one") = [foo_headers, bar_headers] {
+                    check_contains(*foo_headers, "Content-Type: application/json"s);
+                    check_contains(*bar_headers, "Content-Type: text/plain"s);
+                };
+            };
+        };
+    };
+
     tester::bdd::scenario("Server start and stop sequence, [net]") = [] {
     if(not network_tests_enabled()) return;
 
