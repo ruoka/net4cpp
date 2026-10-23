@@ -197,6 +197,28 @@ public:
     {
         return m_buf and m_buf->read_timed_out();
     }
+
+    void read_deadline(std::optional<std::chrono::steady_clock::time_point> deadline) noexcept
+    {
+        if(m_buf)
+            m_buf->read_deadline(deadline);
+    }
+
+    void write_timeout(std::chrono::milliseconds timeout) noexcept
+    {
+        if(m_buf)
+            m_buf->write_timeout(timeout);
+    }
+
+    [[nodiscard]] std::chrono::milliseconds write_timeout() const noexcept
+    {
+        return m_buf ? m_buf->write_timeout() : std::chrono::milliseconds{0};
+    }
+
+    [[nodiscard]] bool write_timed_out() const noexcept
+    {
+        return m_buf and m_buf->write_timed_out();
+    }
 private:
     endpointstream(const endpointstream&) = delete;
     gsl::owner<endpointbuf_base*> m_buf;

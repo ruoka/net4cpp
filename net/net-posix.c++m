@@ -183,6 +183,7 @@ constexpr auto ni_maxhost       = NI_MAXHOST;
 constexpr auto ni_maxserv       = NI_MAXSERV;
 
 constexpr auto msg_nosignal     = MSG_NOSIGNAL;
+constexpr auto so_sndtimeo      = SO_SNDTIMEO;
 constexpr auto rlimit_nofile    = RLIMIT_NOFILE;
 
 // Common errno values

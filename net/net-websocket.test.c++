@@ -3,6 +3,10 @@
 // See the LICENSE file in the project root for full license text.
 
 module net;
+import :endpointbuf;
+import :endpointstream;
+import :posix;
+import :socket;
 import :websocket;
 import :websocket_frame;
 import tester;
@@ -492,6 +496,100 @@ auto register_websocket_tests()
         require_true(read_frame(out, reply) == frame_read::ok);
         check_eq(close_code(reply), close_message_too_big);
         check_true(not *handler_ran);
+    };
+
+    tester::bdd::scenario("run_text_session pings a silent peer, then closes with 1001, [net]") = [] {
+        int fds[2] = {-1, -1};
+        require_true(posix::socketpair(posix::af_unix, posix::sock_stream, 0, fds) == 0);
+        auto server_side = endpointstream{new tcp_endpointbuf{socket{fds[0]}}};
+        auto peer = endpointstream{new tcp_endpointbuf{socket{fds[1]}}};
+        peer.read_timeout(std::chrono::milliseconds{2000});
+
+        using namespace std::chrono_literals;
+        const auto start = std::chrono::steady_clock::now();
+        auto session = std::thread{[&] {
+            run_text_session(server_side, nullptr, session_limits{.ping_interval = 150ms, .frame_timeout = 0ms});
+        }};
+
+        auto first = frame{};
+        const auto first_status = read_frame(peer, first);
+        auto second = frame{};
+        const auto second_status = read_frame(peer, second);
+        session.join();
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+
+        check_eq(first_status, frame_read::ok);
+        check_eq(first.op, opcode::ping);
+        check_eq(second_status, frame_read::ok);
+        check_eq(second.op, opcode::close);
+        check_eq(close_code(second), close_going_away);
+        check_true(elapsed >= 250ms);
+        check_true(elapsed < 2s);
+    };
+
+    tester::bdd::scenario("run_text_session keeps a peer that answers ping, [net]") = [] {
+        int fds[2] = {-1, -1};
+        require_true(posix::socketpair(posix::af_unix, posix::sock_stream, 0, fds) == 0);
+        auto server_side = endpointstream{new tcp_endpointbuf{socket{fds[0]}}};
+        auto peer = endpointstream{new tcp_endpointbuf{socket{fds[1]}}};
+        peer.read_timeout(std::chrono::milliseconds{2000});
+
+        using namespace std::chrono_literals;
+        auto session = std::thread{[&] {
+            run_text_session(server_side, [](std::string_view msg) {
+                return text_reply{std::string{msg}};
+            }, session_limits{.ping_interval = 100ms, .frame_timeout = 0ms});
+        }};
+
+        auto pings_answered = 0;
+        for(auto i = 0; i < 3; ++i)
+        {
+            auto ping = frame{};
+            if(read_frame(peer, ping) != frame_read::ok or ping.op != opcode::ping)
+                break;
+            auto pong = make_pong_frame(ping.payload);
+            pong.masked = true;
+            pong.masking_key = 0x01020304u;
+            if(not write_frame(peer, pong))
+                break;
+            ++pings_answered;
+        }
+
+        require_true(write_frame(peer, make_masked_text("still here"sv)));
+        auto echo = frame{};
+        const auto echo_status = read_frame(peer, echo);
+        require_true(write_frame(peer, make_masked_close()));
+        session.join();
+
+        check_eq(pings_answered, 3);
+        check_eq(echo_status, frame_read::ok);
+        check_eq(payload_as_string(echo), "still here"s);
+    };
+
+    tester::bdd::scenario("run_text_session frame_timeout drops a frame that stalls mid-way, [net]") = [] {
+        int fds[2] = {-1, -1};
+        require_true(posix::socketpair(posix::af_unix, posix::sock_stream, 0, fds) == 0);
+        auto server_side = endpointstream{new tcp_endpointbuf{socket{fds[0]}}};
+        auto peer = endpointstream{new tcp_endpointbuf{socket{fds[1]}}};
+
+        // Header for a 100-byte masked text frame, then nothing.
+        const auto bytes = frame_bytes(make_masked_text(std::string(100, 'x')));
+        peer.write(bytes.data(), 2);
+        peer.flush();
+
+        using namespace std::chrono_literals;
+        auto handler_ran = std::make_shared<bool>(false);
+        const auto start = std::chrono::steady_clock::now();
+        run_text_session(server_side, [handler_ran](std::string_view) {
+            *handler_ran = true;
+            return text_reply{};
+        }, session_limits{.ping_interval = 5s, .frame_timeout = 200ms});
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+
+        check_true(not *handler_ran);
+        check_true(server_side.read_timed_out());
+        check_true(elapsed >= 150ms);
+        check_true(elapsed < 2s);
     };
 
     tester::bdd::scenario("http server websocket echo upgrade, [net]") = [] {

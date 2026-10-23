@@ -350,6 +350,78 @@ auto register_endpointbuf_tests()
         };
     };
 
+    tester::bdd::scenario("endpointbuf read_deadline stops a peer that trickles inside the idle gap, [net]") = [] {
+        tester::bdd::given("A 500ms idle timeout and a 300ms deadline") = [] {
+            auto ends = connected_stream_pair();
+            check_true(ends.has_value());
+            if(not ends)
+                return;
+
+            tcp_endpointbuf buf{std::move(ends->local)};
+            buf.read_timeout(std::chrono::milliseconds{500});
+            buf.read_deadline(std::chrono::steady_clock::now() + std::chrono::milliseconds{300});
+            std::istream in{&buf};
+
+            tester::bdd::when("The peer sends one byte every 100ms") = [&] {
+                using namespace std::chrono_literals;
+                auto stop = std::atomic<bool>{false};
+                auto trickle = std::thread{[&] {
+                    const char byte = 'x';
+                    while(not stop.load())
+                    {
+                        if(posix::send(ends->peer, &byte, 1, posix::msg_nosignal) != 1)
+                            break;
+                        std::this_thread::sleep_for(100ms);
+                    }
+                }};
+
+                const auto start = std::chrono::steady_clock::now();
+                auto received = 0;
+                while(in.get() != std::char_traits<char>::eof())
+                    ++received;
+                const auto elapsed = std::chrono::steady_clock::now() - start;
+                stop.store(true);
+                trickle.join();
+
+                tester::bdd::then("Reads stop at the deadline even though no gap reached 500ms") = [&] {
+                    check_true(buf.read_timed_out());
+                    check_true(received >= 1);
+                    check_true(elapsed >= 250ms);
+                    check_true(elapsed < 450ms);
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("endpointbuf write_timeout fails when the peer stops reading, [net]") = [] {
+        tester::bdd::given("A 200ms write timeout and a peer that never reads") = [] {
+            auto ends = connected_stream_pair();
+            check_true(ends.has_value());
+            if(not ends)
+                return;
+
+            auto stream = endpointstream{new tcp_endpointbuf{std::move(ends->local)}};
+            stream.write_timeout(std::chrono::milliseconds{200});
+
+            tester::bdd::when("More is written than the socket buffers can hold") = [&] {
+                using namespace std::chrono_literals;
+                const auto chunk = std::string(64 * 1024, 'x');
+                const auto start = std::chrono::steady_clock::now();
+                for(auto i = 0; i < 1024 and stream; ++i)
+                    stream << chunk << flush;
+                const auto elapsed = std::chrono::steady_clock::now() - start;
+
+                tester::bdd::then("The write fails with the timeout flag instead of blocking") = [&] {
+                    check_eq(stream.write_timeout().count(), 200);
+                    check_true(not stream.good());
+                    check_true(stream.write_timed_out());
+                    check_true(elapsed >= 150ms);
+                    check_true(elapsed < 2s);
+                };
+            };
+        };
+    };
+
     return true;
 }
 
