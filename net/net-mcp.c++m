@@ -283,6 +283,9 @@ inline std::optional<std::size_t> find_key(std::string_view json, std::string_vi
         else if(depth == 1 and ch == ',')
             key_pos_delim = ',';
     }
+    // Unterminated (`{"id":1,"method":"ping"`): json.loads rejects it, so must we.
+    if(depth != 0 or in_string)
+        return std::nullopt;
     return found;
 }
 
@@ -335,7 +338,74 @@ inline std::optional<std::string_view> json_string_field(std::string_view json, 
     return std::nullopt;
 }
 
-// Raw JSON value for `id` (number, string, or null) — copied without surrounding spaces.
+// Length of the JSON number (RFC 8259 §6) at the start of `text`, or 0 if none.
+inline std::size_t json_number_length(std::string_view text)
+{
+    auto i = std::size_t{0};
+    const auto digits = [&] {
+        const auto from = i;
+        while(i < text.size() and text[i] >= '0' and text[i] <= '9')
+            ++i;
+        return i - from;
+    };
+    if(i < text.size() and text[i] == '-')
+        ++i;
+    if(i < text.size() and text[i] == '0')
+        ++i;
+    else if(digits() == 0)
+        return 0;
+    if(i < text.size() and text[i] == '.')
+    {
+        ++i;
+        if(digits() == 0)
+            return 0;
+    }
+    if(i < text.size() and (text[i] == 'e' or text[i] == 'E'))
+    {
+        ++i;
+        if(i < text.size() and (text[i] == '+' or text[i] == '-'))
+            ++i;
+        if(digits() == 0)
+            return 0;
+    }
+    return i;
+}
+
+// Length of the JSON string token (quotes included) at the start of `text`, or 0
+// when it is unterminated, holds a raw control character, or has a bad escape.
+inline std::size_t json_string_length(std::string_view text)
+{
+    if(text.empty() or text.front() != '"')
+        return 0;
+    for(auto i = std::size_t{1}; i < text.size(); ++i)
+    {
+        const auto ch = static_cast<unsigned char>(text[i]);
+        if(ch == '"')
+            return i + 1;
+        if(ch < 0x20)
+            return 0;
+        if(ch != '\\')
+            continue;
+        if(++i >= text.size())
+            return 0;
+        if(text[i] == 'u')
+        {
+            if(i + 4 >= text.size())
+                return 0;
+            for(auto n = 0; n < 4; ++n)
+                if(not "0123456789abcdefABCDEF"sv.contains(text[++i]))
+                    return 0;
+        }
+        else if(not R"("\/bfnrt)"sv.contains(text[i]))
+            return 0;
+    }
+    return 0;
+}
+
+// The request `id` token, copied verbatim for the reply. Only what JSON-RPC
+// allows: a string, a number, or null. Objects, arrays, booleans, and strings
+// with raw control characters return nullopt, so a reply never reflects
+// structure or bytes the client chose.
 inline std::optional<std::string> json_id_field(std::string_view json)
 {
     const auto key_pos = find_key(json, "id"sv);
@@ -348,32 +418,22 @@ inline std::optional<std::string> json_id_field(std::string_view json)
     if(rest.empty() or rest.front() != ':')
         return std::nullopt;
     rest = trim_ws(rest.substr(1));
-    if(rest.empty())
-        return std::nullopt;
+
+    auto length = std::size_t{0};
     if(rest.starts_with("null"sv))
-        return "null"s;
-    if(rest.front() == '"')
-    {
-        // Keep the original quoted token (including escapes) from the request.
-        auto i = std::size_t{1};
-        auto escape = false;
-        while(i < rest.size())
-        {
-            if(escape)
-                escape = false;
-            else if(rest[i] == '\\')
-                escape = true;
-            else if(rest[i] == '"')
-                return std::string{rest.substr(0, i + 1)};
-            ++i;
-        }
+        length = 4;
+    else if(rest.starts_with('"'))
+        length = json_string_length(rest);
+    else
+        length = json_number_length(rest);
+    if(length == 0)
         return std::nullopt;
-    }
-    auto i = std::size_t{0};
-    while(i < rest.size() and rest[i] != ',' and rest[i] != '}' and rest[i] != ' '
-          and rest[i] != '\n' and rest[i] != '\r' and rest[i] != '\t')
-        ++i;
-    return std::string{rest.substr(0, i)};
+
+    // The token must end the value: `nullx`, `01`, and `1true` are not ids.
+    const auto after = trim_ws(rest.substr(length));
+    if(not after.empty() and after.front() != ',' and after.front() != '}')
+        return std::nullopt;
+    return std::string{rest.substr(0, length)};
 }
 
 inline std::optional<std::string_view> json_object_field(std::string_view json, std::string_view key)
@@ -499,16 +559,20 @@ inline std::optional<std::string> handle_json_rpc(
     using detail::json_object_field;
     using detail::json_string_field;
 
+    const auto id = json_id_field(message);
+    // An `id` that is present but not a valid one cannot be echoed; JSON-RPC
+    // answers such requests with id null.
+    if(not id and detail::find_key(message, "id"sv))
+        return R"({"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid Request"}})"s;
+
     const auto method = json_string_field(message, "method"sv);
     if(not method)
     {
-        if(auto id = json_id_field(message))
+        if(id)
             return R"({"jsonrpc":"2.0","id":)"s + *id
                 + R"(,"error":{"code":-32600,"message":"Invalid Request"}})"s;
         return std::nullopt;
     }
-
-    const auto id = json_id_field(message);
 
     if(*method == "notifications/initialized"sv or method->starts_with("notifications/"sv))
         return std::nullopt;
