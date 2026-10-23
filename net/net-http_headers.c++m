@@ -62,18 +62,60 @@ private:
     std::flat_map<name,value> m_values;
 };
 
+namespace detail
+{
+
+// RFC 9110 §5.6.2 token: the only characters allowed in a field name.
+constexpr bool is_token_char(char ch) noexcept
+{
+    return (ch >= 'a' and ch <= 'z') or (ch >= 'A' and ch <= 'Z') or (ch >= '0' and ch <= '9')
+        or std::string_view{"!#$%&'*+-.^_`|~"}.contains(ch);
+}
+
+// RFC 9110 §5.5: field values hold visible characters, SP, HTAB, and obs-text.
+// A bare CR, NUL, or other control byte is rejected (RFC 9112 §2.2).
+constexpr bool is_field_value_char(char ch) noexcept
+{
+    const auto byte = static_cast<unsigned char>(ch);
+    return byte == '\t' or (byte >= 0x20 and byte != 0x7F);
+}
+
+// Optional whitespace is SP / HTAB only; utils::trim would also strip \v and \f.
+constexpr std::string_view trim_ows(std::string_view s) noexcept
+{
+    const auto first = s.find_first_not_of(" \t");
+    if(first == std::string_view::npos)
+        return {};
+    return s.substr(first, s.find_last_not_of(" \t") - first + 1);
+}
+
+} // namespace detail
+
 inline std::istream& operator >> (std::istream &is,  headers &hdrs)
 {
-    while(is.good() and is.peek() != '\r' and is.peek() != '\n')
+    while(is.good())
     {
-        std::string line;
-        if (not std::getline(is, line) or line == "\r" or line.empty()) break;
-        
-        auto sv = std::string_view{line};
-        if(not sv.empty() and sv.back() == '\r')
-            sv.remove_suffix(1);
-        if(sv.empty())
+        // Only an empty line (CRLF or LF) ends the fields. Stopping at any line
+        // that starts with CR (`\r\r\n`) hid the fields after it, such as a
+        // Transfer-Encoding that read_request_head had already read. The final
+        // LF stays for the caller's `>> net::crlf`, so a live socket is never
+        // read past the head.
+        if(is.peek() == '\n')
             break;
+        if(is.peek() == '\r')
+        {
+            is.get();
+            if(is.peek() == '\n')
+                break;
+            throw std::runtime_error{"malformed header line"};
+        }
+
+        std::string line;
+        if(not std::getline(is, line))
+            break;
+        auto sv = std::string_view{line};
+        if(sv.ends_with('\r'))
+            sv.remove_suffix(1);
 
         // RFC 9112 §5.2: a field line that begins with SP or HTAB is obsolete
         // line folding. Reject it. Skipping the continuation drops a second
@@ -85,10 +127,15 @@ inline std::istream& operator >> (std::istream &is,  headers &hdrs)
         if(pos == std::string_view::npos)
             throw std::runtime_error{"malformed header line"};
 
-        const auto name_sv = utils::trim(sv.substr(0, pos));
-        const auto value_sv = utils::trim(sv.substr(pos + 1));
-        if(name_sv.empty())
-            throw std::runtime_error{"malformed header line"};
+        // RFC 9112 §5.1: no whitespace between the name and the colon. A proxy
+        // that ignores `Content-Length : 5` would disagree on the body length.
+        const auto name_sv = sv.substr(0, pos);
+        if(name_sv.empty() or not std::ranges::all_of(name_sv, detail::is_token_char))
+            throw std::runtime_error{"invalid header name"};
+
+        const auto value_sv = detail::trim_ows(sv.substr(pos + 1));
+        if(not std::ranges::all_of(value_sv, detail::is_field_value_char))
+            throw std::runtime_error{"invalid header value"};
 
         auto name = std::string{name_sv};
         utils::ascii_to_lower(name);

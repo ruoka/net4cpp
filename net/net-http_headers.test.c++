@@ -83,7 +83,49 @@ auto register_malformed_headers_tests()
         };
 
         section("An empty header name is rejected") = [rejected] {
-            rejected(":Value-Only\r\n\r\n"s, "malformed header line");
+            rejected(":Value-Only\r\n\r\n"s, "invalid header name");
+        };
+
+        // RFC 9112 §5.1: a proxy that ignores these may disagree on the body length.
+        section("Whitespace or controls in the name are rejected") = [rejected] {
+            rejected("Content-Length : 5\r\n\r\n"s, "invalid header name");
+            rejected("Content-Length\t: 5\r\n\r\n"s, "invalid header name");
+            rejected("\vContent-Length: 5\r\n\r\n"s, "invalid header name");
+            rejected("Content-Length\v: 5\r\n\r\n"s, "invalid header name");
+            rejected("Content\0Length: 5\r\n\r\n"s, "invalid header name");
+            rejected("X(y): 1\r\n\r\n"s, "invalid header name");
+        };
+
+        section("Controls in the value are rejected") = [rejected] {
+            rejected("X: a\rb\r\n\r\n"s, "invalid header value");
+            rejected("X: a\0b\r\n\r\n"s, "invalid header value");
+            rejected("X: a\x7f\r\n\r\n"s, "invalid header value");
+            rejected("Content-Length: 5\v\r\n\r\n"s, "invalid header value");
+        };
+
+        section("HTAB and obs-text stay valid in values") = [] {
+            auto is = std::istringstream{"X: a\tb\r\nY: \xc3\xa4\r\nZ:\t trimmed \t\r\n\r\n"s};
+            http::headers hs;
+            is >> hs;
+            check_eq(hs["x"], "a\tb");
+            check_eq(hs["y"], "\xc3\xa4");
+            check_eq(hs["z"], "trimmed");
+        };
+
+        // `\r\r\n` used to end the fields here while read_request_head kept
+        // reading, so the Transfer-Encoding after it escaped the TE check.
+        section("A CR that does not end the line is not the end of the fields") = [rejected] {
+            rejected("Host: a\r\n\r\r\nTransfer-Encoding: chunked\r\n\r\n"s, "malformed header line");
+        };
+
+        section("The final line ending is left for net::crlf") = [] {
+            auto is = std::istringstream{"Host: a\r\n\r\nbody"s};
+            http::headers hs;
+            is >> hs >> net::crlf;
+            check_eq(hs["host"], "a");
+            auto rest = ""s;
+            std::getline(is, rest);
+            check_eq(rest, "body");
         };
 
         section("Line ending with LF only") = [] {
