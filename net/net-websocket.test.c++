@@ -645,6 +645,67 @@ auto register_websocket_tests()
             server_thread.join();
     };
 
+    tester::bdd::scenario("websocket handler and gate receive the request, [net]") = [] {
+        if(not network_tests_enabled())
+            return;
+
+        auto server = std::make_shared<http::server>();
+        server->ws(R"(/rooms/(\w+))")
+            .gate([](const http::request& req, http::headers&) -> std::optional<http::response_with_headers> {
+                if(req.capture(1) == "closed"sv)
+                    return http::make_error_response(http::status_forbidden, "closed"sv);
+                return std::nullopt;
+            })
+            .ws([](const http::request& req, std::string_view msg) {
+                return text_reply{std::format("{} {} {}", req.capture(1), req.query("user"sv).value_or("-"sv), msg)};
+            });
+
+        using namespace std::chrono_literals;
+        auto [server_thread, port] = listen_ephemeral(server);
+        require_true(port != 0);
+        const auto port_s = std::to_string(port);
+        std::this_thread::sleep_for(50ms);
+
+        auto upgrade = [&](std::string_view target) {
+            auto client = net::connect("127.0.0.1", port_s);
+            client.read_timeout(2s);
+            client << "GET " << target << " HTTP/1.1" << net::crlf
+                   << "Host: 127.0.0.1:" << port_s << net::crlf
+                   << "Upgrade: websocket" << net::crlf
+                   << "Connection: Upgrade" << net::crlf
+                   << "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" << net::crlf
+                   << "Sec-WebSocket-Version: 13" << net::crlf
+                   << net::crlf << net::flush;
+            auto version = ""s;
+            auto status_code = ""s;
+            auto reason = ""s;
+            client >> version >> status_code;
+            std::getline(client, reason);
+            return std::pair{std::move(client), status_code};
+        };
+
+        auto [closed, closed_status] = upgrade("/rooms/closed");
+        check_eq(closed_status, "403"s);
+
+        auto [client, status_code] = upgrade("/rooms/lobby?user=ann");
+        require_true(status_code == "101"s);
+        auto hs = http::headers{};
+        client >> hs >> net::crlf;
+
+        require_true(write_frame(client, make_masked_text("hello"sv)));
+        auto reply = frame{};
+        require_true(read_frame(client, reply) == frame_read::ok);
+        check_eq(payload_as_string(reply), "lobby ann hello"s);
+
+        require_true(write_frame(client, make_masked_close()));
+        auto close_reply = frame{};
+        require_true(read_frame(client, close_reply) == frame_read::ok);
+
+        server->stop();
+        if(server_thread.joinable())
+            server_thread.join();
+    };
+
     tester::bdd::scenario("websocket gate rejects a missing or foreign Origin, [net]") = [] {
         if(not network_tests_enabled())
             return;

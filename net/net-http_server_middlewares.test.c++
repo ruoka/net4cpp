@@ -1311,6 +1311,37 @@ auto register_middleware_tests()
         };
     };
 
+    tester::bdd::scenario("Request header changes reach the caller through every built-in middleware, [net]") = [] {
+        tester::bdd::given("Correlation ID innermost, below every other built-in middleware") = [] {
+            auto registry = std::make_shared<::http::middleware::metrics_registry>();
+            auto middlewares = std::vector<::http::middleware_factory>{
+                ::http::middleware::metrics_middleware(*registry),
+                ::http::middleware::cors_middleware([](std::string_view) { return true; }),
+                ::http::middleware::rate_limiting_middleware(
+                    100, std::chrono::seconds{60}, [](std::string_view, const ::http::headers&) { return "k"s; }),
+                ::http::middleware::authentication_middleware(
+                    [](std::string_view) { return true; },
+                    [](std::string_view) { return false; }),
+                ::http::middleware::accept_validation_middleware("text/plain"sv),
+                ::http::middleware::body_size_validation_middleware(1024),
+                ::http::middleware::correlation_id_middleware(),
+            };
+            auto wrapped = ::http::middleware::wrap(
+                [](::http::request_view, ::http::body_view, ::http::headers&) { return ::http::make_response(::http::status_ok, ""s); },
+                middlewares);
+
+            tester::bdd::when("A request without X-Correlation-ID goes through the chain") = [wrapped] {
+                auto hdr = ::http::headers{};
+                auto [status, content, response_headers] = wrapped("/x"sv, ""sv, hdr);
+
+                tester::bdd::then("The caller's headers carry the generated ID") = [status, hdr] {
+                    check_eq(status, ::http::status_ok);
+                    check_true(hdr.contains("x-correlation-id"s));
+                };
+            };
+        };
+    };
+
     return true;
 }
 

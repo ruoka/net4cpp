@@ -36,7 +36,12 @@ const auto status_ok = "200 OK"s;
 const auto status_created = "201 Created"s;
 const auto status_accepted = "202 Accepted"s;
 const auto status_no_content = "204 No Content"s;
+const auto status_moved_permanently = "301 Moved Permanently"s;
+const auto status_found = "302 Found"s;
+const auto status_see_other = "303 See Other"s;
 const auto status_not_modified = "304 Not Modified"s;
+const auto status_temporary_redirect = "307 Temporary Redirect"s;
+const auto status_permanent_redirect = "308 Permanent Redirect"s;
 const auto status_bad_request = "400 Bad Request"s;
 const auto status_unauthorized = "401 Unauthorized"s;
 const auto status_forbidden = "403 Forbidden"s;
@@ -48,12 +53,16 @@ const auto status_gone = "410 Gone"s;
 const auto status_precondition_failed = "412 Precondition Failed"s;
 const auto status_request_timeout = "408 Request Timeout"s;
 const auto status_payload_too_large = "413 Payload Too Large"s;
+const auto status_unsupported_media_type = "415 Unsupported Media Type"s;
 const auto status_expectation_failed = "417 Expectation Failed"s;
 const auto status_unprocessable_entity = "422 Unprocessable Entity"s;
 const auto status_too_many_requests = "429 Too Many Requests"s;
 const auto status_request_header_fields_too_large = "431 Request Header Fields Too Large"s;
 const auto status_internal_server_error = "500 Internal Server Error"s;
+const auto status_not_implemented = "501 Not Implemented"s;
+const auto status_bad_gateway = "502 Bad Gateway"s;
 const auto status_service_unavailable = "503 Service Unavailable"s;
+const auto status_gateway_timeout = "504 Gateway Timeout"s;
 
 // Cap request-line + headers before they are buffered. Matches the WebSocket
 // upgrade-response head limit; unbounded operator>> / getline can OOM a
@@ -156,8 +165,10 @@ struct request
         return std::nullopt;
     }
 
-    // Sub-match n of the route regex against the target; 0 is the whole target.
-    // Empty when there is no route, no match, or no such group.
+    // Sub-match n of the route regex; 0 is the whole match. Normal routes match
+    // the whole target, ws() and sse() routes only the path, so the path is
+    // tried when the target does not match. Empty when there is no route, no
+    // match, or no such group.
     std::string_view capture(std::size_t n) const
     {
         if(route == nullptr)
@@ -165,7 +176,13 @@ struct request
         auto match = std::match_results<std::string_view::const_iterator>{};
         try
         {
-            if(not std::regex_match(target.begin(), target.end(), match, *route) or n >= match.size() or not match[n].matched)
+            if(not std::regex_match(target.begin(), target.end(), match, *route))
+            {
+                const auto p = path();
+                if(p.size() == target.size() or not std::regex_match(p.begin(), p.end(), match, *route))
+                    return {};
+            }
+            if(n >= match.size() or not match[n].matched)
                 return {};
         }
         catch(const std::regex_error&)
@@ -275,6 +292,8 @@ inline bool value_allowed(std::string_view value, std::span<const std::string> p
     return std::ranges::any_of(patterns, [value](std::string_view p) { return match_allow_pattern(value, p); });
 }
 
+class server;
+
 class controller
 {
 public:
@@ -282,6 +301,10 @@ public:
     using callback = std::function<::http::response_with_headers(request_view, body_view, headers&)>;
     using websocket_callback = net::websocket::text_handler;
     using sse_callback = std::function<void(::http::sse::session&, request_view, headers&)>;
+    // Same handlers with the request struct. The request stays valid for the
+    // whole WebSocket or SSE session.
+    using request_websocket_callback = std::function<net::websocket::text_reply(const ::http::request&, std::string_view)>;
+    using request_sse_callback = std::function<void(::http::sse::session&, const ::http::request&, headers&)>;
 
     controller& text(const content& c)
     {
@@ -379,9 +402,22 @@ public:
     }
 
     // WebSocket text handler: payload in → optional text frame out (nullopt = no reply).
+    // Takes (std::string_view message) or (const request&, std::string_view message).
     controller& ws(websocket_callback cb)
     {
-        m_ws_callback = std::move(cb);
+        if(cb)
+            m_ws_callback = [cb = std::move(cb)](const ::http::request&, std::string_view message) { return cb(message); };
+        else
+            m_ws_callback = {};
+        return *this;
+    }
+
+    template<typename F>
+        requires (not std::invocable<F&, std::string_view>)
+             and std::invocable<F&, const ::http::request&, std::string_view>
+    controller& ws(F&& cb)
+    {
+        m_ws_callback = request_websocket_callback{std::forward<F>(cb)};
         return *this;
     }
 
@@ -390,15 +426,31 @@ public:
         return static_cast<bool>(m_ws_callback);
     }
 
-    [[nodiscard]] const websocket_callback& websocket_handler() const noexcept
+    [[deprecated("the server calls the handler with the request; this copy gets an empty one")]]
+    [[nodiscard]] websocket_callback websocket_handler() const
     {
-        return m_ws_callback;
+        if(not m_ws_callback)
+            return {};
+        return [cb = m_ws_callback](std::string_view message) { return cb(::http::request{}, message); };
     }
 
     // Server-Sent Events handler: connection takeover after SSE response head.
+    // Takes (sse::session&, request_view, headers&) or (sse::session&, const request&, headers&).
     controller& sse(sse_callback cb)
     {
-        m_sse_callback = std::move(cb);
+        if(cb)
+            m_sse_callback = [cb = std::move(cb)](::http::sse::session& s, const ::http::request& r, headers& h) { cb(s, r.target, h); };
+        else
+            m_sse_callback = {};
+        return *this;
+    }
+
+    template<typename F>
+        requires (not std::invocable<F&, ::http::sse::session&, request_view, headers&>)
+             and std::invocable<F&, ::http::sse::session&, const ::http::request&, headers&>
+    controller& sse(F&& cb)
+    {
+        m_sse_callback = request_sse_callback{std::forward<F>(cb)};
         return *this;
     }
 
@@ -407,9 +459,12 @@ public:
         return static_cast<bool>(m_sse_callback);
     }
 
-    [[nodiscard]] const sse_callback& sse_handler() const noexcept
+    [[deprecated("the server calls the handler with the request; this copy gets an empty one")]]
+    [[nodiscard]] sse_callback sse_handler() const
     {
-        return m_sse_callback;
+        if(not m_sse_callback)
+            return {};
+        return [cb = m_sse_callback](::http::sse::session& s, request_view target, headers& h) { cb(s, ::http::request{.target = target}, h); };
     }
 
     // Same Origin allowlist predicate used with cors_middleware for OPTIONS.
@@ -433,12 +488,26 @@ public:
     // Optional pre-check before a WebSocket upgrade or SSE response head is
     // written. Returning a response rejects the takeover (e.g. Host/Origin
     // DNS-rebinding guards).
+    // Takes (request_view, headers&) or (const request&, headers&).
     using takeover_gate = std::function<std::optional<::http::response_with_headers>(request_view, headers&)>;
+    using request_gate = std::function<std::optional<::http::response_with_headers>(const ::http::request&, headers&)>;
     using sse_gate [[deprecated("use http::controller::takeover_gate")]] = takeover_gate;
 
     controller& gate(takeover_gate g)
     {
-        m_gate = std::move(g);
+        if(g)
+            m_gate = [g = std::move(g)](const ::http::request& r, headers& h) { return g(r.target, h); };
+        else
+            m_gate = {};
+        return *this;
+    }
+
+    template<typename F>
+        requires (not std::invocable<F&, request_view, headers&>)
+             and std::invocable<F&, const ::http::request&, headers&>
+    controller& gate(F&& g)
+    {
+        m_gate = request_gate{std::forward<F>(g)};
         return *this;
     }
 
@@ -447,26 +516,30 @@ public:
         return static_cast<bool>(m_gate);
     }
 
-    [[nodiscard]] const takeover_gate& gate_handler() const noexcept
+    [[nodiscard]] const request_gate& gate_handler() const noexcept
     {
         return m_gate;
     }
 
     [[deprecated("use gate_handler()")]]
-    [[nodiscard]] const takeover_gate& sse_gate_fn() const noexcept
+    [[nodiscard]] takeover_gate sse_gate_fn() const
     {
-        return m_gate;
+        if(not m_gate)
+            return {};
+        return [g = m_gate](request_view target, headers& h) { return g(::http::request{.target = target}, h); };
     }
 
 private:
 
+    friend class server;
+
     // A route registered without a handler, e.g. server.post("/x") alone.
     content_type m_content_type{error_content_type};
     request_callback m_callback = [](const ::http::request&, body_view, headers&){ return make_response(status_not_found, ""s); };
-    websocket_callback m_ws_callback;
-    sse_callback m_sse_callback;
+    request_websocket_callback m_ws_callback;
+    request_sse_callback m_sse_callback;
     std::function<bool(std::string_view)> m_cors_origin;
-    takeover_gate m_gate;
+    request_gate m_gate;
 };
 
 class server
@@ -1597,9 +1670,10 @@ private:
                     // clients that send no Origin still upgrade. A browser-facing
                     // route installs a gate that rejects a missing or unlisted Origin.
                     const auto& ws_ctrl = matched->methods.at(method_ws);
+                    const auto ws_req = request{.method = method, .target = uri, .peer = endpoint, .route = &matched->pattern};
                     if(ws_ctrl.has_gate())
                     {
-                        if(auto denied = ws_ctrl.gate_handler()(uri, hs))
+                        if(auto denied = ws_ctrl.m_gate(ws_req, hs))
                         {
                             auto [st, body, custom_h] = std::move(*denied);
                             if(header_value_has_ctl(st))
@@ -1675,7 +1749,8 @@ private:
                            << "Sec-WebSocket-Accept: " << accept << net::crlf
                            << net::crlf << net::flush;
 
-                    const auto ws_handler = ws_ctrl.websocket_handler();
+                    const auto ws_handler = net::websocket::text_handler{
+                        [&ws_ctrl, &ws_req](std::string_view message) { return ws_ctrl.m_ws_callback(ws_req, message); }};
                     // The session replaces the HTTP idle timeout with ping keep-alive,
                     // so a quiet but live peer stays and a vanished one is dropped.
                     net::websocket::run_text_session(stream, ws_handler, m_websocket_limits);
@@ -1701,9 +1776,10 @@ private:
                     if(matched)
                     {
                         const auto& sse_ctrl = matched->methods.at(method_sse);
+                        const auto sse_req = request{.method = method, .target = uri, .peer = endpoint, .route = &matched->pattern};
                         if(sse_ctrl.has_gate())
                         {
-                            if(auto denied = sse_ctrl.gate_handler()(uri, hs))
+                            if(auto denied = sse_ctrl.m_gate(sse_req, hs))
                             {
                                 auto [st, body, custom_h] = std::move(*denied);
                                 if(header_value_has_ctl(st))
@@ -1792,7 +1868,6 @@ private:
                         }
                         stream << net::crlf << net::flush;
 
-                        const auto sse_handler = sse_ctrl.sse_handler();
                         // The HTTP idle timeout must not drop a quiet event stream.
                         // write_timeout stays, so a client that stops reading is dropped.
                         stream.read_timeout(std::chrono::milliseconds{0});
@@ -1800,7 +1875,7 @@ private:
                         auto session = ::http::sse::session{stream};
                         try
                         {
-                            sse_handler(session, uri, hs);
+                            sse_ctrl.m_sse_callback(session, sse_req, hs);
                         }
                         catch(const std::exception& e)
                         {

@@ -128,7 +128,7 @@ inline auto authentication_middleware(
             validate_token = std::forward<ValidateToken>(validate_token),
             realm = std::string{realm}](auto next)
     {
-        return [is_public_path, validate_token, realm, next = std::move(next)](auto req, auto body, auto hdr) mutable
+        return [is_public_path, validate_token, realm, next = std::move(next)](auto req, auto body, auto& hdr) mutable
         {
             using namespace std::string_literals;
             
@@ -166,7 +166,7 @@ inline auto body_size_validation_middleware(std::size_t max_size)
 {
     return [max_size](auto next)
     {
-        return [max_size, next = std::move(next)](auto req, auto body, auto hdr) mutable
+        return [max_size, next = std::move(next)](auto req, auto body, auto& hdr) mutable
         {
             if(body.size() > max_size)
             {
@@ -187,7 +187,7 @@ inline auto accept_validation_middleware(std::string_view required_content_type 
 {
     return [required_content_type = std::string{required_content_type}](auto next)
     {
-        return [required_content_type, next = std::move(next)](auto req, auto body, auto hdr) mutable
+        return [required_content_type, next = std::move(next)](auto req, auto body, auto& hdr) mutable
         {
             // For JSON, use the accepts_json helper; for other types, check Accept header directly
             bool accepted = false;
@@ -334,7 +334,7 @@ inline auto rate_limiting_middleware(
 
     return [max_requests, window_seconds, key_extractor = std::forward<KeyExtractorFunc>(key_extractor), limiter](auto next)
     {
-        return [max_requests, window_seconds, key_extractor, limiter, next = std::move(next)](auto req, auto body, auto hdr) mutable
+        return [max_requests, window_seconds, key_extractor, limiter, next = std::move(next)](auto req, auto body, auto& hdr) mutable
         {
             using namespace std::string_literals;
 
@@ -474,7 +474,7 @@ inline auto cors_middleware(
             allow_credentials,
             max_age](auto next)
     {
-        return [allowed_origin, allowed_methods, allowed_headers, allow_credentials, max_age, next = std::move(next)](auto req, auto body, auto hdr) mutable -> response_with_headers
+        return [allowed_origin, allowed_methods, allowed_headers, allow_credentials, max_age, next = std::move(next)](auto req, auto body, auto& hdr) mutable -> response_with_headers
         {
             // Preflight: only advertise CORS allowances for permitted origins.
             if(hdr.contains("access-control-request-method"s))
@@ -862,7 +862,7 @@ inline auto metrics_middleware(metrics_registry& registry = http_metrics())
 {
     return [&registry](auto next)
     {
-        return [next = std::move(next), &registry](auto req, auto body, auto hdr) mutable
+        return [next = std::move(next), &registry](auto req, auto body, auto& hdr) mutable
         {
             const auto [method, target] = metrics_resolve_method_and_target(req, hdr);
 

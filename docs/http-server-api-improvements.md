@@ -37,14 +37,13 @@ Open:
 - Replace the tuple with a named aggregate (`status`, `content`, `headers` members, same
   order). Brace construction and structured bindings keep compiling; `std::get` and
   `std::tie` do not, so do this after the consumer migrations above.
-- Status is a `std::string` such as `"200 OK"`. A status type would catch typos at
-  compile time; it changes every handler, so it needs its own design.
+- Status is a `std::string`. The `http::status_*` constants cover common codes and
+  consumers use them; a dedicated status type is not planned.
 
 ## Request handlers
 
 `http::request` is available to normal handlers. Follow-ups:
 
-- SSE and WebSocket handlers and the takeover gate still receive `request_view` only.
 - The server still writes `x-http-method` into the request headers for old-style
   handlers, next to client-supplied headers. Remove it with the old interface.
 - Deprecate the old `(request_view, body_view, headers&)` handler shape,
@@ -55,13 +54,10 @@ Open:
 
 ## Middleware
 
-- Most built-in middlewares take the request headers by value (`auto hdr`); only
-  `correlation_id_middleware` takes them by reference. A header set by an inner
-  middleware may not reach outer middlewares or the server. Unverified: write a test
-  before deciding whether it is a bug.
 - There is no server-level `use(...)`; each route wraps its own chain with
-  `middleware::wrap`. A `use` needs a decision on whether it applies at registration
-  or at dispatch, and to which routes.
+  `middleware::wrap`. A catch-all route does not replace it: the first route that
+  matches and has the method answers, and routes do not chain. A `use` needs a
+  decision on whether it applies at registration or at dispatch, and to which routes.
 
 ## Naming
 
@@ -88,4 +84,10 @@ Open:
 - `text()` … `xml()` return `controller&`; server setters return `server&`.
 - `takeover_gate` / `gate_handler()` replace `sse_gate` / `sse_gate_fn()` (deprecated).
 - A route registered without a handler answers 404, not 200 `"Not Found"`.
+- `ws()`, `sse()` and `gate()` also take `const http::request&` handlers; old handlers
+  and `{}` keep working. `capture()` falls back to the path for these routes, which
+  match without the query. `websocket_handler()` and `sse_handler()` are deprecated.
+- Built-in middlewares take request headers by reference, so a header an inner
+  middleware sets (e.g. `x-correlation-id`) reaches outer middlewares and the caller.
+- Status constants for 301, 302, 303, 307, 308, 415, 501, 502 and 504.
 - `docs/release-policy.md`: response type contract and the deprecation rule.

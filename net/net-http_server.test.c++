@@ -3863,6 +3863,113 @@ auto register_server_tests()
         };
     };
 
+    tester::bdd::scenario("ws(), sse() and gate() take either handler shape, [net]") = [] {
+        tester::bdd::given("Controllers registered with old, new and empty handlers") = [] {
+            auto old_style = http::controller{};
+            old_style.gate([](auto target, auto&) -> std::optional<http::response_with_headers> {
+                     if(target == "/deny"sv)
+                         return http::make_error_response(http::status_forbidden, "denied"sv);
+                     return std::nullopt;
+                 })
+                .sse([](http::sse::session&, auto, auto&) {})
+                .ws([](auto message) { return net::websocket::text_reply{std::string{message}}; });
+
+            auto new_style = http::controller{};
+            new_style.gate([](const http::request& req, http::headers&) -> std::optional<http::response_with_headers> {
+                     if(req.peer == "10.0.0.9"sv)
+                         return http::make_error_response(http::status_forbidden, "denied"sv);
+                     return std::nullopt;
+                 })
+                .sse([](http::sse::session&, const http::request&, http::headers&) {})
+                .ws([](const http::request& req, std::string_view message) {
+                    return net::websocket::text_reply{std::format("{} {}", req.target, message)};
+                });
+
+            auto empty = http::controller{};
+            empty.gate({}).sse({}).ws({});
+
+            tester::bdd::then("Both shapes are stored and empty handlers stay empty") = [old_style, new_style, empty] {
+                auto hdr = http::headers{};
+                check_true(old_style.gate_handler()(http::request{.target = "/deny"sv}, hdr).has_value());
+                check_false(old_style.gate_handler()(http::request{.target = "/ok"sv}, hdr).has_value());
+                check_true(new_style.gate_handler()(http::request{.peer = "10.0.0.9"sv}, hdr).has_value());
+                check_true(old_style.has_sse() and old_style.has_websocket());
+                check_true(new_style.has_sse() and new_style.has_websocket());
+                check_false(empty.has_gate() or empty.has_sse() or empty.has_websocket());
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+                check_eq(old_style.websocket_handler()("hi"sv).value_or(""s), "hi"s);
+                check_eq(new_style.websocket_handler()("hi"sv).value_or(""s), " hi"s);
+                check_true(old_style.sse_gate_fn()("/deny"sv, hdr).has_value());
+                check_false(static_cast<bool>(empty.sse_handler()));
+#pragma clang diagnostic pop
+            };
+        };
+    };
+
+    tester::bdd::scenario("SSE handler and gate receive the request, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An SSE route with a capture group and a request gate") = [] {
+            auto server = std::make_shared<http::server>();
+            server->timeout(std::chrono::seconds{1});
+            server->sse(R"(/topics/(\w+))")
+                .gate([](const http::request& req, http::headers&) -> std::optional<http::response_with_headers> {
+                    if(req.capture(1) == "closed"sv)
+                        return http::make_error_response(http::status_forbidden, "closed"sv);
+                    return std::nullopt;
+                })
+                .sse([](http::sse::session& session, const http::request& req, http::headers&) {
+                    session.send_comment(std::format("{} {} {} {}", req.method, req.capture(1), req.query("since"sv).value_or("-"sv), req.peer));
+                });
+
+            tester::bdd::when("A client opens an allowed topic and a closed one") = [server] {
+                auto comment = std::make_shared<std::string>();
+                auto closed_status = std::make_shared<std::string>();
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    const auto open = [&port_s](std::string_view target) {
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream.read_timeout(2s);
+                        stream << "GET " << target << " HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
+                               << net::crlf << net::flush;
+                        return stream;
+                    };
+                    try
+                    {
+                        auto allowed = open("/topics/news?since=42");
+                        auto line = std::string{};
+                        for(auto i = 0; i < 40 and allowed and std::getline(allowed, line); ++i)
+                        {
+                            if(line.starts_with(": "))
+                            {
+                                *comment = line.substr(2);
+                                break;
+                            }
+                        }
+                        auto closed = open("/topics/closed");
+                        *closed_status = read_status(closed);
+                    }
+                    catch(...) {}
+                    server->stop();
+                }
+                if(server_thread.joinable())
+                    server_thread.join();
+
+                tester::bdd::then("The handler sees method, capture, query and peer; the gate rejects by capture") = [comment, closed_status] {
+                    check_eq(*comment, "GET news 42 127.0.0.1"s);
+                    check_eq(*closed_status, "403");
+                };
+            };
+        };
+    };
+
     return true;
 }
 
