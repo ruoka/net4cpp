@@ -282,12 +282,12 @@ inline auto default_rate_limit_key_extractor(std::string_view, const headers& hd
         auto last = std::string_view{};
         for(const auto entry : *forwarded | std::views::split(','))
             last = std::string_view{entry};
-        if(const auto client = ::http::detail::trim_ows(last); not client.empty())
+        if(const auto client = detail::trim_ows(last); not client.empty())
             return std::string{client};
     }
     if(const auto real_ip = hdr.try_get("x-real-ip"sv))
     {
-        if(const auto value = ::http::detail::trim_ows(*real_ip); not value.empty())
+        if(const auto value = detail::trim_ows(*real_ip); not value.empty())
             return std::string{value};
     }
     return "unknown"s; // Indicates missing client identification

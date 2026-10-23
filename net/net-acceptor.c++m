@@ -294,6 +294,8 @@ private:
             if(closed())
                 throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
 
+            // zip stops at fds, so the wake pipe appended to pfds is not visited
+            // here. The pfds.back() check above already handled it.
             for(const auto& [fd, pfd] : std::views::zip(fds, pfds))
             {
                 // A listener closed under us reports POLLNVAL, where select failed with EBADF.
