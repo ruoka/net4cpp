@@ -60,10 +60,12 @@ public:
     void write_timeout(std::chrono::milliseconds timeout) noexcept
     {
         m_write_timeout = timeout;
-        const auto ms = std::max<std::int64_t>(timeout.count(), 0);
+        using namespace std::chrono;
+        const auto clamped = std::max(timeout, milliseconds::zero());
+        const auto secs = duration_cast<seconds>(clamped);
         posix::timeval tv{
-            .tv_sec = static_cast<decltype(tv.tv_sec)>(ms / 1000),
-            .tv_usec = static_cast<decltype(tv.tv_usec)>((ms % 1000) * 1000)
+            .tv_sec = static_cast<decltype(tv.tv_sec)>(secs.count()),
+            .tv_usec = static_cast<decltype(tv.tv_usec)>(duration_cast<microseconds>(clamped - secs).count())
         };
         const int fd = m_socket;
         if(fd >= 0)

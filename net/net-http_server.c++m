@@ -197,26 +197,18 @@ inline response_with_headers make_response(
 // Host/Origin pattern match: exact, or `host:*` / `http://host:*` (port wildcard).
 inline bool match_allow_pattern(std::string_view value, std::string_view pattern)
 {
-    if(pattern.ends_with(":*"sv))
-    {
-        const auto prefix = pattern.substr(0, pattern.size() - 2);
-        if(value == prefix)
-            return true;
-        if(value.starts_with(prefix) and value.size() > prefix.size() and value[prefix.size()] == ':')
-            return true;
+    if(not pattern.ends_with(":*"sv))
+        return value == pattern;
+    const auto prefix = pattern.substr(0, pattern.size() - 2);
+    if(not value.starts_with(prefix))
         return false;
-    }
-    return value == pattern;
+    const auto port = value.substr(prefix.size());
+    return port.empty() or port.starts_with(':');
 }
 
 inline bool value_allowed(std::string_view value, std::span<const std::string> patterns)
 {
-    for(const auto& p : patterns)
-    {
-        if(match_allow_pattern(value, p))
-            return true;
-    }
-    return false;
+    return std::ranges::any_of(patterns, [value](std::string_view p) { return match_allow_pattern(value, p); });
 }
 
 class controller

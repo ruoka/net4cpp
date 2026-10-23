@@ -250,10 +250,9 @@ private:
             }
 
             // Listeners first, then the wake pipe (if any) as the last entry.
-            auto pfds = std::vector<posix::pollfd>{};
-            pfds.reserve(fds.size() + 1);
-            for(int fd : fds)
-                pfds.push_back({.fd = fd, .events = posix::pollin, .revents = 0});
+            auto pfds = fds
+                | std::views::transform([](int fd) { return posix::pollfd{.fd = fd, .events = posix::pollin, .revents = 0}; })
+                | std::ranges::to<std::vector>();
             if(wake_fd >= 0)
                 pfds.push_back({.fd = wake_fd, .events = posix::pollin, .revents = 0});
 
@@ -295,13 +294,13 @@ private:
             if(closed())
                 throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
 
-            for(auto i = 0uz; i < fds.size(); ++i)
+            for(const auto& [fd, pfd] : std::views::zip(fds, pfds))
             {
                 // A listener closed under us reports POLLNVAL, where select failed with EBADF.
-                if(pfds[i].revents & posix::pollnval)
+                if(pfd.revents & posix::pollnval)
                     throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
-                if(pfds[i].revents != 0)
-                    return fds[i];
+                if(pfd.revents != 0)
+                    return fd;
             }
             throw std::system_error{posix::get_errno(), std::system_category(), "accept failed"};
         }

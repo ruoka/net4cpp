@@ -23,14 +23,9 @@ template<std::size_t N>
     static_assert(N % 4 == 0);
     static_assert(sizeof(std::random_device::result_type) >= 4);
     auto device = std::random_device{};
-    auto bytes = std::array<std::uint8_t, N>{};
-    for(auto i = 0uz; i < N; i += 4)
-    {
-        const auto word = static_cast<std::uint32_t>(device());
-        for(auto k = 0uz; k < 4; ++k)
-            bytes[i + k] = static_cast<std::uint8_t>(word >> (8 * k));
-    }
-    return bytes;
+    auto words = std::array<std::uint32_t, N / 4>{};
+    std::ranges::generate(words, [&device] { return static_cast<std::uint32_t>(device()); });
+    return std::bit_cast<std::array<std::uint8_t, N>>(words);
 }
 
 // Generate a UUIDv4 string
