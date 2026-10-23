@@ -295,6 +295,58 @@ auto register_structured_log_stream_tests()
         };
     };
 
+    // Logged request data is attacker-controlled. A raw CR / LF forged a second
+    // entry, and ESC / NUL made invalid JSONL or reached a terminal.
+    tester::bdd::scenario("Control characters are escaped in both log formats, [net]") = [] {
+        const auto hostile = "a\r\n{\"level\":\"emergency\"}\x1b[31m\0\x7f\v"s;
+
+        tester::bdd::given("A JSONL stream") = [hostile] {
+            auto captured = std::make_shared<std::stringstream>();
+            slog.app_name("testapp")
+                .log_level(syslog::severity::debug)
+                .format(log_format::jsonl)
+                .redirect(*captured);
+
+            slog << net::info("HOSTILE") << hostile << std::pair{"body", hostile} << net::flush;
+            slog.redirect(std::clog);
+
+            tester::bdd::then("The entry is one line with every control escaped") = [captured] {
+                const auto output = captured->str();
+                check_eq(std::ranges::count(output, '\n'), std::ptrdiff_t{1});
+                check_true(output.ends_with('\n'));
+                check_true(std::ranges::none_of(output.substr(0, output.size() - 1), [](char c) {
+                    const auto byte = static_cast<unsigned char>(c);
+                    return byte < 0x20 or byte == 0x7F;
+                }));
+                check_contains(output, R"("message":"a\r\n{\"level\":\"emergency\"}\u001b[31m\u0000\u007f\u000b")");
+                check_contains(output, R"("body":"a\r\n{\"level\":\"emergency\"}\u001b[31m\u0000\u007f\u000b")");
+            };
+        };
+
+        tester::bdd::given("A syslog stream") = [hostile] {
+            auto captured = std::make_shared<std::stringstream>();
+            slog.app_name("testapp")
+                .log_level(syslog::severity::debug)
+                .format(log_format::syslog)
+                .sd_id("test@12345")
+                .redirect(*captured);
+
+            slog << net::info("HOSTILE") << hostile << std::pair{"body", hostile + "]\"\\"} << net::flush;
+            slog.redirect(std::clog);
+
+            tester::bdd::then("The entry is one line with controls and SD delimiters escaped") = [captured] {
+                const auto output = captured->str();
+                check_eq(std::ranges::count(output, '\n'), std::ptrdiff_t{1});
+                check_true(std::ranges::none_of(output.substr(0, output.size() - 1), [](char c) {
+                    const auto byte = static_cast<unsigned char>(c);
+                    return byte < 0x20 or byte == 0x7F;
+                }));
+                check_contains(output, R"(body="a\r\n{\"level\":\"emergency\"}\u001b[31m\u0000\u007f\u000b\]\"\\")");
+                check_true(output.ends_with("\xEF\xBB\xBF" R"(a\r\n{"level":"emergency"}\u001b[31m\u0000\u007f\u000b)" "\n"));
+            };
+        };
+    };
+
     tester::bdd::scenario("Log level filtering, [net]") = [] {
         tester::bdd::given("A syslog stream with info level") = [] {
             slog.app_name("tester")
