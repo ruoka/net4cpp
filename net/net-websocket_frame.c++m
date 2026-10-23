@@ -24,6 +24,7 @@ enum class opcode : std::uint8_t
 
 // RFC 6455 §7.4.1 close status codes (subset used by this library).
 inline constexpr std::uint16_t close_normal = 1000;
+inline constexpr std::uint16_t close_going_away = 1001;    // e.g. idle peer did not answer ping
 inline constexpr std::uint16_t close_protocol_error = 1002;
 inline constexpr std::uint16_t close_unsupported_data = 1003; // e.g. fragments / binary
 inline constexpr std::uint16_t close_invalid_payload = 1007;  // invalid UTF-8 text
@@ -190,6 +191,14 @@ inline frame make_close_frame(std::uint16_t status_code)
     f.payload.resize(2);
     f.payload[0] = static_cast<std::byte>((status_code >> 8) & 0xFFu);
     f.payload[1] = static_cast<std::byte>(status_code & 0xFFu);
+    return f;
+}
+
+inline frame make_ping_frame(std::span<const std::byte> payload = {})
+{
+    auto f = frame{};
+    f.op = opcode::ping;
+    f.payload.assign(payload.begin(), payload.end());
     return f;
 }
 

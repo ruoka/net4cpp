@@ -68,6 +68,28 @@ catch(const exception& e)
 }
 ```
 
+# HTTP Server Example
+
+`http::server` maps a request path to a response body. `get("/").text(...)` answers
+`GET /` with status `200` and `text/plain`, and `listen` accepts connections on that
+address.
+
+```cpp
+import net;
+import std;
+
+try
+{
+    auto server = http::server{};
+    server.get("/").text("Hello, World!");
+    server.listen("127.0.0.1", "8080");
+}
+catch(const exception& e)
+{
+    cerr << "Exception: " << e.what() << endl;
+}
+```
+
 # Http Request Example
 
 ```cpp
@@ -128,6 +150,86 @@ auto decoded = net::url_decode("ACC%2B%22%3Cx%3E");
 Use `html_escaped` for text nodes and attribute values. Use `url_encoded` for query
 parameter values in `href` and `action` URLs. The HTTP server does not escape
 response bodies automatically.
+
+# SSE Example
+
+Server-Sent Events take over a `GET` on `http::server`. `sse("/events").sse(...)`
+returns `text/event-stream`, and the handler writes one event through
+`http::sse::session`.
+
+```cpp
+import net;
+import std;
+
+try
+{
+    auto server = http::server{};
+    server.sse("/events").sse([](http::sse::session& session, auto, http::headers&) {
+        session.send_event("hello", "world", "1");
+    });
+    server.listen("127.0.0.1", "8080");
+}
+catch(const exception& e)
+{
+    cerr << "Exception: " << e.what() << endl;
+}
+```
+
+# MCP Example
+
+`http::mcp::server` serves MCP over SSE on an `http::server`. `list_tools` and
+`call_tool` supply the tools, and `attach` registers `GET /sse` and `POST /messages/`
+for the lifetime of `listen`.
+
+```cpp
+import net;
+import std;
+
+try
+{
+    auto http = http::server{};
+    auto mcp = http::mcp::server{"/messages/"};
+    mcp.info({.name = "demo", .version = "1.0.0"})
+        .list_tools([] {
+            return std::vector<http::mcp::tool_spec>{
+                {.name = "health", .description = "liveness"},
+            };
+        })
+        .call_tool([](std::string_view, std::string_view) {
+            return http::mcp::tool_result{.text = "ok"};
+        })
+        .attach(http, "/sse");
+    http.listen("127.0.0.1", "8080");
+}
+catch(const exception& e)
+{
+    cerr << "Exception: " << e.what() << endl;
+}
+```
+
+# WebSocket Example
+
+`ws(path).ws(handler)` upgrades a matching `GET` inside `http::server`. The handler
+receives a text frame and returns `net::websocket::text_reply` to echo it; clients
+open the same path with `net::websocket::connect`.
+
+```cpp
+import net;
+import std;
+
+try
+{
+    auto server = http::server{};
+    server.ws("/echo").ws([](std::string_view msg) {
+        return net::websocket::text_reply{std::string{msg}};
+    });
+    server.listen("127.0.0.1", "8080");
+}
+catch(const exception& e)
+{
+    cerr << "Exception: " << e.what() << endl;
+}
+```
 
 # Server-Sent Events (v1)
 

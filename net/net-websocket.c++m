@@ -279,82 +279,135 @@ inline void close_session(std::iostream& stream, std::uint16_t code)
     write_frame(stream, make_close_frame(code));
 }
 
+namespace detail {
+
+// Read and answer one client frame. False ends the session.
+inline bool serve_text_frame(std::iostream& stream, const text_handler& on_text)
+{
+    auto incoming = frame{};
+    switch(read_frame(stream, incoming))
+    {
+    case frame_read::ok:
+        break;
+    case frame_read::io_error:
+        return false;
+    case frame_read::message_too_big:
+        close_session(stream, close_message_too_big);
+        return false;
+    case frame_read::protocol_error:
+        close_session(stream, close_protocol_error);
+        return false;
+    }
+
+    // RFC 6455 §5.1: every client-to-server frame MUST be masked.
+    if(not incoming.masked)
+    {
+        close_session(stream, close_protocol_error);
+        return false;
+    }
+
+    switch(incoming.op)
+    {
+    case opcode::ping:
+        return write_frame(stream, make_pong_frame(incoming.payload));
+
+    case opcode::pong:
+        return true;
+
+    case opcode::close:
+        write_frame(stream, make_close_frame(incoming.payload));
+        return false;
+
+    case opcode::text:
+    {
+        // No reassembly: FIN=0 is unsupported (close 1003), not silently dropped.
+        if(not incoming.fin)
+        {
+            close_session(stream, close_unsupported_data);
+            return false;
+        }
+        if(not is_valid_utf8(std::span<const std::byte>{incoming.payload}))
+        {
+            close_session(stream, close_invalid_payload);
+            return false;
+        }
+        if(not on_text)
+            return true;
+        const auto text = payload_as_string(incoming);
+        if(auto reply = on_text(text))
+            return write_frame(stream, make_text_frame(*reply));
+        return true;
+    }
+
+    case opcode::binary:
+    case opcode::continuation:
+        close_session(stream, close_unsupported_data);
+        return false;
+
+    default:
+        close_session(stream, close_protocol_error);
+        return false;
+    }
+}
+
+} // namespace detail
+
 // Drive a WebSocket session until close/error. Server frames are unmasked.
 // v1 policy: complete text frames only (no fragmentation / binary); invalid
 // UTF-8 → 1007; structural frame errors → 1002 / 1009.
 inline void run_text_session(std::iostream& stream, const text_handler& on_text)
 {
+    while(stream and detail::serve_text_frame(stream, on_text))
+    {
+    }
+}
+
+inline constexpr auto default_ping_interval = std::chrono::milliseconds{30'000};
+inline constexpr auto default_frame_timeout = std::chrono::milliseconds{30'000};
+
+// Liveness limits for a socket-backed server session. Without them a peer that
+// completes the upgrade and then goes quiet holds its handler thread forever.
+// A peer silent for ping_interval gets a ping; silence for another interval
+// closes with 1001. frame_timeout caps a frame from its first byte to its last,
+// so a peer cannot dribble a 1 MiB frame inside the idle gap. Zero disables either.
+struct session_limits
+{
+    std::chrono::milliseconds ping_interval = default_ping_interval;
+    std::chrono::milliseconds frame_timeout = default_frame_timeout;
+};
+
+// Same frame policy as the iostream overload, plus session_limits.
+inline void run_text_session(net::endpointstream& stream, const text_handler& on_text, session_limits limits = {})
+{
+    stream.read_timeout(limits.ping_interval);
+    stream.read_deadline(std::nullopt);
+    auto awaiting_pong = false;
     while(stream)
     {
-        auto incoming = frame{};
-        switch(read_frame(stream, incoming))
+        if(stream.peek() == std::char_traits<char>::eof())
         {
-        case frame_read::ok:
-            break;
-        case frame_read::io_error:
-            return;
-        case frame_read::message_too_big:
-            close_session(stream, close_message_too_big);
-            return;
-        case frame_read::protocol_error:
-            close_session(stream, close_protocol_error);
-            return;
-        }
-
-        // RFC 6455 §5.1: every client-to-server frame MUST be masked.
-        if(not incoming.masked)
-        {
-            close_session(stream, close_protocol_error);
-            return;
-        }
-
-        switch(incoming.op)
-        {
-        case opcode::ping:
-            if(not write_frame(stream, make_pong_frame(incoming.payload)))
+            if(not stream.read_timed_out() or stream.shut_down())
                 return;
-            break;
-
-        case opcode::pong:
-            break;
-
-        case opcode::close:
-            write_frame(stream, make_close_frame(incoming.payload));
-            return;
-
-        case opcode::text:
-        {
-            // No reassembly: FIN=0 is unsupported (close 1003), not silently dropped.
-            if(not incoming.fin)
+            stream.clear();
+            if(awaiting_pong)
             {
-                close_session(stream, close_unsupported_data);
+                close_session(stream, close_going_away);
                 return;
             }
-            if(not is_valid_utf8(std::span<const std::byte>{incoming.payload}))
-            {
-                close_session(stream, close_invalid_payload);
+            if(not write_frame(stream, make_ping_frame()))
                 return;
-            }
-            if(not on_text)
-                break;
-            const auto text = payload_as_string(incoming);
-            if(auto reply = on_text(text))
-            {
-                if(not write_frame(stream, make_text_frame(*reply)))
-                    return;
-            }
-            break;
+            awaiting_pong = true;
+            continue;
         }
 
-        case opcode::binary:
-        case opcode::continuation:
-            close_session(stream, close_unsupported_data);
+        // Any frame is proof of life, not only the pong.
+        awaiting_pong = false;
+        if(limits.frame_timeout.count() > 0)
+            stream.read_deadline(std::chrono::steady_clock::now() + limits.frame_timeout);
+        const auto keep_going = detail::serve_text_frame(stream, on_text);
+        stream.read_deadline(std::nullopt);
+        if(not keep_going)
             return;
-
-        default:
-            close_session(stream, close_protocol_error);
-            return;
-        }
     }
 }
 

@@ -40,6 +40,47 @@ public:
         return m_read_timed_out.load(std::memory_order_acquire);
     }
 
+    // Absolute cap on reads, on top of read_timeout(). The idle gap alone lets a
+    // client that sends one byte per gap hold the connection for days. Expiry
+    // sets read_timed_out() like the idle timeout. nullopt (the default) removes it.
+    void read_deadline(std::optional<std::chrono::steady_clock::time_point> deadline) noexcept
+    {
+        m_read_deadline = deadline;
+    }
+
+    [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> read_deadline() const noexcept
+    {
+        return m_read_deadline;
+    }
+
+    // Longest wait for the peer to accept more bytes. Zero (the default) blocks
+    // in send as before. A positive value fails the write after that long with no
+    // progress, so a client that stops reading cannot pin the sending thread.
+    // Enforced with SO_SNDTIMEO: macOS ignores MSG_DONTWAIT on AF_UNIX sockets.
+    void write_timeout(std::chrono::milliseconds timeout) noexcept
+    {
+        m_write_timeout = timeout;
+        const auto ms = std::max<std::int64_t>(timeout.count(), 0);
+        posix::timeval tv{
+            .tv_sec = static_cast<decltype(tv.tv_sec)>(ms / 1000),
+            .tv_usec = static_cast<decltype(tv.tv_usec)>((ms % 1000) * 1000)
+        };
+        const int fd = m_socket;
+        if(fd >= 0)
+            posix::setsockopt(fd, posix::sol_socket, posix::so_sndtimeo, &tv, sizeof tv);
+    }
+
+    [[nodiscard]] std::chrono::milliseconds write_timeout() const noexcept
+    {
+        return m_write_timeout;
+    }
+
+    // True after a write failed because write_timeout() elapsed.
+    [[nodiscard]] bool write_timed_out() const noexcept
+    {
+        return m_write_timed_out.load(std::memory_order_acquire);
+    }
+
     // Wake blocking I/O on this buffer's socket (see socket::shutdown).
     // Also latches shut_down() so observers (e.g. SSE/MCP session::closed)
     // notice stop() without waiting for a write to set iostream failbit.
@@ -59,10 +100,10 @@ protected:
     // from the deadline on every attempt: Linux select writes the remaining
     // time back into the timeval, macOS leaves it unchanged. Recomputing makes
     // the wait the same on both. EINTR retries against that same deadline.
-    // timeout <= 0 skips select so recv blocks, preserving the old behaviour.
+    // No timeout and no deadline skips select so recv blocks, preserving the old behaviour.
     bool wait_readable()
     {
-        if(m_read_timeout.count() <= 0)
+        if(not read_limited())
             return true;
 
         const int fd = m_socket;
@@ -70,7 +111,9 @@ protected:
             return false;
 
         using clock = std::chrono::steady_clock;
-        const auto deadline = clock::now() + m_read_timeout;
+        auto deadline = m_read_deadline.value_or(clock::time_point::max());
+        if(m_read_timeout.count() > 0)
+            deadline = std::min(deadline, clock::now() + m_read_timeout);
         for(;;)
         {
             const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -108,10 +151,23 @@ protected:
         m_read_timed_out.store(false, std::memory_order_release);
     }
 
+    [[nodiscard]] bool read_limited() const noexcept
+    {
+        return m_read_timeout.count() > 0 or m_read_deadline.has_value();
+    }
+
+    void set_write_timed_out() noexcept
+    {
+        m_write_timed_out.store(true, std::memory_order_release);
+    }
+
     socket m_socket;
     std::chrono::milliseconds m_read_timeout{0};
+    std::optional<std::chrono::steady_clock::time_point> m_read_deadline;
+    std::chrono::milliseconds m_write_timeout{0};
     std::atomic<bool> m_shut_down{false};
     std::atomic<bool> m_read_timed_out{false};
+    std::atomic<bool> m_write_timed_out{false};
 };
 
 constexpr std::size_t tcp_buffer_size = 4096;
@@ -179,7 +235,7 @@ protected:
                     // A configured idle timeout already ran in wait_readable.
                     // The 60s wait remains for a non-blocking socket with no
                     // idle timeout (recv returns EAGAIN immediately).
-                    if (read_timeout().count() > 0)
+                    if (read_limited())
                         continue;
                     // wait_for selects for readability (wait() is for writable).
                     if (not m_socket.wait_for(std::chrono::milliseconds{60'000}))
@@ -249,7 +305,7 @@ protected:
             // Idle timeout is already enforced by wait_readable. EAGAIN here is
             // a spurious wakeup; wait again. With no timeout, EAGAIN stays EOF
             // so a non-blocking socket does not loop forever in get().
-            if ((err == posix::ewouldblock or err == posix::eagain) and read_timeout().count() > 0)
+            if ((err == posix::ewouldblock or err == posix::eagain) and read_limited())
                 continue;
             return traits_type::eof();
         }
@@ -283,7 +339,9 @@ private:
             and type == posix::sock_stream;
     }
 
-    bool send_all(const char* data, std::size_t len) const {
+    // With a write timeout, SO_SNDTIMEO makes a stalled send() return EAGAIN.
+    bool send_all(const char* data, std::size_t len) {
+        const auto limited = write_timeout().count() > 0;
         std::size_t sent = 0;
         while (sent < len) {
             auto res = posix::send(m_socket, data + sent, len - sent, posix::msg_nosignal);
@@ -291,7 +349,11 @@ private:
                 auto err = posix::get_errno();
                 if (err == posix::eintr) continue;
                 if (err == posix::ewouldblock or err == posix::eagain) {
-                    if (not const_cast<socket&>(m_socket).wait()) return false;
+                    if (limited) {
+                        set_write_timed_out();
+                        return false;
+                    }
+                    if (not m_socket.wait()) return false;
                     continue;
                 }
                 return false;

@@ -3164,6 +3164,202 @@ auto register_server_tests()
         };
     };
 
+    tester::bdd::scenario("slot-exhaustion limits have safe defaults, [net]") = [] {
+        tester::bdd::given("A new HTTP server") = [] {
+            auto server = std::make_shared<http::server>();
+
+            tester::bdd::then("Request, write, streaming, and WebSocket limits are on; per-client is off") = [server] {
+                check_eq(server->request_timeout(), http::default_request_timeout);
+                check_eq(server->request_timeout().count(), 60'000);
+                check_eq(server->write_timeout(), http::default_write_timeout);
+                check_eq(server->write_timeout().count(), 30'000);
+                check_eq(server->max_streaming_connections(), std::size_t{64});
+                check_eq(server->max_connections_per_client(), std::size_t{0});
+                check_eq(server->websocket_limits().ping_interval, net::websocket::default_ping_interval);
+                check_eq(server->websocket_limits().frame_timeout, net::websocket::default_frame_timeout);
+            };
+        };
+    };
+
+    // First response status code, or empty when nothing arrived.
+    static constexpr auto read_status = [](net::endpointstream& stream) {
+        auto line = std::string{};
+        if(not stream or not std::getline(stream, line))
+            return std::string{};
+        if(not line.empty() and line.back() == '\r')
+            line.pop_back();
+        const auto space1 = line.find(' ');
+        if(space1 == std::string::npos)
+            return std::string{};
+        const auto space2 = line.find(' ', space1 + 1);
+        return space2 == std::string::npos
+            ? line.substr(space1 + 1)
+            : line.substr(space1 + 1, space2 - space1 - 1);
+    };
+
+    tester::bdd::scenario("request head trickled inside the idle gap times out with 408, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("A 500ms idle gap and a 300ms request timeout") = [] {
+            auto server = std::make_shared<http::server>();
+            server->get("/").text("OK");
+            server->read_timeout(std::chrono::milliseconds{500});
+            server->request_timeout(std::chrono::milliseconds{300});
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A client sends one header byte every 100ms") = [server] {
+                auto response_status = std::make_shared<std::string>();
+                auto elapsed_ms = std::make_shared<long long>(0);
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    try
+                    {
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream << "GET / HTTP/1.1" << net::crlf << net::flush;
+                        const auto start = std::chrono::steady_clock::now();
+                        const auto padding = "X-Pad: "s + std::string(64, 'a');
+                        for(const auto c : padding)
+                        {
+                            stream.put(c);
+                            stream.flush();
+                            if(stream.wait_for(100ms))
+                                break;
+                        }
+                        stream.read_timeout(2s);
+                        *response_status = read_status(stream);
+                        *elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - start).count();
+                    }
+                    catch(...) {}
+                    server->stop();
+                }
+                if(server_thread.joinable())
+                    server_thread.join();
+
+                tester::bdd::then("The server answers 408 at the request deadline, not the idle gap") = [response_status, elapsed_ms] {
+                    check_eq(*response_status, "408");
+                    check_true(*elapsed_ms >= 200);
+                    check_true(*elapsed_ms < 1500);
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("per-client connection cap answers 503, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("A server that allows one connection per client") = [] {
+            auto server = std::make_shared<http::server>();
+            server->get("/").text("OK");
+            server->max_connections_per_client(1);
+            server->read_timeout(std::chrono::seconds{5});
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A second connection arrives from the same address") = [server] {
+                auto second_status = std::make_shared<std::string>();
+                auto after_release_status = std::make_shared<std::string>();
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    try
+                    {
+                        {
+                            auto idle = connect("127.0.0.1", port_s);
+                            std::this_thread::sleep_for(200ms);
+
+                            auto second = connect("127.0.0.1", port_s);
+                            second.read_timeout(2s);
+                            *second_status = read_status(second);
+                        }
+                        std::this_thread::sleep_for(200ms);
+
+                        auto third = connect("127.0.0.1", port_s);
+                        third.read_timeout(2s);
+                        third << "GET / HTTP/1.1" << net::crlf
+                              << "Host: 127.0.0.1:" << port_s << net::crlf
+                              << "Connection: close" << net::crlf
+                              << net::crlf << net::flush;
+                        *after_release_status = read_status(third);
+                    }
+                    catch(...) {}
+                    server->stop();
+                }
+                if(server_thread.joinable())
+                    server_thread.join();
+
+                tester::bdd::then("The second is refused and the slot frees when the first closes") = [second_status, after_release_status] {
+                    check_eq(*second_status, "503");
+                    check_eq(*after_release_status, "200");
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("streaming connection cap refuses SSE past the limit with 503, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("A server that allows one streaming connection") = [] {
+            auto server = std::make_shared<http::server>();
+            server->max_streaming_connections(1);
+            server->timeout(std::chrono::seconds{1});
+            server->sse("/events").sse([](http::sse::session& session, std::string_view, http::headers&) {
+                while(not session.closed() and session.send_comment())
+                    std::this_thread::sleep_for(std::chrono::milliseconds{50});
+            });
+            server->get("/").text("OK");
+
+            tester::bdd::when("A second client opens the stream while the first is live") = [server] {
+                auto first_status = std::make_shared<std::string>();
+                auto second_status = std::make_shared<std::string>();
+                auto plain_status = std::make_shared<std::string>();
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    const auto open = [&port_s](std::string_view path) {
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream.read_timeout(2s);
+                        stream << "GET " << path << " HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
+                               << net::crlf << net::flush;
+                        return stream;
+                    };
+                    try
+                    {
+                        auto first = open("/events");
+                        *first_status = read_status(first);
+                        auto second = open("/events");
+                        *second_status = read_status(second);
+                        auto plain = open("/");
+                        *plain_status = read_status(plain);
+                    }
+                    catch(...) {}
+                    server->stop();
+                }
+                if(server_thread.joinable())
+                    server_thread.join();
+
+                tester::bdd::then("The first streams, the second gets 503, ordinary requests still work") = [first_status, second_status, plain_status] {
+                    check_eq(*first_status, "200");
+                    check_eq(*second_status, "503");
+                    check_eq(*plain_status, "200");
+                };
+            };
+        };
+    };
+
     return true;
 }
 

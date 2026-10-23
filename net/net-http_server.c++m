@@ -70,10 +70,29 @@ inline constexpr auto default_max_request_body_size = std::size_t{1024 * 1024};
 // when they take over the socket.
 inline constexpr auto default_read_timeout = std::chrono::milliseconds{30'000};
 
+// Whole request, from the first head byte through the last body byte. The idle
+// gap alone lets one byte per 29s hold a slot for days. Zero disables it.
+inline constexpr auto default_request_timeout = std::chrono::milliseconds{60'000};
+
+// Longest wait for the client to accept response bytes. A client that stops
+// reading otherwise blocks send() forever. Kept for WebSocket and SSE, where a
+// stalled reader is the same problem. Zero blocks.
+inline constexpr auto default_write_timeout = std::chrono::milliseconds{30'000};
+
 // Handler threads for accepted connections. Each one is its own thread, so an
 // open cap lets a Slowloris against the origin port spawn without bound.
 // Zero means no cap.
 inline constexpr auto default_max_connections = std::size_t{128};
+
+// WebSocket and SSE connections hold their slot for as long as the peer stays,
+// so without a separate cap they can take every slot from ordinary requests.
+// Half of default_max_connections. Zero means no cap.
+inline constexpr auto default_max_streaming_connections = std::size_t{64};
+
+// Connections per peer address. Off by default: behind a reverse proxy every
+// connection shares the proxy's address. Set it when the port is reachable
+// directly, or one host can still take every slot. Zero means no cap.
+inline constexpr auto default_max_connections_per_client = std::size_t{0};
 
 // Fixed product token. gethostname() leaked the machine name to every scanner.
 inline constexpr auto server_token = "net"sv;
@@ -489,9 +508,30 @@ public:
                         }
                         continue;
                     }
+                    auto peer = std::get<1>(client);
+                    if(not reserve_client(peer))
+                    {
+                        handler_finished();
+                        try
+                        {
+                            auto& stream = std::get<0>(client);
+                            net::slog << net::warning("HTTP_CLIENT_CONNECTION_LIMIT") << "per-client connection cap reached from " << peer
+                                      << std::pair{"ip"sv, peer}
+                                      << std::pair{"port", std::get<2>(client)}
+                                      << std::pair{"max_connections_per_client", static_cast<long long>(m_max_connections_per_client)}
+                                      << std::pair{"status", status_service_unavailable}
+                                      << net::flush;
+                            write_service_unavailable(stream);
+                        }
+                        catch(const std::exception& e)
+                        {
+                            net::slog << net::warning("HTTP_CLIENT_CONNECTION_LIMIT") << "failed to write per-client cap response: " << e.what() << net::flush;
+                        }
+                        continue;
+                    }
                     try
                     {
-                        std::thread{[client_data = std::move(client), this]() mutable
+                        std::thread{[client_data = std::move(client), peer, this]() mutable
                         {
                             // Register the stream so stop() can endpointstream::shutdown()
                             // and wake blocking keep-alive reads without touching fds.
@@ -502,17 +542,20 @@ public:
                             {
                                 server* self;
                                 net::endpointstream* stream;
+                                const std::string& peer;
                                 ~complete()
                                 {
                                     self->unregister_client_stream(*stream);
+                                    self->release_client(peer);
                                     self->handler_finished();
                                 }
-                            } done{this, &stream};
+                            } done{this, &stream, peer};
                             handle(client_data);
                         }}.detach();
                     }
                     catch(...)
                     {
+                        release_client(peer);
                         handler_finished();
                         throw;
                     }
@@ -622,6 +665,41 @@ public:
         m_read_timeout = t;
     }
 
+    // Deadline for one whole request head plus body, started by its first byte.
+    // Expiry is 408, the same as an idle read timeout.
+    std::chrono::milliseconds request_timeout() const
+    {
+        return m_request_timeout;
+    }
+
+    void request_timeout(std::chrono::milliseconds t)
+    {
+        m_request_timeout = t;
+    }
+
+    // Longest stall writing to a client before the connection is dropped.
+    // Applies to normal responses, WebSocket, and SSE.
+    std::chrono::milliseconds write_timeout() const
+    {
+        return m_write_timeout;
+    }
+
+    void write_timeout(std::chrono::milliseconds t)
+    {
+        m_write_timeout = t;
+    }
+
+    // Ping / frame limits for WebSocket sessions taken over from this server.
+    const net::websocket::session_limits& websocket_limits() const
+    {
+        return m_websocket_limits;
+    }
+
+    void websocket_limits(net::websocket::session_limits limits)
+    {
+        m_websocket_limits = limits;
+    }
+
     // Cap Content-Length before allocating/reading the body. Middleware that
     // inspects body.size() cannot prevent the allocation — the check below
     // runs first. Default is default_max_request_body_size (1 MiB).
@@ -669,6 +747,30 @@ public:
     void max_connections(std::size_t n)
     {
         m_max_connections = n;
+    }
+
+    // In-flight WebSocket + SSE connections, counted inside max_connections.
+    // Over the cap the upgrade or stream is refused with 503. Zero disables it.
+    std::size_t max_streaming_connections() const
+    {
+        return m_max_streaming_connections;
+    }
+
+    void max_streaming_connections(std::size_t n)
+    {
+        m_max_streaming_connections = n;
+    }
+
+    // In-flight connections from one peer address. Default is
+    // default_max_connections_per_client (off). Set this before listen().
+    std::size_t max_connections_per_client() const
+    {
+        return m_max_connections_per_client;
+    }
+
+    void max_connections_per_client(std::size_t n)
+    {
+        m_max_connections_per_client = n;
     }
 
     // Signal the listen loop to exit and close listen sockets so accept wait
@@ -728,6 +830,63 @@ private:
                 return true;
         }
         return false;
+    }
+
+    // Same shape as reserve_connection, for WebSocket and SSE takeovers.
+    bool reserve_stream()
+    {
+        if(m_max_streaming_connections == 0)
+        {
+            m_active_streams.fetch_add(1, std::memory_order_acq_rel);
+            return true;
+        }
+
+        auto current = m_active_streams.load(std::memory_order_acquire);
+        while(current < m_max_streaming_connections)
+        {
+            if(m_active_streams.compare_exchange_weak(
+                   current,
+                   current + 1,
+                   std::memory_order_acq_rel,
+                   std::memory_order_acquire))
+                return true;
+        }
+        return false;
+    }
+
+    void stream_finished()
+    {
+        m_active_streams.fetch_sub(1, std::memory_order_acq_rel);
+    }
+
+    struct stream_slot
+    {
+        server* self;
+        ~stream_slot()
+        {
+            self->stream_finished();
+        }
+    };
+
+    bool reserve_client(const std::string& peer)
+    {
+        if(m_max_connections_per_client == 0)
+            return true;
+        std::lock_guard lock{m_client_counts_mutex};
+        auto& count = m_client_counts[peer];
+        if(count >= m_max_connections_per_client)
+            return false;
+        ++count;
+        return true;
+    }
+
+    // Looks the peer up even when the cap is off, so changing the cap while
+    // connections are open cannot leave a stale count behind.
+    void release_client(const std::string& peer)
+    {
+        std::lock_guard lock{m_client_counts_mutex};
+        if(auto it = m_client_counts.find(peer); it != m_client_counts.end() and --it->second == 0)
+            m_client_counts.erase(it);
     }
 
     void handler_finished()
@@ -790,7 +949,14 @@ private:
     // left a complete LF-only head waiting forever in blocking get() — one stuck
     // detached handler thread per such client.
     // Note: "\r\n\r\n" does not end with "\n\n", so both checks are required.
-    static std::string read_request_head(std::istream& stream, std::size_t max_bytes)
+    //
+    // The wait for the first byte is a keep-alive idle wait and only read_timeout
+    // applies. That byte starts request_timeout, which handle() clears once the
+    // body is in.
+    static std::string read_request_head(
+        net::endpointstream& stream,
+        std::size_t max_bytes,
+        std::chrono::milliseconds request_timeout)
     {
         auto head = ""s;
         head.reserve(std::min(max_bytes, std::size_t{256}));
@@ -807,6 +973,8 @@ private:
             if(not stream.good())
                 return head;
 
+            if(head.empty() and request_timeout.count() > 0)
+                stream.read_deadline(std::chrono::steady_clock::now() + request_timeout);
             head.push_back(static_cast<char>(ch));
         }
     }
@@ -971,6 +1139,7 @@ private:
         // Idle gap between request bytes. Accept uses server::timeout instead.
         // Cleared again when a WebSocket or SSE handler takes the socket.
         stream.read_timeout(m_read_timeout);
+        stream.write_timeout(m_write_timeout);
 
         try
         {
@@ -982,7 +1151,8 @@ private:
                 std::string head;
                 try
                 {
-                    head = read_request_head(stream, m_max_request_head_size);
+                    stream.read_deadline(std::nullopt);
+                    head = read_request_head(stream, m_max_request_head_size, m_request_timeout);
                 }
                 catch(const std::runtime_error& e)
                 {
@@ -1316,6 +1486,21 @@ private:
                         }
                     }
 
+                    if(not reserve_stream())
+                    {
+                        net::slog << net::warning("HTTP_STREAM_LIMIT") << "streaming connection cap reached, websocket refused"
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"uri", std::string{uri}}
+                                  << std::pair{"max_streaming_connections", static_cast<long long>(m_max_streaming_connections)}
+                                  << std::pair{"status", status_service_unavailable}
+                                  << std::pair{"request_id", request_id}
+                                  << net::flush;
+                        write_service_unavailable(stream);
+                        break;
+                    }
+                    const auto ws_slot = stream_slot{this};
+
                     const auto accept = net::websocket::sec_websocket_accept(hs["sec-websocket-key"]);
                     net::slog << net::notice("HTTP_WEBSOCKET_UPGRADE") << "upgrading connection"
                               << std::pair{"ip"sv, endpoint}
@@ -1341,9 +1526,9 @@ private:
 
                     // Copy handler before session (flat_map proxies are not stable refs).
                     const auto ws_handler = m_router.at(*matched_path).at(method_ws).websocket_handler();
-                    // The HTTP idle timeout must not drop a quiet WebSocket.
-                    stream.read_timeout(std::chrono::milliseconds{0});
-                    net::websocket::run_text_session(stream, ws_handler);
+                    // The session replaces the HTTP idle timeout with ping keep-alive,
+                    // so a quiet but live peer stays and a vanished one is dropped.
+                    net::websocket::run_text_session(stream, ws_handler, m_websocket_limits);
                     break;
                 }
 
@@ -1399,6 +1584,21 @@ private:
                             }
                         }
 
+                        if(not reserve_stream())
+                        {
+                            net::slog << net::warning("HTTP_STREAM_LIMIT") << "streaming connection cap reached, SSE refused"
+                                      << std::pair{"ip"sv, endpoint}
+                                      << std::pair{"port", port}
+                                      << std::pair{"uri", std::string{uri}}
+                                      << std::pair{"max_streaming_connections", static_cast<long long>(m_max_streaming_connections)}
+                                      << std::pair{"status", status_service_unavailable}
+                                      << std::pair{"request_id", request_id}
+                                      << net::flush;
+                            write_service_unavailable(stream);
+                            break;
+                        }
+                        const auto sse_slot = stream_slot{this};
+
                         const auto sse_open = system_clock::now();
                         net::slog << net::notice("HTTP_SSE_OPEN") << "opening SSE stream"
                                   << std::pair{"ip"sv, endpoint}
@@ -1444,7 +1644,9 @@ private:
 
                         const auto sse_handler = sse_ctrl.sse_handler();
                         // The HTTP idle timeout must not drop a quiet event stream.
+                        // write_timeout stays, so a client that stops reading is dropped.
                         stream.read_timeout(std::chrono::milliseconds{0});
+                        stream.read_deadline(std::nullopt);
                         auto session = ::http::sse::session{stream};
                         try
                         {
@@ -1694,6 +1896,8 @@ private:
                            << net::crlf << net::flush;
                     break;
                 }
+
+                stream.read_deadline(std::nullopt);
 
                 net::slog << net::debug("HTTP_REQUEST_BODY") << "request body \"" << body << "\""
                           << std::pair{"ip"sv, endpoint}
@@ -2096,12 +2300,20 @@ private:
     std::flat_set<method_type> m_methods = {method_head, method_options};
     std::chrono::seconds m_timeout = std::chrono::seconds{0};
     std::chrono::milliseconds m_read_timeout = default_read_timeout;
+    std::chrono::milliseconds m_request_timeout = default_request_timeout;
+    std::chrono::milliseconds m_write_timeout = default_write_timeout;
+    net::websocket::session_limits m_websocket_limits{};
     std::size_t m_max_request_body_size = default_max_request_body_size;
     std::size_t m_max_request_head_size = default_max_request_head_size;
     bool m_frame_options = true;
     std::size_t m_max_connections = default_max_connections;
+    std::size_t m_max_streaming_connections = default_max_streaming_connections;
+    std::size_t m_max_connections_per_client = default_max_connections_per_client;
     std::atomic<bool> m_stop{false};
     std::atomic<std::size_t> m_active_handlers{0};
+    std::atomic<std::size_t> m_active_streams{0};
+    std::mutex m_client_counts_mutex;
+    std::flat_map<std::string, std::size_t> m_client_counts;
     std::mutex m_handlers_mutex;
     std::condition_variable m_handlers_cv;
     std::mutex m_clients_mutex;
