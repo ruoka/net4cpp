@@ -104,6 +104,11 @@ inline constexpr auto error_content_type = "text/plain; charset=utf-8"sv;
 using status = std::string;
 using content = std::string;
 using content_type = std::string;
+// Handler return type. Exported so handlers and middlewares can name it, but its
+// representation is not part of the API: create one with make_response() or
+// make_error_response(), and read one only through a structured binding
+// `auto [status, content, headers] = ...`. Brace construction, std::get and
+// std::tie are unsupported and may stop compiling in a minor release.
 using response_with_headers = std::tuple<status, content, std::optional<headers>>;
 // Legacy alias for backwards compatibility - now just an alias to response_with_headers
 using response = response_with_headers;

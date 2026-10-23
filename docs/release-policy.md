@@ -30,6 +30,15 @@ parent tree’s tester pin — see
 Private implementation details, spike/experimental notes in the README, and nested tester
 docs are out of scope for net’s SemVer contract.
 
+Some exported types are visible only so code can name them. Their documented use is
+the contract, not their representation:
+
+- `http::response_with_headers` (and its alias `http::response`): create with
+  `http::make_response` / `http::make_error_response`; read with a structured binding
+  `auto [status, content, headers] = ...`. That it is a `std::tuple`, brace
+  construction, `std::get` and `std::tie` are not covered and may change in a minor
+  release.
+
 ## Versioning
 
 Semantic versioning (`vMAJOR.MINOR.PATCH`) on the public surface above.
@@ -39,6 +48,9 @@ Semantic versioning (`vMAJOR.MINOR.PATCH`) on the public surface above.
 | MAJOR | Incompatible change to the exported module API, or raising the minimum toolchain |
 | MINOR | Additive, backward-compatible public change |
 | PATCH | Fix that leaves documented behaviour intact |
+
+**Deprecation.** A public name is marked `[[deprecated("use …")]]` in a minor release,
+stays for at least one further minor release, and is removed only in a major release.
 
 **Modules-era major.** `v3.0.0` is the modules consume-surface line relative to `v1`/`v2`.
 
