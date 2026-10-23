@@ -100,8 +100,8 @@ public:
         }
         if(m_sockets.empty()) throw std::system_error{posix::get_errno(), std::system_category(), "socket could not be bound"};
 
-        // Self-pipe so close() can wake a blocked select(). Closing listen
-        // fds from another thread does not reliably wake select on Linux
+        // Self-pipe so close() can wake a blocked poll(). Closing listen
+        // fds from another thread does not reliably wake poll on Linux
         // (behavior is unspecified; measured hang until timeout).
         int wake[2]{-1, -1};
         if(posix::pipe(wake) != 0)
@@ -117,7 +117,7 @@ public:
     {
         // Transient accept() failures must not abort the listen loop. Linux can
         // return ECONNABORTED when a client RSTs while still in the backlog, and
-        // EAGAIN after a select false-wake. Retry those. Resource exhaustion
+        // EAGAIN after a poll false-wake. Retry those. Resource exhaustion
         // (EMFILE/ENFILE/…) is thrown so callers can back off without treating
         // it as a fatal bind/listen failure.
         for(;;)
@@ -172,10 +172,10 @@ public:
         }
     }
 
-    // Close listen sockets and wake a concurrent accept()/select promptly.
+    // Close listen sockets and wake a concurrent accept()/poll promptly.
     // Thread-safe: intended to be called from another thread (e.g. http::server::stop).
     // Wake is via closing the self-pipe write end (portable); closing listen fds
-    // alone does not reliably wake select on Linux. After close, accept() fails
+    // alone does not reliably wake poll on Linux. After close, accept() fails
     // with EBADF / "acceptor closed". Idempotent.
     void close() noexcept
     {
@@ -183,7 +183,7 @@ public:
         m_closed = true;
         for(auto& s : m_sockets)
             s.close();
-        // Closing the write end makes the read end readable (EOF) and wakes select.
+        // Closing the write end makes the read end readable (EOF) and wakes poll.
         if(m_wake_w)
             m_wake_w->close();
     }
@@ -219,13 +219,11 @@ public:
 private:
     int wait()
     {
-        // select() may return -1 (e.g. EINTR, EBADF after close()). On error the
-        // fd_set is left unmodified on Linux/macOS — still containing every listener
-        // we set — so treating any non-zero return as "ready" falsely wakes accept()
-        // and blocks forever with no pending connection (bypassing timeout /
-        // http::server stop polling). Retry EINTR while open; treat EBADF / closed
-        // as stop; fail other errors; only inspect readiness bits when select
-        // reports ready > 0.
+        // poll() may return -1 (e.g. EINTR). Treating any non-zero return as
+        // "ready" would falsely wake accept() and block forever with no pending
+        // connection (bypassing timeout / http::server stop polling). Retry EINTR
+        // while open; treat EBADF / POLLNVAL / closed as stop; fail other errors;
+        // only inspect revents when poll reports ready > 0.
         using clock = std::chrono::steady_clock;
         const auto deadline = m_timeout.count()
             ? clock::now() + m_timeout
@@ -251,38 +249,25 @@ private:
                     throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
             }
 
-            posix::fd_set set{};
-            posix::fd_zero(&set);
-            int max_fd = -1;
+            // Listeners first, then the wake pipe (if any) as the last entry.
+            auto pfds = std::vector<posix::pollfd>{};
+            pfds.reserve(fds.size() + 1);
             for(int fd : fds)
-            {
-                posix::fd_set_bit(fd, &set);
-                if(fd > max_fd)
-                    max_fd = fd;
-            }
+                pfds.push_back({.fd = fd, .events = posix::pollin, .revents = 0});
             if(wake_fd >= 0)
-            {
-                posix::fd_set_bit(wake_fd, &set);
-                if(wake_fd > max_fd)
-                    max_fd = wake_fd;
-            }
+                pfds.push_back({.fd = wake_fd, .events = posix::pollin, .revents = 0});
 
-            posix::timeval tv{};
-            posix::timeval* tv_ptr = nullptr;
+            auto timeout_ms = -1;
             if(m_timeout.count())
             {
                 const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
                     deadline - clock::now());
                 if(remaining.count() <= 0)
                     throw std::system_error{posix::etimedout, std::system_category(), "accept timeouted"};
-                tv = {
-                    static_cast<decltype(tv.tv_sec)>(remaining.count() / 1000),
-                    static_cast<decltype(tv.tv_usec)>((remaining.count() % 1000) * 1000)
-                };
-                tv_ptr = &tv;
+                timeout_ms = posix::poll_timeout(remaining);
             }
 
-            const auto ready = posix::select(max_fd + 1, &set, nullptr, nullptr, tv_ptr);
+            const auto ready = posix::poll(pfds.data(), static_cast<posix::nfds_t>(pfds.size()), timeout_ms);
             if(ready < 0)
             {
                 const auto err = posix::get_errno();
@@ -305,15 +290,18 @@ private:
             }
 
             // Prefer stop/wake over a concurrent listen-fd readiness bit.
-            if(wake_fd >= 0 and posix::fd_isset(wake_fd, &set))
+            if(wake_fd >= 0 and pfds.back().revents != 0)
                 throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
             if(closed())
                 throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
 
-            for(int fd : fds)
+            for(auto i = 0uz; i < fds.size(); ++i)
             {
-                if(posix::fd_isset(fd, &set))
-                    return fd;
+                // A listener closed under us reports POLLNVAL, where select failed with EBADF.
+                if(pfds[i].revents & posix::pollnval)
+                    throw std::system_error{posix::ebadf, std::system_category(), "acceptor closed"};
+                if(pfds[i].revents != 0)
+                    return fds[i];
             }
             throw std::system_error{posix::get_errno(), std::system_category(), "accept failed"};
         }

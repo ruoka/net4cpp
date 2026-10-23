@@ -350,6 +350,59 @@ auto register_endpointbuf_tests()
         };
     };
 
+    // select() could not wait on descriptors >= FD_SETSIZE (1024): FD_SET wrote
+    // past the fd_set on Linux and was a silent timeout on macOS. Containers
+    // commonly allow far more open files, so such descriptors are reachable.
+    tester::bdd::scenario("Reads with a timeout work on a descriptor above 1024, [net]") = [] {
+        tester::bdd::given("A connected pair whose local end is descriptor >= 1100") = [] {
+            constexpr auto high_fd = 1100;
+            auto limit = posix::rlimit{};
+            check_true(posix::getrlimit(posix::rlimit_nofile, &limit) == 0);
+            const auto previous = limit;
+            if(limit.rlim_cur <= high_fd)
+            {
+                limit.rlim_cur = std::min<decltype(limit.rlim_max)>(limit.rlim_max, 2048);
+                if(limit.rlim_cur <= high_fd or posix::setrlimit(posix::rlimit_nofile, &limit) != 0)
+                    return; // The OS will not hand out such a descriptor here.
+            }
+
+            auto ends = connected_stream_pair();
+            check_true(ends.has_value());
+            if(not ends)
+                return;
+            const auto fd = posix::fcntl(static_cast<int>(ends->local), posix::f_dupfd, high_fd);
+            check_true(fd >= high_fd);
+            if(fd < high_fd)
+                return;
+            ends->local.close();
+
+            tcp_endpointbuf buf{socket{fd}};
+            buf.read_timeout(std::chrono::milliseconds{200});
+            std::istream in{&buf};
+
+            tester::bdd::when("The peer sends a byte, then goes quiet") = [&] {
+                using namespace std::chrono_literals;
+                const char byte = 'x';
+                posix::send(ends->peer, &byte, 1, posix::msg_nosignal);
+                const auto first = in.get();
+
+                const auto start = std::chrono::steady_clock::now();
+                const auto second = in.get();
+                const auto elapsed = std::chrono::steady_clock::now() - start;
+
+                tester::bdd::then("The byte arrives and the quiet period times out normally") = [&] {
+                    check_eq(first, std::char_traits<char>::to_int_type('x'));
+                    check_eq(second, std::char_traits<char>::eof());
+                    check_true(buf.read_timed_out());
+                    check_true(elapsed >= 150ms);
+                    check_true(elapsed < 2s);
+                };
+            };
+
+            posix::setrlimit(posix::rlimit_nofile, &previous);
+        };
+    };
+
     return true;
 }
 

@@ -55,11 +55,10 @@ public:
     }
 
 protected:
-    // select before recv when a read timeout is set. A fresh timeval is built
-    // from the deadline on every attempt: Linux select writes the remaining
-    // time back into the timeval, macOS leaves it unchanged. Recomputing makes
-    // the wait the same on both. EINTR retries against that same deadline.
-    // timeout <= 0 skips select so recv blocks, preserving the old behaviour.
+    // poll before recv when a read timeout is set. The remaining time is
+    // recomputed from the deadline on every attempt, so EINTR retries against
+    // that same deadline. timeout <= 0 skips poll so recv blocks, preserving
+    // the old behaviour.
     bool wait_readable()
     {
         if(m_read_timeout.count() <= 0)
@@ -81,14 +80,8 @@ protected:
                 return false;
             }
 
-            posix::fd_set fds{};
-            posix::fd_zero(&fds);
-            posix::fd_set_bit(fd, &fds);
-            posix::timeval tv{
-                .tv_sec = static_cast<decltype(tv.tv_sec)>(remaining.count() / 1000),
-                .tv_usec = static_cast<decltype(tv.tv_usec)>((remaining.count() % 1000) * 1000)
-            };
-            const auto ready = posix::select(fd + 1, &fds, nullptr, nullptr, &tv);
+            auto pfd = posix::pollfd{.fd = fd, .events = posix::pollin, .revents = 0};
+            const auto ready = posix::poll(&pfd, 1, posix::poll_timeout(remaining));
             if(ready > 0)
             {
                 m_read_timed_out.store(false, std::memory_order_release);
@@ -181,7 +174,7 @@ protected:
                     // idle timeout (recv returns EAGAIN immediately).
                     if (read_timeout().count() > 0)
                         continue;
-                    // wait_for selects for readability (wait() is for writable).
+                    // wait_for polls for readability (wait() is for writable).
                     if (not m_socket.wait_for(std::chrono::milliseconds{60'000}))
                         return total;
                     continue;
