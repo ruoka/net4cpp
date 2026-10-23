@@ -1,16 +1,19 @@
 # Release Policy
 
-## Current status: v3.1.0
+## Current status: v3.2.0
 
-**[`v3.1.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.1.0)** (23 October 2026) is the
+**[`v3.2.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.2.0)** (23 October 2026) is the
 current SemVer tag for the Clang 21 + libc++ modules consume surface (`import net;`).
-It adds the HTTP client helper and changes HTTP server defaults: a 1 MiB body cap, a 30s
-idle read timeout, a 128-connection cap, and `Server: net` plus browser policy headers.
+It adds `server::server_token()` so a product can replace or omit the `Server` header.
+The default token remains `net`.
+[`v3.1.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.1.0) (23 October 2026) added the
+HTTP client helper and the HTTP server defaults: a 1 MiB body cap, a 30s idle read timeout,
+a 128-connection cap, and browser policy headers.
 [`v3.0.1`](https://github.com/ruoka/net4cpp/releases/tag/v3.0.1) (2 August 2026) was the
-previous cut. [`v3.0.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.0.0) was the first
+previous patch. [`v3.0.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.0.0) was the first
 modules-era cut. Prior tags `v1.0` / `v2.0` / `v2.1` are historical.
 
-Pin `v3.1.0` (or a later tag / deliberate commit). Nested `deps/tester` must match the
+Pin `v3.2.0` (or a later tag / deliberate commit). Nested `deps/tester` must match the
 parent tree’s tester pin — see
 [YarDB versioning](https://github.com/ruoka/YarDB/blob/master/docs/versioning.md).
 

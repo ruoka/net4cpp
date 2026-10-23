@@ -75,8 +75,9 @@ inline constexpr auto default_read_timeout = std::chrono::milliseconds{30'000};
 // Zero means no cap.
 inline constexpr auto default_max_connections = std::size_t{128};
 
-// Fixed product token. gethostname() leaked the machine name to every scanner.
-inline constexpr auto server_token = "net"sv;
+// Default Server product token. gethostname() leaked the machine name.
+// Override with server::server_token(); an empty token omits the header.
+inline constexpr auto default_server_token = "net"sv;
 
 // Protocol errors and 404s. "*/*" is not a media type and invites MIME sniffing.
 inline constexpr auto error_content_type = "text/plain; charset=utf-8"sv;
@@ -671,6 +672,20 @@ public:
         m_max_connections = n;
     }
 
+    // Product token in the Server header. Default is default_server_token ("net").
+    // An empty token omits the header. CR, LF, and NUL are rejected.
+    std::string_view server_token() const
+    {
+        return m_server_token;
+    }
+
+    void server_token(std::string_view token)
+    {
+        if(header_value_has_ctl(token))
+            throw std::invalid_argument{"server token contains a control character"};
+        m_server_token.assign(token);
+    }
+
     // Signal the listen loop to exit and close listen sockets so accept wait
     // wakes immediately (Docker SIGTERM / join). Thread-safe vs listen().
     // Also endpointstream::shutdown()s live clients so idle keep-alive handlers
@@ -862,17 +877,27 @@ private:
         });
     }
 
-    // Server-owned browser headers. A later custom copy would override the
-    // default. X-Frame-Options stays available to the handler when the
-    // default DENY is turned off.
+    // Server-owned response headers. A later custom copy would duplicate or
+    // override the default. Server is always owned. X-Frame-Options stays
+    // available to the handler when the default DENY is turned off.
     bool is_server_owned_header(std::string_view name) const
     {
         auto lower = std::string{name};
         utils::ascii_to_lower(lower);
-        if(lower == "x-content-type-options"sv or lower == "referrer-policy"sv
+        if(lower == "server"sv
+           or lower == "x-content-type-options"sv
+           or lower == "referrer-policy"sv
            or lower == "permissions-policy"sv)
             return true;
         return m_frame_options and lower == "x-frame-options"sv;
+    }
+
+    // "Server: <token>\r\n", or empty when the token is empty.
+    std::string server_header() const
+    {
+        if(m_server_token.empty())
+            return {};
+        return "Server: " + m_server_token + "\r\n";
     }
 
     void write_custom_response_headers(std::ostream& os, const headers& hdrs) const
@@ -912,7 +937,7 @@ private:
     {
         stream << "HTTP/1.1 " << status_service_unavailable << net::crlf
                << "Date: " << date() << net::crlf
-               << "Server: " << server_token << net::crlf
+               << server_header()
                << "X-Content-Type-Options: nosniff" << net::crlf
                << "Referrer-Policy: no-referrer" << net::crlf
                << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -933,7 +958,7 @@ private:
         stream.clear();
         stream << "HTTP/1.1 " << status_request_timeout << net::crlf
                << "Date: " << date() << net::crlf
-               << "Server: " << server_token << net::crlf
+               << server_header()
                << "X-Content-Type-Options: nosniff" << net::crlf
                << "Referrer-Policy: no-referrer" << net::crlf
                << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1000,7 +1025,7 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_request_header_fields_too_large << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << server_token << net::crlf
+                           << server_header()
                            << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Referrer-Policy: no-referrer" << net::crlf
                            << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1099,7 +1124,7 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << server_token << net::crlf
+                           << server_header()
                            << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Referrer-Policy: no-referrer" << net::crlf
                            << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1140,7 +1165,7 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << server_token << net::crlf
+                           << server_header()
                            << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Referrer-Policy: no-referrer" << net::crlf
                            << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1170,7 +1195,7 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << server_token << net::crlf
+                           << server_header()
                            << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Referrer-Policy: no-referrer" << net::crlf
                            << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1203,7 +1228,7 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << server_token << net::crlf
+                           << server_header()
                            << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Referrer-Policy: no-referrer" << net::crlf
                            << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1238,7 +1263,7 @@ private:
                     {
                         stream << "HTTP/1.1 " << status_not_found << net::crlf
                                << "Date: " << date() << net::crlf
-                               << "Server: " << server_token << net::crlf
+                               << server_header()
                                << "X-Content-Type-Options: nosniff" << net::crlf
                                << "Referrer-Policy: no-referrer" << net::crlf
                                << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1257,7 +1282,7 @@ private:
                     {
                         stream << "HTTP/1.1 " << status_bad_request << net::crlf
                                << "Date: " << date() << net::crlf
-                               << "Server: " << server_token << net::crlf
+                               << server_header()
                                << "X-Content-Type-Options: nosniff" << net::crlf
                                << "Referrer-Policy: no-referrer" << net::crlf
                                << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1298,7 +1323,7 @@ private:
                                       << net::flush;
                             stream << "HTTP/1.1 " << st << net::crlf
                                    << "Date: " << date() << net::crlf
-                                   << "Server: " << server_token << net::crlf
+                                   << server_header()
                                    << "X-Content-Type-Options: nosniff" << net::crlf
                                    << "Referrer-Policy: no-referrer" << net::crlf
                                    << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1326,7 +1351,7 @@ private:
 
                     stream << "HTTP/1.1 " << status_switching_protocols << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << server_token << net::crlf
+                           << server_header()
                            << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Referrer-Policy: no-referrer" << net::crlf
                            << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1379,7 +1404,7 @@ private:
                                 }
                                 stream << "HTTP/1.1 " << st << net::crlf
                                        << "Date: " << date() << net::crlf
-                                       << "Server: " << server_token << net::crlf
+                                       << server_header()
                                        << "X-Content-Type-Options: nosniff" << net::crlf
                                        << "Referrer-Policy: no-referrer" << net::crlf
                                        << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1418,7 +1443,7 @@ private:
                         // match after an embedded CR (response header injection).
                         stream << "HTTP/1.1 " << status_ok << net::crlf
                                << "Date: " << date() << net::crlf
-                               << "Server: " << server_token << net::crlf
+                               << server_header()
                                << "X-Content-Type-Options: nosniff" << net::crlf
                                << "Referrer-Policy: no-referrer" << net::crlf
                                << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1543,7 +1568,7 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << server_token << net::crlf
+                           << server_header()
                            << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Referrer-Policy: no-referrer" << net::crlf
                            << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1574,7 +1599,7 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_payload_too_large << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << server_token << net::crlf
+                           << server_header()
                            << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Referrer-Policy: no-referrer" << net::crlf
                            << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1605,7 +1630,7 @@ private:
                                   << net::flush;
                         stream << "HTTP/1.1 " << status_expectation_failed << net::crlf
                                << "Date: " << date() << net::crlf
-                               << "Server: " << server_token << net::crlf
+                               << server_header()
                                << "X-Content-Type-Options: nosniff" << net::crlf
                                << "Referrer-Policy: no-referrer" << net::crlf
                                << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1680,7 +1705,7 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << server_token << net::crlf
+                           << server_header()
                            << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Referrer-Policy: no-referrer" << net::crlf
                            << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1719,7 +1744,7 @@ private:
                     // the client still holds the socket open (websocket substring test).
                     stream << "HTTP/1.1 505 HTTP Version Not Supported" << net::crlf
                            << "Date: "         << date()                << net::crlf
-                           << "Server: " << server_token << net::crlf
+                           << server_header()
                            << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Referrer-Policy: no-referrer" << net::crlf
                            << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1747,7 +1772,7 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: "         << date()                    << net::crlf
-                           << "Server: " << server_token << net::crlf
+                           << server_header()
                            << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Referrer-Policy: no-referrer" << net::crlf
                            << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1775,7 +1800,7 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_not_found << net::crlf
                            << "Date: "         << date()         << net::crlf
-                           << "Server: " << server_token << net::crlf
+                           << server_header()
                            << "X-Content-Type-Options: nosniff" << net::crlf
                            << "Referrer-Policy: no-referrer" << net::crlf
                            << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1919,7 +1944,7 @@ private:
                         
                         stream << "HTTP/1.1 " << res_status                                   << net::crlf
                                << "Date: " << date()                                          << net::crlf
-                               << "Server: " << server_token << net::crlf
+                               << server_header()
                                << "X-Content-Type-Options: nosniff" << net::crlf
                                << "Referrer-Policy: no-referrer" << net::crlf
                                << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1954,7 +1979,7 @@ private:
                                   << net::flush;
                         stream << "HTTP/1.1 " << status_not_found << net::crlf
                                << "Date: " << date()                                          << net::crlf
-                               << "Server: " << server_token << net::crlf
+                               << server_header()
                                << "X-Content-Type-Options: nosniff" << net::crlf
                                << "Referrer-Policy: no-referrer" << net::crlf
                                << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -1992,7 +2017,7 @@ private:
             {
                 stream << "HTTP/1.1 " << status_internal_server_error << net::crlf
                        << "Date: " << date()                   << net::crlf
-                       << "Server: " << server_token << net::crlf
+                       << server_header()
                        << "X-Content-Type-Options: nosniff" << net::crlf
                        << "Referrer-Policy: no-referrer" << net::crlf
                        << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -2023,7 +2048,7 @@ private:
             {
                 stream << "HTTP/1.1 " << status_internal_server_error << net::crlf
                        << "Date: " << date()                   << net::crlf
-                       << "Server: " << server_token << net::crlf
+                       << server_header()
                        << "X-Content-Type-Options: nosniff" << net::crlf
                        << "Referrer-Policy: no-referrer" << net::crlf
                        << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -2054,7 +2079,7 @@ private:
             {
                 stream << "HTTP/1.1 " << status_internal_server_error << net::crlf
                        << "Date: " << date()                   << net::crlf
-                       << "Server: " << server_token << net::crlf
+                       << server_header()
                        << "X-Content-Type-Options: nosniff" << net::crlf
                        << "Referrer-Policy: no-referrer" << net::crlf
                        << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
@@ -2099,6 +2124,7 @@ private:
     std::size_t m_max_request_body_size = default_max_request_body_size;
     std::size_t m_max_request_head_size = default_max_request_head_size;
     bool m_frame_options = true;
+    std::string m_server_token{default_server_token};
     std::size_t m_max_connections = default_max_connections;
     std::atomic<bool> m_stop{false};
     std::atomic<std::size_t> m_active_handlers{0};
