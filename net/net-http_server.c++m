@@ -283,40 +283,46 @@ public:
     using websocket_callback = net::websocket::text_handler;
     using sse_callback = std::function<void(::http::sse::session&, request_view, headers&)>;
 
-    void text(const content& c)
+    controller& text(const content& c)
     {
         m_content_type = "text/plain";
         m_callback = [c](auto&&...){ return make_response(status_ok, c); };
+        return *this;
     }
 
-    void html(const content& c)
+    controller& html(const content& c)
     {
         m_content_type = "text/html";
         m_callback = [c](auto&&...){ return make_response(status_ok, c); };
+        return *this;
     }
 
-    void css(const content& c)
+    controller& css(const content& c)
     {
         m_content_type = "text/css";
         m_callback = [c](auto&&...){ return make_response(status_ok, c); };
+        return *this;
     }
 
-    void script(const content& c)
+    controller& script(const content& c)
     {
         m_content_type = "application/javascript";
         m_callback = [c](auto&&...){ return make_response(status_ok, c); };
+        return *this;
     }
 
-    void json(const content& c)
+    controller& json(const content& c)
     {
         m_content_type = "application/json";
         m_callback = [c](auto&&...){ return make_response(status_ok, c); };
+        return *this;
     }
 
-    void xml(const content& c)
+    controller& xml(const content& c)
     {
         m_content_type = "application/xml";
         m_callback = [c](auto&&...){ return make_response(status_ok, c); };
+        return *this;
     }
 
     using request_callback = ::http::request_callback;
@@ -424,34 +430,43 @@ public:
         return m_cors_origin;
     }
 
-    // Optional pre-check before the SSE response head is written. Returning a
-    // response rejects the stream (e.g. Host/Origin DNS-rebinding guards).
-    using sse_gate = std::function<std::optional<::http::response_with_headers>(request_view, headers&)>;
+    // Optional pre-check before a WebSocket upgrade or SSE response head is
+    // written. Returning a response rejects the takeover (e.g. Host/Origin
+    // DNS-rebinding guards).
+    using takeover_gate = std::function<std::optional<::http::response_with_headers>(request_view, headers&)>;
+    using sse_gate [[deprecated("use http::controller::takeover_gate")]] = takeover_gate;
 
-    controller& gate(sse_gate g)
+    controller& gate(takeover_gate g)
     {
-        m_sse_gate = std::move(g);
+        m_gate = std::move(g);
         return *this;
     }
 
     [[nodiscard]] bool has_gate() const noexcept
     {
-        return static_cast<bool>(m_sse_gate);
+        return static_cast<bool>(m_gate);
     }
 
-    [[nodiscard]] const sse_gate& sse_gate_fn() const noexcept
+    [[nodiscard]] const takeover_gate& gate_handler() const noexcept
     {
-        return m_sse_gate;
+        return m_gate;
+    }
+
+    [[deprecated("use gate_handler()")]]
+    [[nodiscard]] const takeover_gate& sse_gate_fn() const noexcept
+    {
+        return m_gate;
     }
 
 private:
 
-    content_type m_content_type = "*/*";
-    request_callback m_callback = [](const ::http::request&, body_view, headers&){ return make_response(status_ok, "Not Found"s); };
+    // A route registered without a handler, e.g. server.post("/x") alone.
+    content_type m_content_type{error_content_type};
+    request_callback m_callback = [](const ::http::request&, body_view, headers&){ return make_response(status_not_found, ""s); };
     websocket_callback m_ws_callback;
     sse_callback m_sse_callback;
     std::function<bool(std::string_view)> m_cors_origin;
-    sse_gate m_sse_gate;
+    takeover_gate m_gate;
 };
 
 class server
@@ -747,9 +762,10 @@ public:
         return m_timeout;
     }
 
-    void timeout(const std::chrono::seconds& t)
+    server& timeout(const std::chrono::seconds& t)
     {
         m_timeout = t;
+        return *this;
     }
 
     // Idle timeout for request bytes on an accepted connection. Applied in
@@ -760,9 +776,10 @@ public:
         return m_read_timeout;
     }
 
-    void read_timeout(std::chrono::milliseconds t)
+    server& read_timeout(std::chrono::milliseconds t)
     {
         m_read_timeout = t;
+        return *this;
     }
 
     // Deadline for one whole request head plus body, started by its first byte.
@@ -772,9 +789,10 @@ public:
         return m_request_timeout;
     }
 
-    void request_timeout(std::chrono::milliseconds t)
+    server& request_timeout(std::chrono::milliseconds t)
     {
         m_request_timeout = t;
+        return *this;
     }
 
     // Longest stall writing to a client before the connection is dropped.
@@ -784,9 +802,10 @@ public:
         return m_write_timeout;
     }
 
-    void write_timeout(std::chrono::milliseconds t)
+    server& write_timeout(std::chrono::milliseconds t)
     {
         m_write_timeout = t;
+        return *this;
     }
 
     // Ping / frame limits for WebSocket sessions taken over from this server.
@@ -795,9 +814,10 @@ public:
         return m_websocket_limits;
     }
 
-    void websocket_limits(net::websocket::session_limits limits)
+    server& websocket_limits(net::websocket::session_limits limits)
     {
         m_websocket_limits = limits;
+        return *this;
     }
 
     // Cap Content-Length before allocating/reading the body. Middleware that
@@ -808,9 +828,10 @@ public:
         return m_max_request_body_size;
     }
 
-    void max_request_body_size(std::size_t bytes)
+    server& max_request_body_size(std::size_t bytes)
     {
         m_max_request_body_size = bytes;
+        return *this;
     }
 
     // Cap request-line + header block bytes before parsing. Default is
@@ -820,9 +841,10 @@ public:
         return m_max_request_head_size;
     }
 
-    void max_request_head_size(std::size_t bytes)
+    server& max_request_head_size(std::size_t bytes)
     {
         m_max_request_head_size = bytes;
+        return *this;
     }
 
     // X-Frame-Options: DENY on every response. Turn this off for HTML that is
@@ -832,9 +854,10 @@ public:
         return m_frame_options;
     }
 
-    void frame_options(bool enabled)
+    server& frame_options(bool enabled)
     {
         m_frame_options = enabled;
+        return *this;
     }
 
     // In-flight accepted connections. Default is default_max_connections.
@@ -844,9 +867,10 @@ public:
         return m_max_connections;
     }
 
-    void max_connections(std::size_t n)
+    server& max_connections(std::size_t n)
     {
         m_max_connections = n;
+        return *this;
     }
 
     // In-flight WebSocket + SSE connections, counted inside max_connections.
@@ -856,9 +880,10 @@ public:
         return m_max_streaming_connections;
     }
 
-    void max_streaming_connections(std::size_t n)
+    server& max_streaming_connections(std::size_t n)
     {
         m_max_streaming_connections = n;
+        return *this;
     }
 
     // In-flight connections from one peer address. Default is
@@ -868,9 +893,10 @@ public:
         return m_max_connections_per_client;
     }
 
-    void max_connections_per_client(std::size_t n)
+    server& max_connections_per_client(std::size_t n)
     {
         m_max_connections_per_client = n;
+        return *this;
     }
 
     // Product token in the Server header. Default is default_server_token ("net").
@@ -880,11 +906,12 @@ public:
         return m_server_token;
     }
 
-    void server_token(std::string_view token)
+    server& server_token(std::string_view token)
     {
         if(header_value_has_ctl(token))
             throw std::invalid_argument{"server token contains a control character"};
         m_server_token.assign(token);
+        return *this;
     }
 
     // Signal the listen loop to exit and close listen sockets so accept wait
@@ -1572,7 +1599,7 @@ private:
                     const auto& ws_ctrl = matched->methods.at(method_ws);
                     if(ws_ctrl.has_gate())
                     {
-                        if(auto denied = ws_ctrl.sse_gate_fn()(uri, hs))
+                        if(auto denied = ws_ctrl.gate_handler()(uri, hs))
                         {
                             auto [st, body, custom_h] = std::move(*denied);
                             if(header_value_has_ctl(st))
@@ -1676,7 +1703,7 @@ private:
                         const auto& sse_ctrl = matched->methods.at(method_sse);
                         if(sse_ctrl.has_gate())
                         {
-                            if(auto denied = sse_ctrl.sse_gate_fn()(uri, hs))
+                            if(auto denied = sse_ctrl.gate_handler()(uri, hs))
                             {
                                 auto [st, body, custom_h] = std::move(*denied);
                                 if(header_value_has_ctl(st))

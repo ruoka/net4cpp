@@ -252,6 +252,32 @@ auto register_server_tests()
     };
 #pragma clang diagnostic pop
 
+    tester::bdd::scenario("Setters chain and a route without a handler is 404, [net]") = [] {
+        tester::bdd::given("A server configured in one expression") = [] {
+            auto server = http::server{};
+            server.timeout(std::chrono::seconds{1})
+                  .read_timeout(std::chrono::milliseconds{500})
+                  .max_connections(8)
+                  .frame_options(false)
+                  .server_token("demo");
+            server.get("/page").html("<p>x</p>").cors([](std::string_view) { return true; });
+            server.post("/page");
+
+            tester::bdd::then("Settings, content and the empty route are as configured") = [&server] {
+                check_eq(server.timeout(), std::chrono::seconds{1});
+                check_eq(server.max_connections(), std::size_t{8});
+                check_false(server.frame_options());
+                check_eq(server.server_token(), "demo"sv);
+                check_true(server.get("/page").has_cors_origin());
+
+                auto hs = http::headers{};
+                auto [s, c, t, h] = server.post("/page").render("/page", "", hs);
+                check_eq(s, http::status_not_found);
+                check_eq(t, std::string{http::error_content_type});
+            };
+        };
+    };
+
     tester::bdd::scenario("http::request parses path, query and captures on demand, [net]") = [] {
         tester::bdd::given("A request matched by a route with two groups") = [] {
             const auto route = std::regex{R"(/orders/([0-9]+)/(\w+)(\?.*)?)"};

@@ -520,7 +520,7 @@ inline auto cors_middleware(
 // Patterns match like MCP allowed origins: exact, or `http://host:*`.
 inline auto origin_gate(std::vector<std::string> allowed_origins)
 {
-    return controller::sse_gate{
+    return controller::takeover_gate{
         [allowed = std::move(allowed_origins)](request_view, headers& hdr) -> std::optional<response_with_headers>
         {
             if(const auto origin = hdr.try_get("origin"sv); origin and value_allowed(*origin, allowed))
