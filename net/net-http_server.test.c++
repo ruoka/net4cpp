@@ -29,6 +29,7 @@ namespace {
 using namespace std::string_literals;
 using namespace std::string_view_literals;
 using tester::assertions::check_eq;
+using tester::assertions::check_throws_as;
 using tester::assertions::check_true;
 using tester::assertions::check_false;
 using tester::assertions::check_contains;
@@ -1591,6 +1592,144 @@ auto register_server_tests()
                     check_contains(*missing_headers, "Permissions-Policy: camera=(), microphone=(), geolocation=()");
                     check_contains(*missing_headers, "Content-Type: text/plain; charset=utf-8");
                     check_false(missing_headers->contains("Content-Type: */*"sv));
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("server_token replaces the Server header, [net]") = [] {
+        tester::bdd::given("A new HTTP server") = [] {
+            auto server = std::make_shared<http::server>();
+
+            tester::bdd::when("The token is read, replaced, cleared, and rejected") = [server] {
+                tester::bdd::then("The default is net, a product name sticks, and controls are refused") = [server] {
+                    check_eq(server->server_token(), http::default_server_token);
+                    server->server_token("YarDB"sv);
+                    check_eq(server->server_token(), "YarDB"sv);
+                    server->server_token(""sv);
+                    check_true(server->server_token().empty());
+                    check_throws_as<std::invalid_argument>([server] {
+                        server->server_token("Yar\rDB"sv);
+                    });
+                    check_true(server->server_token().empty());
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("server_token is the only Server header on the wire, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("A server whose handler also sets Server") = [] {
+            auto server = std::make_shared<http::server>();
+            server->server_token("YarDB"sv);
+            server->get("/ok").response_handler("text/plain",
+                [](std::string_view, std::string_view, http::headers&) {
+                    auto out = http::headers{};
+                    out.set("Server"s, "spoofed"s);
+                    out.set("x-mark"s, "1"s);
+                    return http::make_response(http::status_ok, "OK"s, std::make_optional(out));
+                });
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A client GETs the route") = [server] {
+                auto headers = std::make_shared<std::string>("");
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    try
+                    {
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream << "GET /ok HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+                        std::string line;
+                        auto line_count = 0;
+                        while(line_count < 20 and stream and std::getline(stream, line))
+                        {
+                            *headers += line + "\n";
+                            line_count++;
+                            if(line.empty() or line == "\r")
+                                break;
+                        }
+                    }
+                    catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if(server_thread.joinable())
+                    server_thread.join();
+
+                tester::bdd::then("The wire shows YarDB once and drops the handler token") = [headers] {
+                    check_contains(*headers, "Server: YarDB\r");
+                    check_false(headers->contains("spoofed"sv));
+                    check_contains(*headers, "x-mark: 1");
+                    const auto first = headers->find("Server:");
+                    check_true(first != std::string::npos);
+                    check_eq(headers->find("Server:", first + 1), std::string::npos);
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("an empty server_token omits Server, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("A server with an empty token") = [] {
+            auto server = std::make_shared<http::server>();
+            server->server_token(""sv);
+            server->get("/ok").text("OK");
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A client GETs the route") = [server] {
+                auto headers = std::make_shared<std::string>("");
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    try
+                    {
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream << "GET /ok HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+                        std::string line;
+                        auto line_count = 0;
+                        while(line_count < 20 and stream and std::getline(stream, line))
+                        {
+                            *headers += line + "\n";
+                            line_count++;
+                            if(line.empty() or line == "\r")
+                                break;
+                        }
+                    }
+                    catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if(server_thread.joinable())
+                    server_thread.join();
+
+                tester::bdd::then("The response has no Server header") = [headers] {
+                    check_contains(*headers, "200");
+                    check_eq(headers->find("Server:"), std::string::npos);
                 };
             };
         };
