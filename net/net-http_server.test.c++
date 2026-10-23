@@ -204,6 +204,29 @@ auto register_server_tests()
         };
     };
 
+    // Regression: a flat_map router relocated controllers on insert, so a
+    // controller& from get()/post() dangled after the next registration.
+    tester::bdd::scenario("Controller references survive later registrations, [net]") = [] {
+        tester::bdd::given("A controller reference held across many registrations") = [] {
+            auto server = http::server{};
+            auto& held = server.get("/held");
+            for(auto i = 0; i < 64; ++i)
+            {
+                server.get("/r" + std::to_string(i)).text("x");
+                server.post("/held");
+                server.put("/r" + std::to_string(i));
+            }
+            held.text("still here");
+
+            tester::bdd::then("The reference still names the registered controller") = [&server, &held] {
+                check_true(&server.get("/held") == &held);
+                auto hs = http::headers{};
+                auto [s, c, t, h] = server.get("/held").render("/held", "", hs);
+                check_eq(c, "still here"s);
+            };
+        };
+    };
+
     tester::bdd::scenario("Server start and stop sequence, [net]") = [] {
     if(not network_tests_enabled()) return;
 

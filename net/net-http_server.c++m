@@ -284,7 +284,7 @@ public:
         return *this;
     }
 
-    response_with_content_type render(request_view request, body_view body, headers& h)
+    response_with_content_type render(request_view request, body_view body, headers& h) const
     {
         auto [s, c, custom_h] = m_callback(request, body, h);
         return {std::move(s), std::move(c), m_content_type, std::move(custom_h)};
@@ -1566,7 +1566,6 @@ private:
                            << "Sec-WebSocket-Accept: " << accept << net::crlf
                            << net::crlf << net::flush;
 
-                    // Copy handler before session (flat_map proxies are not stable refs).
                     const auto ws_handler = m_router.at(*matched_path).at(method_ws).websocket_handler();
                     // The session replaces the HTTP idle timeout with ping keep-alive,
                     // so a quiet but live peer stays and a vanished one is dropped.
@@ -2330,13 +2329,13 @@ private:
     }
 
     // Router: path -> (method -> controller)
-    // Uses flat_map for better cache locality during iteration and method lookups
-    // Implementation details: type aliases for router internals
-    using path_type = std::string;           // Route path pattern (e.g., "/api/users/:id")
+    // Node-based maps: get()/post()/... hand out controller& that must survive
+    // later registrations. flat_map relocates values on insert.
+    using path_type = std::string;           // Route path regex (e.g., "/api/users/[0-9]+")
     using method_type = std::string_view;    // HTTP method (e.g., "GET", "POST")
-    
-    using method_map_type = std::flat_map<method_type, controller>;
-    using router_type = std::flat_map<path_type, method_map_type>;
+
+    using method_map_type = std::map<method_type, controller>;
+    using router_type = std::map<path_type, method_map_type>;
     router_type m_router = {};
     std::string m_content_type{error_content_type};
     std::flat_set<method_type> m_methods = {method_head, method_options};
