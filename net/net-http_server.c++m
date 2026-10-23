@@ -562,7 +562,7 @@ public:
                 }
                 catch(const std::system_error& e)
                 {
-                    // stop() closes listen fds so select/accept wakes with
+                    // stop() closes listen fds so poll/accept wakes with
                     // EBADF / "acceptor closed" (or EINTR racing close). Treat
                     // post-stop accept errors as a clean exit, not fatal.
                     if(m_stop.load()

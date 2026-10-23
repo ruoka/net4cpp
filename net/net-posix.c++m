@@ -8,7 +8,7 @@ module;
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/socket.h>
-#include <sys/select.h>
+#include <poll.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/time.h>
@@ -36,7 +36,7 @@ using ::setsockopt;
 using ::getsockname;
 using ::bind;
 using ::listen;
-using ::select;
+using ::poll;
 using ::accept;
 using ::connect;
 using ::getnameinfo;
@@ -93,9 +93,10 @@ inline constexpr uint32_t ntohl(uint32_t net) noexcept { return ntoh(net); }
 inline constexpr uint64_t ntohll(uint64_t net) noexcept { return ntoh(net); }
 
 // Type aliases (clean, consistent naming)
-using timeval         = ::timeval;
 using rlimit          = ::rlimit;
-using fd_set          = ::fd_set;
+using timeval         = ::timeval;
+using pollfd          = ::pollfd;
+using nfds_t          = ::nfds_t;
 using addrinfo        = ::addrinfo;
 using sockaddr        = ::sockaddr;
 using sockaddr_storage = ::sockaddr_storage;
@@ -105,10 +106,21 @@ using ip_mreq         = ::ip_mreq;
 using ipv6_mreq       = ::ipv6_mreq;
 using socklen_t       = ::socklen_t;
 
-// fd_set wrappers (safe, noexcept)
-inline void fd_zero(fd_set* set) noexcept { FD_ZERO(set); }
-inline void fd_set_bit(int fd, fd_set* set) noexcept { FD_SET(fd, set); }
-inline bool fd_isset(int fd, const fd_set* set) noexcept { return FD_ISSET(fd, set); }
+// poll, not select: FD_SET on a descriptor >= FD_SETSIZE (1024) writes past
+// the fd_set, and containers commonly allow far more open files than that.
+constexpr auto pollin           = POLLIN;
+constexpr auto pollout          = POLLOUT;
+constexpr auto pollerr          = POLLERR;
+constexpr auto pollhup          = POLLHUP;
+constexpr auto pollnval         = POLLNVAL;
+
+// poll() timeout in ms: negative waits forever, larger values clamp to int.
+constexpr int poll_timeout(std::chrono::milliseconds timeout) noexcept
+{
+    if(timeout.count() < 0)
+        return -1;
+    return static_cast<int>(std::min<std::chrono::milliseconds::rep>(timeout.count(), std::numeric_limits<int>::max()));
+}
 
 // Common constants
 constexpr auto af_unix          = AF_UNIX;
@@ -185,6 +197,7 @@ constexpr auto ni_maxserv       = NI_MAXSERV;
 constexpr auto msg_nosignal     = MSG_NOSIGNAL;
 constexpr auto so_sndtimeo      = SO_SNDTIMEO;
 constexpr auto rlimit_nofile    = RLIMIT_NOFILE;
+constexpr auto f_dupfd          = F_DUPFD;
 
 // Common errno values
 constexpr auto econnrefused     = ECONNREFUSED;
@@ -240,29 +253,16 @@ int connect_with_timeout(int fd, const sockaddr* address, socklen_t address_len,
     if (connect_result == 0) return 0;  // Immediate success
     if (connect_errno != EINPROGRESS) return -1;
 
-    fd_set readfds{};
-    fd_set writefds{};
-    fd_zero(&readfds);
-    fd_zero(&writefds);
-    fd_set_bit(fd, &readfds);
-    fd_set_bit(fd, &writefds);
-
-    timeval tv{};
-    timeval* tv_ptr = nullptr;
-
-    if (timeout.count() > 0) {
-        tv.tv_sec  = static_cast<decltype(tv.tv_sec)>(timeout.count() / 1000);
-        tv.tv_usec = static_cast<decltype(tv.tv_usec)>((timeout.count() % 1000) * 1000);
-        tv_ptr = &tv;
-    }
-
-    const auto sel = ::select(fd + 1, &readfds, &writefds, nullptr, tv_ptr);
-    if (sel <= 0) {
-        errno = (sel == 0) ? ETIMEDOUT : errno;
+    // A zero timeout keeps the old meaning: wait until connect completes.
+    auto pfd = pollfd{.fd = fd, .events = POLLOUT, .revents = 0};
+    const auto ready = ::poll(&pfd, 1, timeout.count() > 0 ? poll_timeout(timeout) : -1);
+    if (ready <= 0) {
+        errno = (ready == 0) ? ETIMEDOUT : errno;
         return -1;
     }
 
-    if (not fd_isset(fd, &writefds)) {
+    // POLLERR / POLLHUP without POLLOUT still lands in SO_ERROR below.
+    if ((pfd.revents & (POLLOUT | POLLERR | POLLHUP)) == 0) {
         errno = ETIMEDOUT;
         return -1;
     }

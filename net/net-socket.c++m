@@ -58,25 +58,16 @@ public:
     }
 
     // === Your original polling interface — preserved exactly ===
+    // Readable (data, EOF, or error) within `timeout`.
     bool wait_for(const std::chrono::milliseconds& timeout) const {
-        posix::fd_set fds{};
-        posix::fd_zero(&fds);
-        posix::fd_set_bit(m_fd, &fds);
-
-        posix::timeval tv{
-            .tv_sec  = static_cast<decltype(tv.tv_sec)>(timeout.count() / 1000),
-            .tv_usec = static_cast<decltype(tv.tv_usec)>((timeout.count() % 1000) * 1000)
-        };
-
-        return posix::select(m_fd + 1, &fds, nullptr, nullptr, &tv) > 0;
+        auto pfd = posix::pollfd{.fd = m_fd, .events = posix::pollin, .revents = 0};
+        return posix::poll(&pfd, 1, posix::poll_timeout(timeout)) > 0;
     }
 
+    // Writable (or error), blocking until it is.
     bool wait() const {
-        posix::fd_set fds{};
-        posix::fd_zero(&fds);
-        posix::fd_set_bit(m_fd, &fds);
-
-        return posix::select(m_fd + 1, nullptr, &fds, nullptr, nullptr) > 0;
+        auto pfd = posix::pollfd{.fd = m_fd, .events = posix::pollout, .revents = 0};
+        return posix::poll(&pfd, 1, -1) > 0;
     }
 
     // === Your original conversions — preserved ===
