@@ -12,16 +12,16 @@ Every module under `net/` was read, with most attention on `net-http_server.c++m
 `net-websocket_frame.c++m`. TLS is external and out of scope.
 
 Probes ran against the real modules through a temporary test in `tools/CB.sh debug test`
-(removed afterwards). They reproduced #3, #4, and the header cases in #5. The regex crash
-in #2 was reproduced with GCC 14 / libstdc++ in a `gcc:14` container. Everything else is
-traced from code.
+(removed afterwards). They reproduced #3, #4, and the header cases in #5. #2 was measured
+with GCC 14 / libstdc++ (`gcc:14`, `alpine:3.20`) and Clang 21 / libc++ (the dev
+container). Everything else is traced from code.
 
 ## Summary
 
 | # | Severity | Finding |
 |---|---|---|
 | 1 | High | Connection-slot exhaustion: Slowloris, idle SSE/WS, slow reads |
-| 2 | High | `std::regex` route matching on attacker URI crashes the process (libstdc++) |
+| 2 | Low | `std::regex` route matching: recompiled per request; crashes only on libstdc++ builds |
 | 3 | Medium | SSE field injection via bare CR, and LF in `event` / `id` / comments |
 | 4 | Medium | MCP reflects the raw JSON-RPC `id` token into replies |
 | 5 | Medium | Header parser leniency enables request smuggling |
@@ -33,7 +33,7 @@ traced from code.
 | 11 | Medium | Rate limiter trusts `X-Forwarded-For`; keys are unbounded |
 | 12+ | Low / Info | HTTP client limits, metrics label injection, and others |
 
-Suggested fix order: #1, #2, #3, #4, #5, #6, #7. Fixing #3, #4, and #6 together closes
+Suggested fix order: #1, #3, #4, #5, #6, #7. Fixing #3, #4, and #6 together closes
 the cross-session MCP injection chain.
 
 ## High
@@ -59,29 +59,6 @@ the cross-session MCP injection chain.
   timeout with ping / pong for WebSocket. A separate cap for streaming connections so they
   cannot starve normal requests. Optionally a per-client connection cap.
 - **Owner:** Library.
-
-### 2. Route regex crashes the process on libstdc++
-
-- **Location:** `net-http_server.c++m`, the three `std::regex_match(…, std::regex{path})`
-  calls in `handle()` (WebSocket, SSE, and normal routing).
-- **CWE:** CWE-674, CWE-1333.
-- **Issue:** libstdc++'s regex engine recurses once per character for repeated groups.
-  With GCC 14 on Linux, inside a `std::thread`:
-
-  | Pattern | 2 000-char URI | 16 000-char URI |
-  |---|---|---|
-  | `/api/.*` | ok | ok |
-  | `/api/(a\|b)*` | ok | SIGSEGV |
-  | `/api/(.)*` | ok | SIGSEGV |
-  | `/messages/?(\?.*)?` (MCP's own route) | ok | ok |
-
-  The 16 KiB head limit lets an unauthenticated request reach the crashing length, and a
-  segfault kills the whole server. libc++ on macOS did not crash. Every route regex is also
-  recompiled on every request.
-- **Fix:** Compile route regexes once at registration. Cap the request-target length well
-  below the head limit (2–4 KiB). Longer term, a non-backtracking or segment-based router.
-- **Owner:** Library. The crashing patterns are app-supplied, but nothing tells users that
-  `(x)*` is a remote crash.
 
 ## Medium
 
@@ -238,6 +215,36 @@ the cross-session MCP injection chain.
   proxy-overwrites-header deployment.
 
 ## Low / Informational
+
+### 2. Route regex matching
+
+Originally rated High from a GCC test harness. Downgraded after measuring with the
+toolchain `CB.sh` always uses (`-stdlib=libc++`).
+
+- **Location:** `net-http_server.c++m`, the three `std::regex_match(…, std::regex{path})`
+  calls in `handle()` (WebSocket, SSE, and normal routing).
+- **CWE:** CWE-674, CWE-1333.
+- **Issue:** libstdc++'s regex engine recurses once per character for repeated groups.
+  libc++ does not. Pattern `/api/(a|b)*` against `/api/aaa…`, matched in a worker thread:
+
+  | Build | Thread stack | Crashes at |
+  |---|---|---|
+  | GCC 14 / libstdc++, glibc | 8 MiB | between 8 KiB and 12 KiB of URI |
+  | GCC 14 / libstdc++, musl (Alpine) | 128 KiB | 256 characters |
+  | Clang 21 / libc++ | 128 KiB or 8 MiB | no crash at 64 KiB |
+
+  With libc++, catastrophic backtracking (`/api/(a+)+` against 16+ `a`s and a mismatch)
+  ends quickly with `regex_error` (error_complexity). `handle()` catches it, answers `500`,
+  and closes the connection; the server keeps running. MCP's own route
+  (`/messages/?(\?.*)?`) is safe on both libraries.
+
+  What remains on the supported toolchain: every route regex is recompiled on every
+  request, and an invalid route pattern surfaces as a `500` per request instead of at
+  registration.
+- **Fix:** Compile route regexes once at registration. Optionally cap the request-target
+  length (`414`). If libstdc++ builds are ever supported, replace `std::regex` with a
+  non-recursive or segment-based matcher; a length cap does not help on musl.
+- **Owner:** Library for the recompilation; the patterns themselves are app-supplied.
 
 - **HTTP client** (`net-http_client.c++m`): `method`, `target`, and header values are not
   checked for CR / LF (request splitting, CWE-113). Response headers and body are unbounded
