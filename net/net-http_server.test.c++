@@ -227,6 +227,15 @@ auto register_server_tests()
         };
     };
 
+    tester::bdd::scenario("Invalid route regex fails at registration, [net]") = [] {
+        tester::bdd::given("A server") = [] {
+            auto server = http::server{};
+            tester::bdd::then("Registering an unbalanced pattern throws regex_error") = [&server] {
+                check_throws_as<std::regex_error>([&server] { server.get("/broken/(["); });
+            };
+        };
+    };
+
     tester::bdd::scenario("Server start and stop sequence, [net]") = [] {
     if(not network_tests_enabled()) return;
 
