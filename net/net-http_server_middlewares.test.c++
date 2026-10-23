@@ -865,6 +865,34 @@ auto register_middleware_tests()
         };
     };
 
+    tester::bdd::scenario("origin_gate admits only listed Origins, [net]") = [] {
+        tester::bdd::given("A gate for https://app.example and any localhost port") = [] {
+            auto gate = ::http::middleware::origin_gate({"https://app.example"s, "http://localhost:*"s});
+            const auto status_for = [gate](std::optional<std::string_view> origin) -> std::optional<std::string> {
+                auto hdr = ::http::headers{};
+                if(origin)
+                    hdr.set("origin"sv, *origin);
+                if(auto denied = gate("/events"sv, hdr))
+                    return std::get<0>(*denied);
+                return std::nullopt;
+            };
+
+            tester::bdd::then("Listed Origins pass") = [status_for] {
+                check_false(status_for("https://app.example"sv).has_value());
+                check_false(status_for("http://localhost:5173"sv).has_value());
+                check_false(status_for("http://localhost"sv).has_value());
+            };
+
+            tester::bdd::then("Missing, foreign and look-alike Origins get 403") = [status_for] {
+                check_eq(status_for(std::nullopt).value_or(""s), ::http::status_forbidden);
+                check_eq(status_for("null"sv).value_or(""s), ::http::status_forbidden);
+                check_eq(status_for("https://evil.example"sv).value_or(""s), ::http::status_forbidden);
+                check_eq(status_for("https://app.example.evil.example"sv).value_or(""s), ::http::status_forbidden);
+                check_eq(status_for("http://localhost.evil.example"sv).value_or(""s), ::http::status_forbidden);
+            };
+        };
+    };
+
     tester::bdd::scenario("metrics_middleware - records OK request and scrape body, [net]") = [] {
         tester::bdd::given("A metrics middleware with a successful handler") = [] {
             auto registry = ::http::middleware::metrics_registry{};
