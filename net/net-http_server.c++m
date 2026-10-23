@@ -116,6 +116,58 @@ using body_view = std::string_view;
 using callback = std::function<response_with_headers(request_view, body_view, headers&)>;
 using callback_with_headers [[deprecated("use http::callback")]] = callback;
 
+// What http::server knows about a request, as views into its own buffers. Valid
+// only for the duration of the handler call. Nothing is parsed until asked:
+// path(), query() and capture() split the target or rerun the route on demand.
+struct request
+{
+    std::string_view method = {};
+    std::string_view target = {};   // request-target as received (path + optional query)
+    std::string_view peer = {};     // client address
+    const std::regex* route = nullptr;
+
+    std::string_view path() const
+    {
+        return target.substr(0, target.find('?'));
+    }
+
+    std::string_view query() const
+    {
+        const auto q = target.find('?');
+        return q == std::string_view::npos ? std::string_view{} : target.substr(q + 1);
+    }
+
+    // First `key=value` (or bare `key`) in the query. The value is still
+    // percent-encoded; decode it with net::url_decode when needed.
+    std::optional<std::string_view> query(std::string_view key) const
+    {
+        for(const auto part : query() | std::views::split('&'))
+        {
+            const auto field = std::string_view{part};
+            const auto eq = field.find('=');
+            if(field.substr(0, eq) == key)
+                return eq == std::string_view::npos ? std::string_view{} : field.substr(eq + 1);
+        }
+        return std::nullopt;
+    }
+
+    // Sub-match n of the route regex against the target; 0 is the whole target.
+    // Empty when there is no route, no match, or no such group.
+    std::string_view capture(std::size_t n) const
+    {
+        if(route == nullptr)
+            return {};
+        auto match = std::match_results<std::string_view::const_iterator>{};
+        if(not std::regex_match(target.begin(), target.end(), match, *route) or n >= match.size() or not match[n].matched)
+            return {};
+        return {match[n].first, match[n].second};
+    }
+};
+
+// Handler that receives the request as a struct. Register it with
+// controller::response(); old-style callback handlers keep working alongside it.
+using request_callback = std::function<response_with_headers(const request&, body_view, headers&)>;
+
 namespace detail
 {
 
@@ -255,10 +307,25 @@ public:
         m_callback = [c](auto&&...){ return make_response(status_ok, c); };
     }
 
-    controller& response(std::string_view ct, callback cb)
+    using request_callback = ::http::request_callback;
+
+    // Takes either handler shape: (request_view, body_view, headers&), or
+    // (const request&, body_view, headers&). The old shape is tested first, so
+    // a generic (auto, auto, auto&) lambda keeps receiving the target string;
+    // spell out const http::request& to get the struct.
+    template<typename F>
+        requires std::invocable<F&, request_view, body_view, headers&>
+              or std::invocable<F&, const ::http::request&, body_view, headers&>
+    controller& response(std::string_view ct, F&& handler)
     {
         m_content_type = std::string{ct};
-        m_callback = std::move(cb);
+        if constexpr(std::invocable<F&, request_view, body_view, headers&>)
+            m_callback = [cb = callback{std::forward<F>(handler)}](const ::http::request& r, body_view body, headers& h)
+            {
+                return cb(r.target, body, h);
+            };
+        else
+            m_callback = request_callback{std::forward<F>(handler)};
         return *this;
     }
 
@@ -282,10 +349,15 @@ public:
         return response(ct, std::move(cb));
     }
 
-    response_with_content_type render(request_view request, body_view body, headers& h) const
+    response_with_content_type render(const ::http::request& r, body_view body, headers& h) const
     {
-        auto [s, c, custom_h] = m_callback(request, body, h);
+        auto [s, c, custom_h] = m_callback(r, body, h);
         return {std::move(s), std::move(c), m_content_type, std::move(custom_h)};
+    }
+
+    response_with_content_type render(request_view target, body_view body, headers& h) const
+    {
+        return render(::http::request{.target = target}, body, h);
     }
 
     // WebSocket text handler: payload in → optional text frame out (nullopt = no reply).
@@ -363,7 +435,7 @@ public:
 private:
 
     content_type m_content_type = "*/*";
-    callback m_callback = [](request_view, body_view, headers&){ return make_response(status_ok, "Not Found"s); };
+    request_callback m_callback = [](const ::http::request&, body_view, headers&){ return make_response(status_ok, "Not Found"s); };
     websocket_callback m_ws_callback;
     sse_callback m_sse_callback;
     std::function<bool(std::string_view)> m_cors_origin;
@@ -2060,9 +2132,10 @@ private:
                                 method_allowed = true;
                                 try
                                 {
-                                    // Handlers receive URI only; expose method for metrics middleware.
+                                    // Old-style handlers receive the URI only; expose method for metrics middleware.
                                     hs.set("x-http-method"s, method);
-                                    std::tie(res_status, res_content, res_type, custom_headers) = it->second.render(uri, body, hs);
+                                    const auto req = request{.method = method, .target = uri, .peer = endpoint, .route = &pattern};
+                                    std::tie(res_status, res_content, res_type, custom_headers) = it->second.render(req, body, hs);
                                     if(not res_type.empty())
                                         break;
                                 }

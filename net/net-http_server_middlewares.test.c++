@@ -1273,6 +1273,44 @@ auto register_middleware_tests()
         };
     };
 
+    tester::bdd::scenario("Built-in middlewares wrap request_callback handlers, [net]") = [] {
+        tester::bdd::given("Authentication, correlation ID and metrics around a request handler") = [] {
+            auto registry = std::make_shared<::http::middleware::metrics_registry>();
+            auto middlewares = std::vector<::http::request_middleware_factory>{
+                ::http::middleware::metrics_middleware(*registry),
+                ::http::middleware::authentication_middleware(
+                    [](std::string_view target) { return target.starts_with("/public"sv); },
+                    [](std::string_view) { return false; }),
+                ::http::middleware::correlation_id_middleware(),
+            };
+            auto handler = [](const ::http::request& req, ::http::body_view, ::http::headers& hdr) {
+                const auto body = std::format("{} {} {} {}", req.method, req.path(), req.peer, hdr.contains("x-correlation-id"s));
+                return ::http::make_response(::http::status_ok, body);
+            };
+            auto wrapped = ::http::middleware::wrap(handler, middlewares);
+
+            tester::bdd::when("A public POST, a private GET and a scrape go through the chain") = [wrapped, registry] {
+                auto public_headers = ::http::headers{};
+                auto [public_status, public_body, public_hdrs] = wrapped(
+                    ::http::request{.method = "POST"sv, .target = "/public/x?y=1"sv, .peer = "10.0.0.7"sv}, ""sv, public_headers);
+                auto private_headers = ::http::headers{};
+                auto [private_status, private_body, private_hdrs] = wrapped(
+                    ::http::request{.method = "GET"sv, .target = "/private"sv}, ""sv, private_headers);
+                auto scrape_headers = ::http::headers{};
+                auto [scrape_status, scrape_body, scrape_hdrs] = wrapped(
+                    ::http::request{.method = "GET"sv, .target = "/metrics"sv}, ""sv, scrape_headers);
+
+                tester::bdd::then("The handler sees the struct and metrics use its method") = [=] {
+                    check_eq(public_status, ::http::status_ok);
+                    check_eq(public_body, "POST /public/x 10.0.0.7 true"s);
+                    check_eq(private_status, ::http::status_unauthorized);
+                    check_contains(scrape_body, R"(http_requests_total{method="POST",status="200",path="/public/x",scenario="-"} 1)");
+                    check_contains(scrape_body, R"(http_requests_total{method="GET",status="401",path="/private",scenario="-"} 1)");
+                };
+            };
+        };
+    };
+
     return true;
 }
 

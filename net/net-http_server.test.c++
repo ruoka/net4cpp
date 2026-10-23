@@ -252,6 +252,100 @@ auto register_server_tests()
     };
 #pragma clang diagnostic pop
 
+    tester::bdd::scenario("http::request parses path, query and captures on demand, [net]") = [] {
+        tester::bdd::given("A request matched by a route with two groups") = [] {
+            const auto route = std::regex{R"(/orders/([0-9]+)/(\w+)(\?.*)?)"};
+            const auto req = http::request{.method = "GET"sv, .target = "/orders/42/items?sort=asc&flag&q=a%20b"sv, .route = &route};
+
+            tester::bdd::then("Accessors return views into the target") = [&req] {
+                check_eq(req.path(), "/orders/42/items"sv);
+                check_eq(req.query(), "sort=asc&flag&q=a%20b"sv);
+                check_eq(req.query("sort").value_or("-"), "asc"sv);
+                check_eq(req.query("flag").value_or("-"), ""sv);
+                check_eq(req.query("q").value_or("-"), "a%20b"sv);
+                check_false(req.query("missing").has_value());
+                check_eq(req.capture(1), "42"sv);
+                check_eq(req.capture(2), "items"sv);
+                check_eq(req.capture(9), ""sv);
+            };
+            tester::bdd::then("No route or no query gives empty views") = [] {
+                const auto bare = http::request{.target = "/plain"sv};
+                check_eq(bare.query(), ""sv);
+                check_false(bare.query("x").has_value());
+                check_eq(bare.capture(0), ""sv);
+            };
+        };
+    };
+
+    tester::bdd::scenario("response() accepts both handler shapes, [net]") = [] {
+        tester::bdd::given("Old-style, generic and request handlers") = [] {
+            auto server = http::server{};
+            server.get("/old").response("text/plain", [](http::request_view target, http::body_view, http::headers&) {
+                return http::make_response(http::status_ok, std::string{target});
+            });
+            // A generic lambda keeps the old shape: std::string{target} needs a string_view.
+            server.get("/generic").response("text/plain", [](auto target, auto, auto&) {
+                return http::make_response(http::status_ok, std::string{target});
+            });
+            server.get("/new").response("text/plain", [](const http::request& req, http::body_view, http::headers&) {
+                return http::make_response(http::status_ok, std::format("{} {}", req.method, req.path()));
+            });
+
+            tester::bdd::then("Each handler gets the shape it asked for") = [&server] {
+                auto hs = http::headers{};
+                const auto req = [](std::string_view target) { return http::request{.method = "GET"sv, .target = target}; };
+                check_eq(std::get<1>(server.get("/old").render(req("/old?a=1"), "", hs)), "/old?a=1"s);
+                check_eq(std::get<1>(server.get("/generic").render(req("/generic"), "", hs)), "/generic"s);
+                check_eq(std::get<1>(server.get("/new").render(req("/new?a=1"), "", hs)), "GET /new"s);
+            };
+        };
+    };
+
+    tester::bdd::scenario("Request handlers see method, peer and route captures, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("A request handler on a route with a capture group") = [] {
+            auto server = std::make_shared<http::server>();
+            server->put("/items/([0-9]+)").response("text/plain", [](const http::request& req, http::body_view body, http::headers&) {
+                return http::make_response(http::status_ok, std::format("{}|{}|{}|{}", req.method, req.peer, req.capture(1), body));
+            });
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A client PUTs /items/7") = [server] {
+                auto response = std::make_shared<std::string>();
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    try
+                    {
+                        const auto port_s = std::to_string(port);
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream << "PUT /items/7 HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
+                               << "Content-Length: 2" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << "hi" << net::flush;
+                        auto c = ' ';
+                        while(stream and stream.get(c))
+                            response->push_back(c);
+                    }
+                    catch(...) {}
+                    server->stop();
+                }
+                if(server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("The body echoes method, peer, capture and body") = [response] {
+                    check_contains(*response, "HTTP/1.1 200 OK"s);
+                    check_contains(*response, "PUT|127.0.0.1|7|hi"s);
+                };
+            };
+        };
+    };
+
     tester::bdd::scenario("Invalid route regex fails at registration, [net]") = [] {
         tester::bdd::given("A server") = [] {
             auto server = http::server{};

@@ -91,6 +91,26 @@ catch(const exception& e)
 }
 ```
 
+## Request handlers
+
+A handler that spells out `const http::request&` gets the method, target, peer
+address and matched route. Nothing is parsed until it asks: `path()`, `query()`,
+`query(key)` and `capture(n)` split the target or rerun the route regex on demand.
+Handlers taking `http::request_view` (the raw target) keep working unchanged, and
+the built-in middlewares wrap both kinds.
+
+```cpp
+auto server = http::server{};
+server.get("/orders/([0-9]+)").response("application/json",
+    [](const http::request& req, http::body_view, http::headers&) {
+        const auto id = req.capture(1);
+        const auto sort = req.query("sort").value_or("asc");
+        return http::make_response(http::status_ok,
+            std::format(R"({{"id":{},"sort":"{}","from":"{}"}})", id, sort, req.peer));
+    });
+server.listen("127.0.0.1", "8080");
+```
+
 # Http Request Example
 
 ```cpp

@@ -17,6 +17,8 @@ using namespace std::string_view_literals;
 
 // Middleware factory type for composing middleware chains
 using middleware_factory = std::function<callback(callback next)>;
+// Same for request_callback handlers. Built-in middlewares convert to either.
+using request_middleware_factory = std::function<request_callback(request_callback next)>;
 
 namespace middleware
 {
@@ -64,6 +66,27 @@ inline callback wrap(callback endpoint, std::span<const middleware_factory> midd
     return chain;
 }
 
+inline request_callback wrap(request_callback endpoint, std::span<const request_middleware_factory> middlewares) noexcept
+{
+    auto chain = std::move(endpoint);
+    for (auto&& mw_factory : middlewares | std::views::reverse)
+    {
+        chain = mw_factory(std::move(chain));
+    }
+    return chain;
+}
+
+// Request target for either handler shape.
+inline std::string_view target_of(request_view req) noexcept
+{
+    return req;
+}
+
+inline std::string_view target_of(const request& req) noexcept
+{
+    return req.target;
+}
+
 // Optional middleware factories for common HTTP server needs
 
 // Quote a Basic realm. " and \ are escaped. CR, LF, and NUL are omitted so the
@@ -103,14 +126,14 @@ inline auto authentication_middleware(
 {
     return [is_public_path = std::forward<IsPublicPath>(is_public_path), 
             validate_token = std::forward<ValidateToken>(validate_token),
-            realm = std::string{realm}](callback next)
+            realm = std::string{realm}](auto next)
     {
         return [is_public_path, validate_token, realm, next = std::move(next)](auto req, auto body, auto hdr) mutable
         {
             using namespace std::string_literals;
             
             // Check if path is public (no authentication required)
-            if(is_public_path(req))
+            if(is_public_path(target_of(req)))
             {
                 return next(req, body, hdr);
             }
@@ -141,7 +164,7 @@ inline auto authentication_middleware(
 // Returns 413 Payload Too Large if body exceeds max_size
 inline auto body_size_validation_middleware(std::size_t max_size)
 {
-    return [max_size](callback next)
+    return [max_size](auto next)
     {
         return [max_size, next = std::move(next)](auto req, auto body, auto hdr) mutable
         {
@@ -162,7 +185,7 @@ inline auto body_size_validation_middleware(std::size_t max_size)
 // Uses accepts_json() from net-http_headers to check for JSON acceptance
 inline auto accept_validation_middleware(std::string_view required_content_type = "application/json"sv)
 {
-    return [required_content_type = std::string{required_content_type}](callback next)
+    return [required_content_type = std::string{required_content_type}](auto next)
     {
         return [required_content_type, next = std::move(next)](auto req, auto body, auto hdr) mutable
         {
@@ -200,7 +223,7 @@ inline auto accept_validation_middleware(std::string_view required_content_type 
 // Generates UUIDv4 if header is missing, allowing request tracking across services
 inline auto correlation_id_middleware()
 {
-    return [](callback next)
+    return [](auto next)
     {
         return [next = std::move(next)](auto req, auto body, auto& hdr) mutable
         {
@@ -309,7 +332,7 @@ inline auto rate_limiting_middleware(
     if(not limiter)
         limiter = make_rate_limiter();
 
-    return [max_requests, window_seconds, key_extractor = std::forward<KeyExtractorFunc>(key_extractor), limiter](callback next)
+    return [max_requests, window_seconds, key_extractor = std::forward<KeyExtractorFunc>(key_extractor), limiter](auto next)
     {
         return [max_requests, window_seconds, key_extractor, limiter, next = std::move(next)](auto req, auto body, auto hdr) mutable
         {
@@ -319,7 +342,7 @@ inline auto rate_limiting_middleware(
             std::string key;
             try
             {
-                key = key_extractor(req, hdr);
+                key = key_extractor(target_of(req), hdr);
             }
             catch(const std::exception&)
             {
@@ -449,7 +472,7 @@ inline auto cors_middleware(
             allowed_methods = std::move(allowed_methods),
             allowed_headers = std::move(allowed_headers),
             allow_credentials,
-            max_age](callback next)
+            max_age](auto next)
     {
         return [allowed_origin, allowed_methods, allowed_headers, allow_credentials, max_age, next = std::move(next)](auto req, auto body, auto hdr) mutable -> response_with_headers
         {
@@ -807,6 +830,15 @@ inline std::pair<std::string, std::string_view> metrics_resolve_method_and_targe
     return {std::string{parsed_method}, target};
 }
 
+inline std::pair<std::string, std::string_view> metrics_resolve_method_and_target(
+    const request& req,
+    const headers& hdr)
+{
+    if(req.method.empty())
+        return metrics_resolve_method_and_target(req.target, hdr);
+    return {std::string{req.method}, req.target.empty() ? "/"sv : req.target};
+}
+
 inline bool is_metrics_scrape_request(std::string_view method, std::string_view target)
 {
     if(method != "GET"sv and method != "get"sv)
@@ -828,7 +860,7 @@ inline bool is_metrics_scrape_request(std::string_view method, std::string_view 
 // production keeps the default http_metrics() singleton (already mutex-protected per op).
 inline auto metrics_middleware(metrics_registry& registry = http_metrics())
 {
-    return [&registry](callback next)
+    return [&registry](auto next)
     {
         return [next = std::move(next), &registry](auto req, auto body, auto hdr) mutable
         {
