@@ -79,6 +79,30 @@ auto register_uuid_tests()
         };
     };
 
+    // Session IDs are generated on a fresh thread per connection.
+    tester::bdd::scenario("random_bytes differs across fresh threads, [net]") = [] {
+        tester::bdd::given("64 threads that each draw 16 bytes once") = [] {
+            auto draws = std::vector<std::array<std::uint8_t, 16>>(64);
+            {
+                auto threads = std::vector<std::jthread>{};
+                for(auto& draw : draws)
+                    threads.emplace_back([&draw] { draw = net::random_bytes<16>(); });
+            }
+
+            tester::bdd::then("Every draw is distinct and every byte position varies") = [&draws] {
+                const auto unique = std::set(draws.begin(), draws.end());
+                check_eq(unique.size(), draws.size());
+                for(auto i = 0uz; i < 16; ++i)
+                {
+                    auto values = std::set<std::uint8_t>{};
+                    for(const auto& draw : draws)
+                        values.insert(draw[i]);
+                    check_true(values.size() > 1);
+                }
+            };
+        };
+    };
+
     return true;
 }
 

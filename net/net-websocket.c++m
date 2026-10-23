@@ -10,6 +10,7 @@ import :http_base64;
 import :http_headers;
 import :uri;
 import :utils;
+import :uuid;
 import std;
 
 export namespace net::websocket {
@@ -115,18 +116,20 @@ inline std::array<std::byte, 20> sha1_digest(std::string_view message)
     return digest;
 }
 
+// RFC 6455 §5.3 wants masking keys from a strong source of entropy. Drawn
+// straight from std::random_device (see net::random_bytes); thread_local
+// because the client masks every frame it sends.
 inline std::uint32_t random_u32()
 {
-    thread_local std::mt19937 gen{std::random_device{}()};
-    return std::uniform_int_distribution<std::uint32_t>{}(gen);
+    static_assert(sizeof(std::random_device::result_type) >= 4);
+    thread_local auto device = std::random_device{};
+    return static_cast<std::uint32_t>(device());
 }
 
 inline std::string random_websocket_key()
 {
-    std::array<char, 16> bytes{};
-    for(auto& b : bytes)
-        b = static_cast<char>(random_u32() & 0xFFu);
-    return ::http::base64::encode(std::string_view{bytes.data(), bytes.size()});
+    const auto bytes = net::random_bytes<16>();
+    return ::http::base64::encode(std::string_view{reinterpret_cast<const char*>(bytes.data()), bytes.size()});
 }
 
 inline frame mask_frame(frame f)
