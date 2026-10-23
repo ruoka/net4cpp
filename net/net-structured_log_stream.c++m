@@ -272,30 +272,62 @@ private:
         }
     }
 
+    // Appends the escape for a control character (below 0x20, or DEL), in JSON
+    // form for both formats. Raw, a CR / LF forges a separate log entry and an
+    // ESC reaches whoever tails the log in a terminal. False for other bytes.
+    static bool append_control_escape(std::string& out, char c) {
+        switch (c) {
+            case '\b': out += "\\b"; return true;
+            case '\f': out += "\\f"; return true;
+            case '\n': out += "\\n"; return true;
+            case '\r': out += "\\r"; return true;
+            case '\t': out += "\\t"; return true;
+            default: break;
+        }
+        const auto byte = static_cast<unsigned char>(c);
+        if (byte < 0x20 or byte == 0x7F) {
+            out += std::format("\\u{:04x}", byte);
+            return true;
+        }
+        return false;
+    }
+
     static std::string json_escape(std::string_view s) {
         std::string esc;
         esc.reserve(s.size());
         for (char c : s) {
-            switch (c) {
-                case '"':  esc += "\\\""; break;
-                case '\\': esc += "\\\\"; break;
-                case '\b': esc += "\\b";  break;
-                case '\f': esc += "\\f";  break;
-                case '\n': esc += "\\n";  break;
-                case '\r': esc += "\\r";  break;
-                case '\t': esc += "\\t";  break;
-                default:   esc += c;      break;
+            if (c == '"' or c == '\\') {
+                esc += '\\';
+                esc += c;
+            } else if (not append_control_escape(esc, c)) {
+                esc += c;
             }
         }
         return esc;
     }
 
-    static std::string sd_escape(const std::string& s) {
+    // RFC 5424 PARAM-VALUE: `"`, `\`, and `]` are escaped with a backslash.
+    static std::string sd_escape(std::string_view s) {
         std::string esc;
         esc.reserve(s.size());
         for (char c : s) {
-            if (c == '"' or c == '\\' or c == ']') esc += '\\';
-            esc += c;
+            if (c == '"' or c == '\\' or c == ']') {
+                esc += '\\';
+                esc += c;
+            } else if (not append_control_escape(esc, c)) {
+                esc += c;
+            }
+        }
+        return esc;
+    }
+
+    // Syslog MSG part: free text, so only control characters need escaping.
+    static std::string msg_escape(std::string_view s) {
+        std::string esc;
+        esc.reserve(s.size());
+        for (char c : s) {
+            if (not append_control_escape(esc, c))
+                esc += c;
         }
         return esc;
     }
@@ -461,7 +493,7 @@ private:
                 full_line << "]";
             }
 
-            full_line << " \xEF\xBB\xBF" << local.human_message.str();  // Space + BOM + MSG
+            full_line << " \xEF\xBB\xBF" << msg_escape(local.human_message.str());  // Space + BOM + MSG
         }
 
         std::string line = full_line.str();
