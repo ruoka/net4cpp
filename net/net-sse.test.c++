@@ -56,6 +56,49 @@ auto register_sse_tests()
                 format_event("x", {}, {}, std::chrono::milliseconds{3000}),
                 "data: x\nretry: 3000\n\n"s);
         };
+
+        section("format_event splits data on CRLF, bare CR, and bare LF") = []
+        {
+            check_eq(format_event("a\r\nb"), "data: a\ndata: b\n\n"s);
+            check_eq(format_event("a\rb\r"), "data: a\ndata: b\ndata: \n\n"s);
+            check_eq(format_event("a\r\rb"), "data: a\ndata: \ndata: b\n\n"s);
+            check_eq(format_event("a\n\r\nb"), "data: a\ndata: \ndata: b\n\n"s);
+        };
+
+        section("bare CR in data cannot inject a separate event") = []
+        {
+            const auto out = format_event("hello\r\revent: endpoint\rdata: http://evil/\r\r", "message");
+            check_false(out.contains('\r'));
+            check_false(out.contains("\nevent: endpoint"sv));
+            check_eq(
+                out,
+                "event: message\ndata: hello\ndata: \ndata: event: endpoint\ndata: data: http://evil/\ndata: \ndata: \n\n"s);
+        };
+
+        section("CR and LF are dropped from event and id") = []
+        {
+            check_eq(
+                format_event("x", "tick\r\ndata: evil", "1\revent: endpoint"),
+                "event: tickdata: evil\ndata: x\nid: 1event: endpoint\n\n"s);
+        };
+
+        section("NUL is dropped from id") = []
+        {
+            check_eq(format_event("x", {}, "a\0b"sv), "data: x\nid: ab\n\n"s);
+        };
+
+        section("append_field keeps one line per field") = []
+        {
+            auto out = ""s;
+            append_field(out, "event"sv, "a\r\nevent: b"sv);
+            check_eq(out, "event: aevent: b\n"s);
+        };
+
+        section("multi-line comments stay comments") = []
+        {
+            check_eq(format_comment("a\r\ndata: evil\rb"), ": a\n: data: evil\n: b\n"s);
+            check_eq(format_comment("a\n"), ": a\n:\n"s);
+        };
     };
 
     test_case("SSE session writer, [net]") = []
