@@ -268,15 +268,34 @@ inline rate_limiter_ptr make_rate_limiter()
     return std::make_shared<rate_limiter>();
 }
 
-// Default key extractor for rate limiting - extracts from common proxy headers
+// Default key extractor for rate limiting: the client address one reverse proxy
+// reports. Only the rightmost X-Forwarded-For entry was added by that proxy;
+// anything left of it is whatever the client sent. Keying on the whole header
+// let a client behind an appending proxy (nginx $proxy_add_x_forwarded_for)
+// pick a fresh key per request, skip the limit, and grow the key table.
+// Behind more than one proxy, the rightmost entry is the inner proxy's view;
+// pass a custom extractor there.
 inline auto default_rate_limit_key_extractor(std::string_view, const headers& hdr)
 {
-    using namespace std::string_literals;
-    // Try to extract from common headers (proxy headers, then fallback)
-    if(hdr.contains("x-forwarded-for"s))
-        return std::string{hdr["x-forwarded-for"s]};
-    if(hdr.contains("x-real-ip"s))
-        return std::string{hdr["x-real-ip"s]};
+    const auto trim = [](std::string_view s) {
+        const auto ows = [](char c) { return c == ' ' or c == '\t'; };
+        const auto first = std::ranges::find_if_not(s, ows);
+        const auto last = std::ranges::find_if_not(s | std::views::reverse, ows).base();
+        return first < last ? std::string_view{first, last} : std::string_view{};
+    };
+    if(const auto forwarded = hdr.try_get("x-forwarded-for"sv))
+    {
+        auto last = std::string_view{};
+        for(const auto entry : *forwarded | std::views::split(','))
+            last = std::string_view{entry};
+        if(const auto client = trim(last); not client.empty())
+            return std::string{client};
+    }
+    if(const auto real_ip = hdr.try_get("x-real-ip"sv))
+    {
+        if(const auto value = trim(*real_ip); not value.empty())
+            return std::string{value};
+    }
     return "unknown"s; // Indicates missing client identification
 }
 
