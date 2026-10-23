@@ -163,8 +163,15 @@ struct request
         if(route == nullptr)
             return {};
         auto match = std::match_results<std::string_view::const_iterator>{};
-        if(not std::regex_match(target.begin(), target.end(), match, *route) or n >= match.size() or not match[n].matched)
+        try
+        {
+            if(not std::regex_match(target.begin(), target.end(), match, *route) or n >= match.size() or not match[n].matched)
+                return {};
+        }
+        catch(const std::regex_error&)
+        {
             return {};
+        }
         return {match[n].first, match[n].second};
     }
 };
@@ -1512,7 +1519,7 @@ private:
                     const route_entry* matched = nullptr;
                     for(const auto& route : m_router)
                     {
-                        if(not std::regex_match(path_only, route.pattern))
+                        if(not route_matches(route, path_only))
                             continue;
                         if(route.methods.contains(method_ws) and route.methods.at(method_ws).has_websocket())
                         {
@@ -1655,7 +1662,7 @@ private:
                     const route_entry* matched = nullptr;
                     for(const auto& route : m_router)
                     {
-                        if(not std::regex_match(path_only, route.pattern))
+                        if(not route_matches(route, path_only))
                             continue;
                         if(route.methods.contains(method_sse) and route.methods.at(method_sse).has_sse())
                         {
@@ -2120,9 +2127,10 @@ private:
                     // query pattern; a match is also a guarantee to the handler
                     // that path (and query, when patterned) are well-formed.
                     // Path-only matching (626b26f) broke that contract.
-                    for(const auto& [path, pattern, methods_map] : m_router)
-                        if(std::regex_match(uri, pattern))
+                    for(const auto& route : m_router)
+                        if(route_matches(route, uri))
                         {
+                            const auto& [path, pattern, methods_map] = route;
                             route_found = true;
                             auto it = methods_map.find(method);
                             // HEAD / OPTIONS without a dedicated handler: reuse GET.
@@ -2429,6 +2437,25 @@ private:
         if(it == m_router.end())
             it = m_router.insert(m_router.end(), route_entry{std::string{path}, std::regex{path.begin(), path.end()}, {}});
         return it->methods;
+    }
+
+    // libc++ throws regex_error (error_complexity) instead of backtracking without
+    // bound, e.g. "/(\w+/?)+" on a near-miss target. Treat that as no match so
+    // later routes are still tried and an unmatched target gets 404, not 500.
+    static bool route_matches(const route_entry& route, std::string_view target)
+    {
+        try
+        {
+            return std::regex_match(target.begin(), target.end(), route.pattern);
+        }
+        catch(const std::regex_error& e)
+        {
+            net::slog << net::warning("HTTP_ROUTE_REGEX_ERROR") << "route pattern \"" << route.path << "\" gave up matching: " << e.what()
+                      << std::pair{"route", route.path}
+                      << std::pair{"target_length", target.size()}
+                      << net::flush;
+            return false;
+        }
     }
 
     router_type m_router = {};

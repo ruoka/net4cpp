@@ -414,6 +414,71 @@ auto register_server_tests()
         };
     };
 
+    tester::bdd::scenario("capture() is empty when the route regex gives up, [net]") = [] {
+        tester::bdd::given("A request on an ambiguous route and a near-miss target") = [] {
+            const auto route = std::regex{R"(/(\w+/?)+)"};
+            const auto target = "/" + std::string(40, 'a') + "~";
+            const auto req = http::request{.target = target, .route = &route};
+
+            tester::bdd::then("capture() returns an empty view instead of throwing") = [&req] {
+                check_nothrow([&req] { (void)req.capture(1); });
+                check_eq(req.capture(1), ""sv);
+            };
+        };
+    };
+
+    tester::bdd::scenario("A route whose regex gives up does not hide later routes, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An ambiguous route registered before a simple one") = [] {
+            auto server = std::make_shared<http::server>();
+            server->get(R"(/(\w+/?)+)").text("ambiguous");
+            server->get("/[a-z]+!").text("later");
+            server->timeout(std::chrono::seconds{1});
+
+            auto read_response = [](std::uint16_t port, std::string_view path) {
+                auto response = ""s;
+                const auto port_s = std::to_string(port);
+                auto stream = connect("127.0.0.1", port_s);
+                stream << "GET " << path << " HTTP/1.1" << net::crlf
+                       << "Host: 127.0.0.1:" << port_s << net::crlf
+                       << "Connection: close" << net::crlf
+                       << net::crlf
+                       << net::flush;
+                auto c = ' ';
+                while(stream and stream.get(c))
+                    response.push_back(c);
+                return response;
+            };
+
+            tester::bdd::when("Near-miss targets of 40 characters arrive") = [server, read_response] {
+                auto later = std::make_shared<std::string>();
+                auto unmatched = std::make_shared<std::string>();
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    try
+                    {
+                        *later = read_response(port, "/" + std::string(40, 'a') + "!");
+                        *unmatched = read_response(port, "/" + std::string(40, 'a') + "~");
+                    }
+                    catch(...) {}
+                    server->stop();
+                }
+                if(server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("The later route answers and an unmatched target is 404") = [later, unmatched] {
+                    check_contains(*later, "HTTP/1.1 200 OK"s);
+                    check_contains(*later, "later"s);
+                    check_contains(*unmatched, "HTTP/1.1 404 Not Found"s);
+                };
+            };
+        };
+    };
+
     tester::bdd::scenario("Server start and stop sequence, [net]") = [] {
     if(not network_tests_enabled()) return;
 

@@ -75,6 +75,18 @@ catch(const exception& e)
 address. Route paths are regular expressions matched against the whole request
 target, tried in registration order; the first route with a handler for the method wins.
 
+The target is client-controlled, so keep route patterns cheap to reject:
+
+- Start with a literal prefix (`/orders/[0-9]+`, not `/.*orders`), so unrelated
+  targets fail on the first characters.
+- Avoid nested or overlapping repetition such as `(\w+/?)+` or `(a|a)*`. A near-miss
+  target makes `std::regex` try every way to split it. libc++ gives up after a fixed
+  amount of work; the server then logs `HTTP_ROUTE_REGEX_ERROR`, treats the route as
+  not matching, and goes on to the next one.
+
+A literal prefix alone does not make a pattern safe: `/(\w+/?)+` starts with `/`
+and still gives up on `/aaaaaaaaaaaaaa!`.
+
 ```cpp
 import net;
 import std;
