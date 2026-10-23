@@ -535,6 +535,23 @@ inline auto cors_middleware(
     };
 }
 
+// Gate for ws() / sse() routes, installed with controller::gate(). Middlewares
+// do not wrap those takeovers, and browsers send cookies on cross-site WebSocket
+// and EventSource requests without a CORS preflight, so the Origin check has to
+// happen here. A missing Origin is rejected too: install the gate only on
+// routes browsers use, since non-browser clients usually send none.
+// Patterns match like MCP allowed origins: exact, or `http://host:*`.
+inline auto origin_gate(std::vector<std::string> allowed_origins)
+{
+    return controller::sse_gate{
+        [allowed = std::move(allowed_origins)](request_view, headers& hdr) -> std::optional<response_with_headers>
+        {
+            if(const auto origin = hdr.try_get("origin"sv); origin and value_allowed(*origin, allowed))
+                return std::nullopt;
+            return make_error_response(status_forbidden, "Invalid Origin header"sv);
+        }};
+}
+
 // Prometheus HTTP metrics: request counters + duration histogram.
 // Labels: method, status, path (no query; numeric segments → {id}), scenario
 // (X-Metrics-Scenario or "-"). GET /metrics is served by the middleware (not counted).

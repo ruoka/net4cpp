@@ -485,30 +485,8 @@ inline std::optional<std::string_view> json_object_field(std::string_view json, 
 
 } // namespace detail
 
-// Host/Origin pattern match: exact, or `host:*` / `http://host:*` (port wildcard).
-inline bool match_allow_pattern(std::string_view value, std::string_view pattern)
-{
-    if(pattern.ends_with(":*"sv))
-    {
-        const auto prefix = pattern.substr(0, pattern.size() - 2);
-        if(value == prefix)
-            return true;
-        if(value.starts_with(prefix) and value.size() > prefix.size() and value[prefix.size()] == ':')
-            return true;
-        return false;
-    }
-    return value == pattern;
-}
-
-inline bool value_allowed(std::string_view value, std::span<const std::string> patterns)
-{
-    for(const auto& p : patterns)
-    {
-        if(match_allow_pattern(value, p))
-            return true;
-    }
-    return false;
-}
+using http::match_allow_pattern;
+using http::value_allowed;
 
 inline std::vector<std::string> default_allowed_hosts()
 {

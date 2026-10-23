@@ -5,6 +5,7 @@
 module net;
 import :endpointbuf;
 import :endpointstream;
+import :http_server_middlewares;
 import :posix;
 import :socket;
 import :websocket;
@@ -687,6 +688,51 @@ auto register_websocket_tests()
         check_eq(status_of(""), "403"s);
         check_eq(status_of("https://evil.example"), "403"s);
         check_eq(status_of("https://app.example"), "101"s);
+
+        server->stop();
+        if(server_thread.joinable())
+            server_thread.join();
+    };
+
+    tester::bdd::scenario("origin_gate guards a websocket route, [net]") = [] {
+        if(not network_tests_enabled())
+            return;
+
+        auto server = std::make_shared<http::server>();
+        server->ws("/echo")
+            .gate(http::middleware::origin_gate({"http://localhost:*"s}))
+            .ws([](std::string_view) {
+                return text_reply{};
+            });
+
+        using namespace std::chrono_literals;
+        auto [server_thread, port] = listen_ephemeral(server);
+        require_true(port != 0);
+        const auto port_s = std::to_string(port);
+        std::this_thread::sleep_for(50ms);
+
+        auto status_of = [&](std::string_view origin) {
+            auto client = net::connect("127.0.0.1", port_s);
+            client.read_timeout(2s);
+            client << "GET /echo HTTP/1.1" << net::crlf
+                   << "Host: 127.0.0.1:" << port_s << net::crlf
+                   << "Upgrade: websocket" << net::crlf
+                   << "Connection: Upgrade" << net::crlf
+                   << "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" << net::crlf
+                   << "Sec-WebSocket-Version: 13" << net::crlf;
+            if(not origin.empty())
+                client << "Origin: " << origin << net::crlf;
+            client << net::crlf << net::flush;
+
+            auto version = ""s;
+            auto status_code = ""s;
+            client >> version >> status_code;
+            return status_code;
+        };
+
+        check_eq(status_of(""), "403"s);
+        check_eq(status_of("http://localhost.evil.example"), "403"s);
+        check_eq(status_of("http://localhost:3000"), "101"s);
 
         server->stop();
         if(server_thread.joinable())
