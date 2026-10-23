@@ -46,7 +46,9 @@ const auto status_not_acceptable = "406 Not Acceptable"s;
 const auto status_conflict = "409 Conflict"s;
 const auto status_gone = "410 Gone"s;
 const auto status_precondition_failed = "412 Precondition Failed"s;
+const auto status_request_timeout = "408 Request Timeout"s;
 const auto status_payload_too_large = "413 Payload Too Large"s;
+const auto status_expectation_failed = "417 Expectation Failed"s;
 const auto status_unprocessable_entity = "422 Unprocessable Entity"s;
 const auto status_too_many_requests = "429 Too Many Requests"s;
 const auto status_request_header_fields_too_large = "431 Request Header Fields Too Large"s;
@@ -57,6 +59,27 @@ const auto status_service_unavailable = "503 Service Unavailable"s;
 // upgrade-response head limit; unbounded operator>> / getline can OOM a
 // server before max_request_body_size applies.
 inline constexpr auto default_max_request_head_size = std::size_t{16 * 1024};
+
+// Cap Content-Length before the body is allocated. The previous default was
+// unlimited, so one declared length near 2^63 allocated until bad_alloc.
+// 1 MiB matches the YarDB limit. Raise it with max_request_body_size().
+inline constexpr auto default_max_request_body_size = std::size_t{1024 * 1024};
+
+// Idle gap between bytes on an accepted connection. Separate from server::timeout,
+// which only wakes the accept poll. Zero blocks. WebSocket and SSE clear it
+// when they take over the socket.
+inline constexpr auto default_read_timeout = std::chrono::milliseconds{30'000};
+
+// Handler threads for accepted connections. Each one is its own thread, so an
+// open cap lets a Slowloris against the origin port spawn without bound.
+// Zero means no cap.
+inline constexpr auto default_max_connections = std::size_t{128};
+
+// Fixed product token. gethostname() leaked the machine name to every scanner.
+inline constexpr auto server_token = "net"sv;
+
+// Protocol errors and 404s. "*/*" is not a media type and invites MIME sniffing.
+inline constexpr auto error_content_type = "text/plain; charset=utf-8"sv;
 
 using status = std::string;
 using content = std::string;
@@ -442,7 +465,30 @@ public:
                     // destroy server-owned state (routes, MCP sessions) while a
                     // detached handle() is still running — that UAF showed up as
                     // flaky SIGSEGV/SIGABRT under parallel test --jobs.
-                    m_active_handlers.fetch_add(1, std::memory_order_acq_rel);
+                    // The same count is the connection cap. A full cap is answered
+                    // here, on the accept thread, so it does not take another thread.
+                    if(not reserve_connection())
+                    {
+                        try
+                        {
+                            auto& stream = std::get<0>(client);
+                            const auto& peer = std::get<1>(client);
+                            const auto& peer_port = std::get<2>(client);
+                            net::slog << net::warning("HTTP_CONNECTION_LIMIT") << "connection cap reached from " << peer << ":" << peer_port
+                                      << std::pair{"ip"sv, peer}
+                                      << std::pair{"port", peer_port}
+                                      << std::pair{"max_connections", static_cast<long long>(m_max_connections)}
+                                      << std::pair{"status", status_service_unavailable}
+                                      << net::flush;
+                            // date() is auto and defined later, so the bytes live with the other writers.
+                            write_service_unavailable(stream);
+                        }
+                        catch(const std::exception& e)
+                        {
+                            net::slog << net::warning("HTTP_CONNECTION_LIMIT") << "failed to write connection-cap response: " << e.what() << net::flush;
+                        }
+                        continue;
+                    }
                     try
                     {
                         std::thread{[client_data = std::move(client), this]() mutable
@@ -563,9 +609,22 @@ public:
         m_timeout = t;
     }
 
+    // Idle timeout for request bytes on an accepted connection. Applied in
+    // handle() via endpointstream::read_timeout. Does not affect accept().
+    // WebSocket and SSE clear it for the lifetime of the taken-over socket.
+    std::chrono::milliseconds read_timeout() const
+    {
+        return m_read_timeout;
+    }
+
+    void read_timeout(std::chrono::milliseconds t)
+    {
+        m_read_timeout = t;
+    }
+
     // Cap Content-Length before allocating/reading the body. Middleware that
-    // inspects body.size() cannot prevent the allocation — set this on the
-    // server (YarDB uses 1 MiB). Default is unlimited for backward compatibility.
+    // inspects body.size() cannot prevent the allocation — the check below
+    // runs first. Default is default_max_request_body_size (1 MiB).
     std::size_t max_request_body_size() const
     {
         return m_max_request_body_size;
@@ -586,6 +645,30 @@ public:
     void max_request_head_size(std::size_t bytes)
     {
         m_max_request_head_size = bytes;
+    }
+
+    // X-Frame-Options: DENY on every response. Turn this off for HTML that is
+    // embedded. A handler may then set its own X-Frame-Options.
+    bool frame_options() const
+    {
+        return m_frame_options;
+    }
+
+    void frame_options(bool enabled)
+    {
+        m_frame_options = enabled;
+    }
+
+    // In-flight accepted connections. Default is default_max_connections.
+    // Zero disables the cap. Set this before listen().
+    std::size_t max_connections() const
+    {
+        return m_max_connections;
+    }
+
+    void max_connections(std::size_t n)
+    {
+        m_max_connections = n;
     }
 
     // Signal the listen loop to exit and close listen sockets so accept wait
@@ -623,6 +706,29 @@ public:
     }
 
 private:
+
+    // Reserve one handler slot. False when the cap is already full.
+    // Zero max_connections does not cap.
+    bool reserve_connection()
+    {
+        if(m_max_connections == 0)
+        {
+            m_active_handlers.fetch_add(1, std::memory_order_acq_rel);
+            return true;
+        }
+
+        auto current = m_active_handlers.load(std::memory_order_acquire);
+        while(current < m_max_connections)
+        {
+            if(m_active_handlers.compare_exchange_weak(
+                   current,
+                   current + 1,
+                   std::memory_order_acq_rel,
+                   std::memory_order_acquire))
+                return true;
+        }
+        return false;
+    }
 
     void handler_finished()
     {
@@ -672,8 +778,9 @@ private:
             stream->shutdown();
     }
 
-    // Read through the terminating blank line. Empty return means the peer
-    // closed before a complete head arrived. Throws when max_bytes is hit so
+    // Read through the terminating blank line. A short read returns the bytes
+    // received so far (possibly empty). The caller uses read_timed_out() to
+    // tell an idle timeout from a peer close. Throws when max_bytes is hit so
     // a hostile client cannot grow memory without bound via request-line or
     // header fields (body size is capped separately).
     //
@@ -698,7 +805,7 @@ private:
 
             const auto ch = stream.get();
             if(not stream.good())
-                return ""s;
+                return head;
 
             head.push_back(static_cast<char>(ch));
         }
@@ -747,26 +854,97 @@ private:
         return has_ctl(name) or has_ctl(value);
     }
 
-    static void write_custom_response_headers(std::ostream& os, const headers& hdrs)
+    static bool header_value_has_ctl(std::string_view s)
+    {
+        return std::ranges::any_of(s, [](char c)
+        {
+            return c == '\r' or c == '\n' or c == '\0';
+        });
+    }
+
+    // Server-owned browser headers. A later custom copy would override the
+    // default. X-Frame-Options stays available to the handler when the
+    // default DENY is turned off.
+    bool is_server_owned_header(std::string_view name) const
+    {
+        auto lower = std::string{name};
+        utils::ascii_to_lower(lower);
+        if(lower == "x-content-type-options"sv or lower == "referrer-policy"sv
+           or lower == "permissions-policy"sv)
+            return true;
+        return m_frame_options and lower == "x-frame-options"sv;
+    }
+
+    void write_custom_response_headers(std::ostream& os, const headers& hdrs) const
     {
         for(const auto& [name, value] : hdrs)
         {
-            if(is_unsafe_response_header(name, value))
+            if(is_unsafe_response_header(name, value) or is_server_owned_header(name))
                 continue;
             os << name << ": " << value << net::crlf;
         }
     }
 
-    const auto& host() const
+    // Expect is a comma-separated list. Only 100-continue is understood.
+    enum class expect_kind { absent, continue_ok, unsupported };
+
+    static expect_kind classify_expect(std::string_view field)
     {
-        static auto s_host = []() {
-            char buffer[net::posix::ni_maxhost];
-            if (net::posix::gethostname(buffer, net::posix::ni_maxhost) == 0) {
-                return std::string{buffer};
-            }
-            return std::string{"localhost"};
-        }();
-        return s_host;
+        auto saw_continue = false;
+        while(not field.empty())
+        {
+            const auto comma = field.find(',');
+            const auto token = utils::trim(comma == std::string_view::npos ? field : field.substr(0, comma));
+            field = comma == std::string_view::npos ? std::string_view{} : field.substr(comma + 1);
+            if(token.empty())
+                continue;
+            auto lower = std::string{token};
+            utils::ascii_to_lower(lower);
+            if(lower == "100-continue"sv)
+                saw_continue = true;
+            else
+                return expect_kind::unsupported;
+        }
+        return saw_continue ? expect_kind::continue_ok : expect_kind::absent;
+    }
+
+    void write_service_unavailable(net::endpointstream& stream) const
+    {
+        stream << "HTTP/1.1 " << status_service_unavailable << net::crlf
+               << "Date: " << date() << net::crlf
+               << "Server: " << server_token << net::crlf
+               << "X-Content-Type-Options: nosniff" << net::crlf
+               << "Referrer-Policy: no-referrer" << net::crlf
+               << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+        if(m_frame_options)
+        {
+            stream << "X-Frame-Options: DENY" << net::crlf;
+        }
+        stream << "Content-Type: " << m_content_type << net::crlf
+               << "Content-Length: 0" << net::crlf
+               << "Retry-After: 1" << net::crlf
+               << "Connection: close" << net::crlf
+               << net::crlf << net::flush;
+    }
+
+    void write_request_timeout(net::endpointstream& stream)
+    {
+        // get() sets failbit on the shared iostream, which would drop this write.
+        stream.clear();
+        stream << "HTTP/1.1 " << status_request_timeout << net::crlf
+               << "Date: " << date() << net::crlf
+               << "Server: " << server_token << net::crlf
+               << "X-Content-Type-Options: nosniff" << net::crlf
+               << "Referrer-Policy: no-referrer" << net::crlf
+               << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+        if(m_frame_options)
+        {
+            stream << "X-Frame-Options: DENY" << net::crlf;
+        }
+        stream << "Content-Type: " << m_content_type << net::crlf
+               << "Content-Length: 0" << net::crlf
+               << "Connection: close" << net::crlf
+               << net::crlf << net::flush;
     }
 
     auto methods() const
@@ -790,6 +968,9 @@ private:
                   << std::pair{"ip"sv, endpoint}
                   << std::pair{"port", port}
                   << net::flush;
+        // Idle gap between request bytes. Accept uses server::timeout instead.
+        // Cleared again when a WebSocket or SSE handler takes the socket.
+        stream.read_timeout(m_read_timeout);
 
         try
         {
@@ -819,34 +1000,81 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_request_header_fields_too_large << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << host() << net::crlf
-                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
                     break;
                 }
 
-                if(head.empty())
+                const auto head_complete = (head.size() >= 4 and head.ends_with("\r\n\r\n"sv))
+                    or (head.size() >= 2 and head.ends_with("\n\n"sv));
+                if(not head_complete)
                 {
-                    if(stream.eof())
+                    if(stream.read_timed_out())
                     {
                         const auto conn_duration = duration_cast<milliseconds>(system_clock::now() - conn_start).count();
-                        net::slog << net::info("HTTP_CONN_CLOSED") << "connection closed by client " << endpoint << ":" << port
-                                  << std::pair{"ip"sv, endpoint}
-                                  << std::pair{"port", port}
-                                  << std::pair{"connection_duration_ms", conn_duration}
-                                  << net::flush;
+                        if(head.empty())
+                        {
+                            net::slog << net::info("HTTP_READ_TIMEOUT") << "idle read timeout from " << endpoint << ":" << port
+                                      << std::pair{"ip"sv, endpoint}
+                                      << std::pair{"port", port}
+                                      << std::pair{"connection_duration_ms", conn_duration}
+                                      << net::flush;
+                        }
+                        else
+                        {
+                            const auto request_id = std::to_string(++request_counter);
+                            net::slog << net::warning("HTTP_READ_TIMEOUT") << "request head timed out from " << endpoint << ":" << port
+                                      << std::pair{"ip"sv, endpoint}
+                                      << std::pair{"port", port}
+                                      << std::pair{"status", status_request_timeout}
+                                      << std::pair{"request_id", request_id}
+                                      << std::pair{"connection_duration_ms", conn_duration}
+                                      << net::flush;
+                            write_request_timeout(stream);
+                        }
+                        break;
+                    }
+
+                    if(head.empty())
+                    {
+                        if(stream.eof())
+                        {
+                            const auto conn_duration = duration_cast<milliseconds>(system_clock::now() - conn_start).count();
+                            net::slog << net::info("HTTP_CONN_CLOSED") << "connection closed by client " << endpoint << ":" << port
+                                      << std::pair{"ip"sv, endpoint}
+                                      << std::pair{"port", port}
+                                      << std::pair{"connection_duration_ms", conn_duration}
+                                      << net::flush;
+                        }
+                        else
+                        {
+                            const auto conn_duration = duration_cast<milliseconds>(system_clock::now() - conn_start).count();
+                            net::slog << net::warning("HTTP_STREAM_ERROR") << "stream error reading request from " << endpoint << ":" << port << " (eof: " << stream.eof() << ", fail: " << stream.fail() << ", bad: " << stream.bad() << ")"
+                                      << std::pair{"ip"sv, endpoint}
+                                      << std::pair{"port", port}
+                                      << std::pair{"eof", stream.eof()}
+                                      << std::pair{"fail", stream.fail()}
+                                      << std::pair{"bad", stream.bad()}
+                                      << std::pair{"connection_duration_ms", conn_duration}
+                                      << net::flush;
+                        }
                     }
                     else
                     {
                         const auto conn_duration = duration_cast<milliseconds>(system_clock::now() - conn_start).count();
-                        net::slog << net::warning("HTTP_STREAM_ERROR") << "stream error reading request from " << endpoint << ":" << port << " (eof: " << stream.eof() << ", fail: " << stream.fail() << ", bad: " << stream.bad() << ")"
+                        net::slog << net::info("HTTP_CONN_CLOSED") << "connection closed before the request head finished from " << endpoint << ":" << port
                                   << std::pair{"ip"sv, endpoint}
                                   << std::pair{"port", port}
-                                  << std::pair{"eof", stream.eof()}
-                                  << std::pair{"fail", stream.fail()}
-                                  << std::pair{"bad", stream.bad()}
                                   << std::pair{"connection_duration_ms", conn_duration}
                                   << net::flush;
                     }
@@ -871,8 +1099,15 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << host() << net::crlf
-                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -905,8 +1140,15 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << host() << net::crlf
-                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -928,8 +1170,15 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << host() << net::crlf
-                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -954,8 +1203,15 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << host() << net::crlf
-                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -982,8 +1238,15 @@ private:
                     {
                         stream << "HTTP/1.1 " << status_not_found << net::crlf
                                << "Date: " << date() << net::crlf
-                               << "Server: " << host() << net::crlf
-                               << "Content-Type: " << m_content_type << net::crlf
+                               << "Server: " << server_token << net::crlf
+                               << "X-Content-Type-Options: nosniff" << net::crlf
+                               << "Referrer-Policy: no-referrer" << net::crlf
+                               << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                        if(m_frame_options)
+                        {
+                            stream << "X-Frame-Options: DENY" << net::crlf;
+                        }
+                        stream << "Content-Type: " << m_content_type << net::crlf
                                << "Content-Length: 0" << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf << net::flush;
@@ -994,12 +1257,63 @@ private:
                     {
                         stream << "HTTP/1.1 " << status_bad_request << net::crlf
                                << "Date: " << date() << net::crlf
-                               << "Server: " << host() << net::crlf
-                               << "Content-Type: " << m_content_type << net::crlf
+                               << "Server: " << server_token << net::crlf
+                               << "X-Content-Type-Options: nosniff" << net::crlf
+                               << "Referrer-Policy: no-referrer" << net::crlf
+                               << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                        if(m_frame_options)
+                        {
+                            stream << "X-Frame-Options: DENY" << net::crlf;
+                        }
+                        stream << "Content-Type: " << m_content_type << net::crlf
                                << "Content-Length: 0" << net::crlf
                                << "Connection: close" << net::crlf
                                << net::crlf << net::flush;
                         break;
+                    }
+
+                    // Same optional gate as SSE. Absent by default so non-browser
+                    // clients that send no Origin still upgrade. A browser-facing
+                    // route installs a gate that rejects a missing or unlisted Origin.
+                    const auto& ws_ctrl = m_router.at(*matched_path).at(method_ws);
+                    if(ws_ctrl.has_gate())
+                    {
+                        if(auto denied = ws_ctrl.sse_gate_fn()(uri, hs))
+                        {
+                            auto [st, body, custom_h] = std::move(*denied);
+                            if(header_value_has_ctl(st))
+                            {
+                                st = status_internal_server_error;
+                                body.clear();
+                                custom_h.reset();
+                            }
+                            const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                            net::slog << net::warning("HTTP_WEBSOCKET_REJECTED") << "websocket upgrade rejected from " << endpoint << ":" << port
+                                      << std::pair{"ip"sv, endpoint}
+                                      << std::pair{"port", port}
+                                      << std::pair{"uri", std::string{uri}}
+                                      << std::pair{"status", st}
+                                      << std::pair{"request_id", request_id}
+                                      << std::pair{"duration_ms", request_duration}
+                                      << net::flush;
+                            stream << "HTTP/1.1 " << st << net::crlf
+                                   << "Date: " << date() << net::crlf
+                                   << "Server: " << server_token << net::crlf
+                                   << "X-Content-Type-Options: nosniff" << net::crlf
+                                   << "Referrer-Policy: no-referrer" << net::crlf
+                                   << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                            if(m_frame_options)
+                            {
+                                stream << "X-Frame-Options: DENY" << net::crlf;
+                            }
+                            stream << "Content-Type: " << m_content_type << net::crlf
+                                   << "Content-Length: " << body.size() << net::crlf
+                                   << "Connection: close" << net::crlf;
+                            if(custom_h.has_value())
+                                write_custom_response_headers(stream, custom_h.value());
+                            stream << net::crlf << body << net::flush;
+                            break;
+                        }
                     }
 
                     const auto accept = net::websocket::sec_websocket_accept(hs["sec-websocket-key"]);
@@ -1012,14 +1326,23 @@ private:
 
                     stream << "HTTP/1.1 " << status_switching_protocols << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << host() << net::crlf
-                           << "Upgrade: websocket" << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Upgrade: websocket" << net::crlf
                            << "Connection: Upgrade" << net::crlf
                            << "Sec-WebSocket-Accept: " << accept << net::crlf
                            << net::crlf << net::flush;
 
                     // Copy handler before session (flat_map proxies are not stable refs).
                     const auto ws_handler = m_router.at(*matched_path).at(method_ws).websocket_handler();
+                    // The HTTP idle timeout must not drop a quiet WebSocket.
+                    stream.read_timeout(std::chrono::milliseconds{0});
                     net::websocket::run_text_session(stream, ws_handler);
                     break;
                 }
@@ -1048,10 +1371,23 @@ private:
                             if(auto denied = sse_ctrl.sse_gate_fn()(uri, hs))
                             {
                                 auto [st, body, custom_h] = std::move(*denied);
+                                if(header_value_has_ctl(st))
+                                {
+                                    st = status_internal_server_error;
+                                    body.clear();
+                                    custom_h.reset();
+                                }
                                 stream << "HTTP/1.1 " << st << net::crlf
                                        << "Date: " << date() << net::crlf
-                                       << "Server: " << host() << net::crlf
-                                       << "Content-Type: " << m_content_type << net::crlf
+                                       << "Server: " << server_token << net::crlf
+                                       << "X-Content-Type-Options: nosniff" << net::crlf
+                                       << "Referrer-Policy: no-referrer" << net::crlf
+                                       << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                                if(m_frame_options)
+                                {
+                                    stream << "X-Frame-Options: DENY" << net::crlf;
+                                }
+                                stream << "Content-Type: " << m_content_type << net::crlf
                                        << "Content-Length: " << body.size() << net::crlf
                                        << "Connection: close" << net::crlf;
                                 // Same filter as normal responses (#50): gate deny
@@ -1082,8 +1418,15 @@ private:
                         // match after an embedded CR (response header injection).
                         stream << "HTTP/1.1 " << status_ok << net::crlf
                                << "Date: " << date() << net::crlf
-                               << "Server: " << host() << net::crlf
-                               << "Content-Type: text/event-stream" << net::crlf
+                               << "Server: " << server_token << net::crlf
+                               << "X-Content-Type-Options: nosniff" << net::crlf
+                               << "Referrer-Policy: no-referrer" << net::crlf
+                               << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                        if(m_frame_options)
+                        {
+                            stream << "X-Frame-Options: DENY" << net::crlf;
+                        }
+                        stream << "Content-Type: text/event-stream" << net::crlf
                                << "Cache-Control: no-cache" << net::crlf
                                << "Connection: keep-alive" << net::crlf;
                         if(sse_ctrl.has_cors_origin() and hs.contains("origin"s))
@@ -1093,12 +1436,15 @@ private:
                                and sse_ctrl.cors_origin()(origin))
                             {
                                 stream << "Access-Control-Allow-Origin: " << origin << net::crlf
+                                       << "Vary: Origin" << net::crlf
                                        << "Access-Control-Allow-Credentials: true" << net::crlf;
                             }
                         }
                         stream << net::crlf << net::flush;
 
                         const auto sse_handler = sse_ctrl.sse_handler();
+                        // The HTTP idle timeout must not drop a quiet event stream.
+                        stream.read_timeout(std::chrono::milliseconds{0});
                         auto session = ::http::sse::session{stream};
                         try
                         {
@@ -1197,8 +1543,15 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << host() << net::crlf
-                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -1221,12 +1574,58 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_payload_too_large << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << host() << net::crlf
-                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
                     break;
+                }
+
+                if(hs.contains("expect"))
+                {
+                    const auto expect = classify_expect(hs["expect"]);
+                    if(expect == expect_kind::unsupported)
+                    {
+                        const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                        net::slog << net::warning("HTTP_EXPECTATION_FAILED") << "unsupported Expect from " << endpoint << ":" << port
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"expect", hs["expect"]}
+                                  << std::pair{"status", status_expectation_failed}
+                                  << std::pair{"request_id", request_id}
+                                  << std::pair{"duration_ms", request_duration}
+                                  << net::flush;
+                        stream << "HTTP/1.1 " << status_expectation_failed << net::crlf
+                               << "Date: " << date() << net::crlf
+                               << "Server: " << server_token << net::crlf
+                               << "X-Content-Type-Options: nosniff" << net::crlf
+                               << "Referrer-Policy: no-referrer" << net::crlf
+                               << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                        if(m_frame_options)
+                        {
+                            stream << "X-Frame-Options: DENY" << net::crlf;
+                        }
+                        stream << "Content-Type: " << m_content_type << net::crlf
+                               << "Content-Length: 0" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf << net::flush;
+                        break;
+                    }
+                    // Interim response before the body, only when the body will
+                    // be read. A final 4xx above is the rejection instead of 100.
+                    if(expect == expect_kind::continue_ok and content_length > 0)
+                    {
+                        stream << "HTTP/1.1 100 Continue" << net::crlf
+                               << net::crlf << net::flush;
+                    }
                 }
 
                 std::string body(static_cast<std::size_t>(content_length), ' ');
@@ -1255,6 +1654,23 @@ private:
 
                 if(not body_complete)
                 {
+                    if(stream.read_timed_out())
+                    {
+                        const auto request_duration = duration_cast<milliseconds>(system_clock::now() - request_start).count();
+                        net::slog << net::warning("HTTP_READ_TIMEOUT") << "request body timed out from " << endpoint << ":" << port
+                                  << std::pair{"ip"sv, endpoint}
+                                  << std::pair{"port", port}
+                                  << std::pair{"expected_bytes", static_cast<long long>(content_length)}
+                                  << std::pair{"status", status_request_timeout}
+                                  << std::pair{"request_id", request_id}
+                                  << std::pair{"duration_ms", request_duration}
+                                  << net::flush;
+                        write_request_timeout(stream);
+                        break;
+                    }
+
+                    // get() sets failbit on the shared iostream; clear it so the 400 is written.
+                    stream.clear();
                     net::slog << net::warning("HTTP_INCOMPLETE_BODY") << "incomplete body read from " << endpoint << ":" << port << " (expected " << content_length << " bytes)"
                               << std::pair{"ip"sv, endpoint}
                               << std::pair{"port", port}
@@ -1264,8 +1680,15 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: " << date() << net::crlf
-                           << "Server: " << host() << net::crlf
-                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0" << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -1296,8 +1719,15 @@ private:
                     // the client still holds the socket open (websocket substring test).
                     stream << "HTTP/1.1 505 HTTP Version Not Supported" << net::crlf
                            << "Date: "         << date()                << net::crlf
-                           << "Server: "       << host()                << net::crlf
-                           << "Content-Type: " << m_content_type        << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type        << net::crlf
                            << "Content-Length: 0"                       << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -1317,8 +1747,15 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_bad_request << net::crlf
                            << "Date: "         << date()                    << net::crlf
-                           << "Server: "       << host()                    << net::crlf
-                           << "Content-Type: " << m_content_type            << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type            << net::crlf
                            << "Content-Length: 0"                           << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -1338,8 +1775,15 @@ private:
                               << net::flush;
                     stream << "HTTP/1.1 " << status_not_found << net::crlf
                            << "Date: "         << date()         << net::crlf
-                           << "Server: "       << host()         << net::crlf
-                           << "Content-Type: " << m_content_type << net::crlf
+                           << "Server: " << server_token << net::crlf
+                           << "X-Content-Type-Options: nosniff" << net::crlf
+                           << "Referrer-Policy: no-referrer" << net::crlf
+                           << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                    if(m_frame_options)
+                    {
+                        stream << "X-Frame-Options: DENY" << net::crlf;
+                    }
+                    stream << "Content-Type: " << m_content_type << net::crlf
                            << "Content-Length: 0"                << net::crlf
                            << "Connection: close" << net::crlf
                            << net::crlf << net::flush;
@@ -1432,6 +1876,25 @@ private:
 
                     if(not res_type.empty())
                     {
+                        // Same control-character rule as custom headers. A handler
+                        // that copies request data into the status or content type
+                        // would otherwise split the response. Stock 500 instead.
+                        if(header_value_has_ctl(res_status) or header_value_has_ctl(res_type))
+                        {
+                            net::slog << net::warning("HTTP_UNSAFE_RESPONSE") << "status or content-type contained a control character"
+                                      << std::pair{"ip"sv, endpoint}
+                                      << std::pair{"port", port}
+                                      << std::pair{"method", method}
+                                      << std::pair{"uri", std::string{uri}}
+                                      << std::pair{"status", status_internal_server_error}
+                                      << std::pair{"request_id", request_id}
+                                      << net::flush;
+                            res_status = status_internal_server_error;
+                            res_content.clear();
+                            res_type = std::string{error_content_type};
+                            custom_headers = std::nullopt;
+                        }
+
                         // Extract status code from status string (e.g., "200 OK" -> 200)
                         auto status_code = 200ll;
                         try {
@@ -1456,8 +1919,15 @@ private:
                         
                         stream << "HTTP/1.1 " << res_status                                   << net::crlf
                                << "Date: " << date()                                          << net::crlf
-                               << "Server: " << host()                                        << net::crlf
-                               << "Content-Type: " << res_type                                << net::crlf
+                               << "Server: " << server_token << net::crlf
+                               << "X-Content-Type-Options: nosniff" << net::crlf
+                               << "Referrer-Policy: no-referrer" << net::crlf
+                               << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                        if(m_frame_options)
+                        {
+                            stream << "X-Frame-Options: DENY" << net::crlf;
+                        }
+                        stream << "Content-Type: " << res_type                                << net::crlf
                                << "Content-Length: " << res_content.length()                  << net::crlf
                                << "Connection: " << (close_connection ? "close"sv : "keep-alive"sv) << net::crlf;
 
@@ -1484,8 +1954,15 @@ private:
                                   << net::flush;
                         stream << "HTTP/1.1 " << status_not_found << net::crlf
                                << "Date: " << date()                                          << net::crlf
-                               << "Server: " << host()                                        << net::crlf
-                               << "Content-Type: " << m_content_type                          << net::crlf
+                               << "Server: " << server_token << net::crlf
+                               << "X-Content-Type-Options: nosniff" << net::crlf
+                               << "Referrer-Policy: no-referrer" << net::crlf
+                               << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                        if(m_frame_options)
+                        {
+                            stream << "X-Frame-Options: DENY" << net::crlf;
+                        }
+                        stream << "Content-Type: " << m_content_type                          << net::crlf
                                << "Content-Length: 0"                                         << net::crlf
                                << "Connection: " << (close_connection ? "close"sv : "keep-alive"sv) << net::crlf
                                << "Cache-Control: private"                                    << net::crlf
@@ -1515,8 +1992,15 @@ private:
             {
                 stream << "HTTP/1.1 " << status_internal_server_error << net::crlf
                        << "Date: " << date()                   << net::crlf
-                       << "Server: " << host()                 << net::crlf
-                       << "Content-Type: " << m_content_type   << net::crlf
+                       << "Server: " << server_token << net::crlf
+                       << "X-Content-Type-Options: nosniff" << net::crlf
+                       << "Referrer-Policy: no-referrer" << net::crlf
+                       << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                if(m_frame_options)
+                {
+                    stream << "X-Frame-Options: DENY" << net::crlf;
+                }
+                stream << "Content-Type: " << m_content_type   << net::crlf
                        << "Content-Length: 0"                  << net::crlf
                        << net::crlf << net::flush;
             }
@@ -1539,8 +2023,15 @@ private:
             {
                 stream << "HTTP/1.1 " << status_internal_server_error << net::crlf
                        << "Date: " << date()                   << net::crlf
-                       << "Server: " << host()                 << net::crlf
-                       << "Content-Type: " << m_content_type   << net::crlf
+                       << "Server: " << server_token << net::crlf
+                       << "X-Content-Type-Options: nosniff" << net::crlf
+                       << "Referrer-Policy: no-referrer" << net::crlf
+                       << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                if(m_frame_options)
+                {
+                    stream << "X-Frame-Options: DENY" << net::crlf;
+                }
+                stream << "Content-Type: " << m_content_type   << net::crlf
                        << "Content-Length: 0"                  << net::crlf
                        << net::crlf << net::flush;
             }
@@ -1563,8 +2054,15 @@ private:
             {
                 stream << "HTTP/1.1 " << status_internal_server_error << net::crlf
                        << "Date: " << date()                   << net::crlf
-                       << "Server: " << host()                 << net::crlf
-                       << "Content-Type: " << m_content_type   << net::crlf
+                       << "Server: " << server_token << net::crlf
+                       << "X-Content-Type-Options: nosniff" << net::crlf
+                       << "Referrer-Policy: no-referrer" << net::crlf
+                       << "Permissions-Policy: camera=(), microphone=(), geolocation=()" << net::crlf;
+                if(m_frame_options)
+                {
+                    stream << "X-Frame-Options: DENY" << net::crlf;
+                }
+                stream << "Content-Type: " << m_content_type   << net::crlf
                        << "Content-Length: 0"                  << net::crlf
                        << net::crlf << net::flush;
             }
@@ -1594,11 +2092,14 @@ private:
     using method_map_type = std::flat_map<method_type, controller>;
     using router_type = std::flat_map<path_type, method_map_type>;
     router_type m_router = {};
-    std::string m_content_type = "*/*";
+    std::string m_content_type{error_content_type};
     std::flat_set<method_type> m_methods = {method_head, method_options};
     std::chrono::seconds m_timeout = std::chrono::seconds{0};
-    std::size_t m_max_request_body_size = std::numeric_limits<std::size_t>::max();
+    std::chrono::milliseconds m_read_timeout = default_read_timeout;
+    std::size_t m_max_request_body_size = default_max_request_body_size;
     std::size_t m_max_request_head_size = default_max_request_head_size;
+    bool m_frame_options = true;
+    std::size_t m_max_connections = default_max_connections;
     std::atomic<bool> m_stop{false};
     std::atomic<std::size_t> m_active_handlers{0};
     std::mutex m_handlers_mutex;

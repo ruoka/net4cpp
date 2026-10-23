@@ -246,6 +246,31 @@ auto register_middleware_tests()
         };
     };
 
+    tester::bdd::scenario("authentication_middleware - quotes the realm, [net]") = [] {
+        tester::bdd::given("A realm containing a quote, a backslash, and a CR") = [] {
+            auto is_public = [](std::string_view){ return false; };
+            auto reject = [](std::string_view){ return false; };
+            auto mw = ::http::middleware::authentication_middleware(is_public, reject, "a\"b\\c\r"sv);
+            auto handler = [](auto&&, auto&&, auto&&){
+                return ::http::make_response(::http::status_ok, "OK"s, std::optional<::http::headers>{});
+            };
+            auto wrapped = mw(handler);
+
+            tester::bdd::when("An unauthenticated request is rejected") = [wrapped]() mutable {
+                auto headers = ::http::headers{};
+                auto [status, content, headers_opt] = wrapped("/protected"sv, ""sv, headers);
+
+                tester::bdd::then("WWW-Authenticate is a quoted-string without the CR") = [status, content, headers_opt] {
+                    check_eq(status, ::http::status_unauthorized);
+                    check_eq(content, R"({"error":"Unauthorized","message":"Authentication required"})"s);
+                    check_true(headers_opt.has_value());
+                    if(headers_opt.has_value())
+                        check_eq(headers_opt.value()["www-authenticate"s], "Basic realm=\"a\\\"b\\\\c\""s);
+                };
+            };
+        };
+    };
+
     tester::bdd::scenario("authentication_middleware - allows public paths, [net]") = [] {
         tester::bdd::given("A middleware with public paths") = [] {
             auto is_public = [](std::string_view path){
@@ -377,6 +402,8 @@ auto register_middleware_tests()
                         check_true(h.contains("access-control-allow-headers"s));
                         check_true(h.contains("access-control-allow-credentials"s));
                         check_eq(h["access-control-allow-credentials"s], "true"s);
+                        check_true(h.contains("vary"s));
+                        check_eq(h["vary"s], "Origin"s);
                     }
                 };
             };
@@ -407,6 +434,7 @@ auto register_middleware_tests()
                     if(headers_opt.has_value())
                     {
                         check_false(headers_opt.value().contains("access-control-allow-origin"s));
+                        check_false(headers_opt.value().contains("vary"s));
                     }
                 };
             };
@@ -478,6 +506,7 @@ auto register_middleware_tests()
                     {
                         check_false(headers_opt.value().contains("access-control-allow-origin"s));
                         check_false(headers_opt.value().contains("access-control-allow-credentials"s));
+                        check_false(headers_opt.value().contains("vary"s));
                     }
                 };
             };
@@ -548,6 +577,68 @@ auto register_middleware_tests()
                         check_true(h.contains("access-control-allow-origin"s));
                         check_eq(h["access-control-allow-origin"s], "https://example.com"s);
                     }
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("cors_middleware - merges Vary: Origin with an existing Vary, [net]") = [] {
+        tester::bdd::given("A CORS middleware and a handler that already sets Vary") = [] {
+            auto allowed_origin = [](std::string_view) { return true; };
+            auto mw = ::http::middleware::cors_middleware(allowed_origin);
+
+            auto handler = [](auto&&, auto&&, auto&&){
+                auto existing_headers = ::http::headers{};
+                existing_headers.set("vary"s, "Accept"s);
+                return ::http::make_response(::http::status_ok, "OK"s, std::make_optional(existing_headers));
+            };
+
+            auto wrapped = mw(handler);
+
+            tester::bdd::when("Request includes an allowed Origin") = [wrapped]() mutable {
+                auto req_view = "/test"sv;
+                auto empty_body = ""sv;
+                auto headers = ::http::headers{};
+                headers.set("origin"s, "https://example.com"s);
+
+                auto [status, content, headers_opt] = wrapped(req_view, empty_body, headers);
+
+                tester::bdd::then("Origin is appended and an existing Origin token is left alone") = [status, headers_opt] {
+                    check_eq(status, ::http::status_ok);
+                    check_true(headers_opt.has_value());
+                    if(headers_opt.has_value())
+                        check_eq(headers_opt.value()["vary"s], "Accept, Origin"s);
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("cors_middleware - does not duplicate Vary: Origin, [net]") = [] {
+        tester::bdd::given("A CORS middleware and a handler that already varies on Origin") = [] {
+            auto allowed_origin = [](std::string_view) { return true; };
+            auto mw = ::http::middleware::cors_middleware(allowed_origin);
+
+            auto handler = [](auto&&, auto&&, auto&&){
+                auto existing_headers = ::http::headers{};
+                existing_headers.set("vary"s, "ORIGIN"s);
+                return ::http::make_response(::http::status_ok, "OK"s, std::make_optional(existing_headers));
+            };
+
+            auto wrapped = mw(handler);
+
+            tester::bdd::when("Request includes an allowed Origin") = [wrapped]() mutable {
+                auto req_view = "/test"sv;
+                auto empty_body = ""sv;
+                auto headers = ::http::headers{};
+                headers.set("origin"s, "https://example.com"s);
+
+                auto [status, content, headers_opt] = wrapped(req_view, empty_body, headers);
+
+                tester::bdd::then("The existing Origin token is kept") = [status, headers_opt] {
+                    check_eq(status, ::http::status_ok);
+                    check_true(headers_opt.has_value());
+                    if(headers_opt.has_value())
+                        check_eq(headers_opt.value()["vary"s], "ORIGIN"s);
                 };
             };
         };

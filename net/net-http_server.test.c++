@@ -1447,6 +1447,399 @@ auto register_server_tests()
         };
     };
 
+    tester::bdd::scenario("default max_request_body_size is 1 MiB, [net]") = [] {
+        tester::bdd::given("A new HTTP server") = [] {
+            auto server = std::make_shared<http::server>();
+
+            tester::bdd::when("The body limit is read") = [server] {
+                const auto limit = server->max_request_body_size();
+
+                tester::bdd::then("The default is 1 MiB") = [limit] {
+                    check_eq(limit, http::default_max_request_body_size);
+                    check_eq(limit, std::size_t{1024 * 1024});
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("default body limit rejects Content-Length above 1 MiB, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server left on the default body limit") = [] {
+            auto server = std::make_shared<http::server>();
+            server->post("/test").text("OK");
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A POST declares Content-Length one byte over 1 MiB and sends no body") = [server] {
+                auto response_status = std::make_shared<std::string>("");
+                auto response_headers = std::make_shared<std::string>("");
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                using namespace std::chrono_literals;
+                if (port != 0) {
+                    std::this_thread::sleep_for(200ms);
+
+                    try {
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream << "POST /test HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
+                               << "Content-Length: " << (http::default_max_request_body_size + 1) << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+
+                        std::string line;
+                        if(stream and std::getline(stream, line)) {
+                            if(not line.empty() and line.back() == '\r')
+                                line.pop_back();
+                            auto space1 = line.find(' ');
+                            if(space1 != std::string::npos) {
+                                auto space2 = line.find(' ', space1 + 1);
+                                *response_status = space2 != std::string::npos
+                                    ? line.substr(space1 + 1, space2 - space1 - 1)
+                                    : line.substr(space1 + 1);
+                            }
+                        }
+                        int line_count = 0;
+                        while(line_count < 20 and stream and std::getline(stream, line)) {
+                            *response_headers += line + "\n";
+                            line_count++;
+                            if(line.empty() or line == "\r") break;
+                        }
+                    } catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if (server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("Response is 413 with a plain-text nosniff error") = [response_status, response_headers] {
+                    check_eq(*response_status, "413");
+                    check_contains(*response_headers, "Server: net\r");
+                    check_contains(*response_headers, "X-Content-Type-Options: nosniff");
+                    check_contains(*response_headers, "Content-Type: text/plain; charset=utf-8");
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("responses send a fixed Server token and nosniff, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server with one text route") = [] {
+            auto server = std::make_shared<http::server>();
+            server->get("/ok").text("OK");
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A client GETs the route and an unknown path") = [server] {
+                auto ok_headers = std::make_shared<std::string>("");
+                auto missing_headers = std::make_shared<std::string>("");
+
+                auto read_headers = [](std::uint16_t port, std::string_view path) {
+                    auto headers = ""s;
+                    const auto port_s = std::to_string(port);
+                    auto stream = connect("127.0.0.1", port_s);
+                    stream << "GET " << path << " HTTP/1.1" << net::crlf
+                           << "Host: 127.0.0.1:" << port_s << net::crlf
+                           << "Connection: close" << net::crlf
+                           << net::crlf
+                           << net::flush;
+                    std::string line;
+                    auto line_count = 0;
+                    while(line_count < 20 and stream and std::getline(stream, line)) {
+                        headers += line + "\n";
+                        line_count++;
+                        if(line.empty() or line == "\r") break;
+                    }
+                    return headers;
+                };
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+
+                using namespace std::chrono_literals;
+                if (port != 0) {
+                    std::this_thread::sleep_for(200ms);
+                    try {
+                        *ok_headers = read_headers(port, "/ok");
+                        *missing_headers = read_headers(port, "/missing");
+                    } catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if (server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("Both responses hide the hostname and set nosniff") = [ok_headers, missing_headers] {
+                    check_contains(*ok_headers, "200");
+                    check_contains(*ok_headers, "Server: net\r");
+                    check_contains(*ok_headers, "X-Content-Type-Options: nosniff");
+                    check_contains(*ok_headers, "Referrer-Policy: no-referrer");
+                    check_contains(*ok_headers, "X-Frame-Options: DENY");
+                    check_contains(*ok_headers, "Permissions-Policy: camera=(), microphone=(), geolocation=()");
+                    check_contains(*ok_headers, "Content-Type: text/plain");
+                    check_false(ok_headers->contains("Content-Type: */*"sv));
+
+                    check_contains(*missing_headers, "404");
+                    check_contains(*missing_headers, "Server: net\r");
+                    check_contains(*missing_headers, "X-Content-Type-Options: nosniff");
+                    check_contains(*missing_headers, "Referrer-Policy: no-referrer");
+                    check_contains(*missing_headers, "X-Frame-Options: DENY");
+                    check_contains(*missing_headers, "Permissions-Policy: camera=(), microphone=(), geolocation=()");
+                    check_contains(*missing_headers, "Content-Type: text/plain; charset=utf-8");
+                    check_false(missing_headers->contains("Content-Type: */*"sv));
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("default request read timeout is 30s, [net]") = [] {
+        tester::bdd::given("A new HTTP server") = [] {
+            auto server = std::make_shared<http::server>();
+
+            tester::bdd::when("The request read timeout is read") = [server] {
+                const auto limit = server->read_timeout();
+
+                tester::bdd::then("The default is 30 seconds and accept timeout stays separate") = [limit, server] {
+                    check_eq(limit, http::default_read_timeout);
+                    check_eq(limit.count(), 30'000);
+                    check_eq(server->timeout().count(), 0);
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("partial request head times out with 408, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server with a 200ms request read timeout") = [] {
+            auto server = std::make_shared<http::server>();
+            server->get("/").text("OK");
+            server->read_timeout(std::chrono::milliseconds{200});
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A client sends a request line and then stops") = [server] {
+                auto response_status = std::make_shared<std::string>("");
+                auto elapsed_ms = std::make_shared<long long>(0);
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    try
+                    {
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream.read_timeout(2s);
+                        stream << "GET / HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1" << net::crlf
+                               << net::flush;
+
+                        const auto start = std::chrono::steady_clock::now();
+                        std::string line;
+                        if(stream and std::getline(stream, line))
+                        {
+                            if(not line.empty() and line.back() == '\r')
+                                line.pop_back();
+                            auto space1 = line.find(' ');
+                            if(space1 != std::string::npos)
+                            {
+                                auto space2 = line.find(' ', space1 + 1);
+                                *response_status = space2 != std::string::npos
+                                    ? line.substr(space1 + 1, space2 - space1 - 1)
+                                    : line.substr(space1 + 1);
+                            }
+                        }
+                        *elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - start).count();
+                    }
+                    catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if(server_thread.joinable())
+                    server_thread.join();
+
+                tester::bdd::then("Response is 408 before the idle timeout window ends") = [response_status, elapsed_ms] {
+                    check_eq(*response_status, "408");
+                    check_true(*elapsed_ms >= 150);
+                    check_true(*elapsed_ms < 2000);
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("idle connection with no bytes closes without 408, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server with a 200ms request read timeout") = [] {
+            auto server = std::make_shared<http::server>();
+            server->get("/").text("OK");
+            server->read_timeout(std::chrono::milliseconds{200});
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A client connects and sends nothing") = [server] {
+                auto saw_bytes = std::make_shared<bool>(false);
+                auto elapsed_ms = std::make_shared<long long>(0);
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    try
+                    {
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream.read_timeout(2s);
+                        const auto start = std::chrono::steady_clock::now();
+                        const auto ch = stream.get();
+                        *elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - start).count();
+                        *saw_bytes = ch != std::char_traits<char>::eof();
+                    }
+                    catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if(server_thread.joinable())
+                    server_thread.join();
+
+                tester::bdd::then("The server closes the idle connection") = [saw_bytes, elapsed_ms] {
+                    check_true(not *saw_bytes);
+                    check_true(*elapsed_ms >= 150);
+                    check_true(*elapsed_ms < 2000);
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("request body times out with 408, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server with a 200ms request read timeout") = [] {
+            auto server = std::make_shared<http::server>();
+            server->post("/test").text("OK");
+            server->read_timeout(std::chrono::milliseconds{200});
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A POST finishes its headers and never sends the body") = [server] {
+                auto response_status = std::make_shared<std::string>("");
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    try
+                    {
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream.read_timeout(2s);
+                        stream << "POST /test HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
+                               << "Content-Length: 4" << net::crlf
+                               << net::crlf
+                               << net::flush;
+
+                        std::string line;
+                        if(stream and std::getline(stream, line))
+                        {
+                            if(not line.empty() and line.back() == '\r')
+                                line.pop_back();
+                            auto space1 = line.find(' ');
+                            if(space1 != std::string::npos)
+                            {
+                                auto space2 = line.find(' ', space1 + 1);
+                                *response_status = space2 != std::string::npos
+                                    ? line.substr(space1 + 1, space2 - space1 - 1)
+                                    : line.substr(space1 + 1);
+                            }
+                        }
+                    }
+                    catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if(server_thread.joinable())
+                    server_thread.join();
+
+                tester::bdd::then("Response is 408 Request Timeout") = [response_status] {
+                    check_eq(*response_status, "408");
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("a prompt request still succeeds under a short read timeout, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server with a 200ms request read timeout") = [] {
+            auto server = std::make_shared<http::server>();
+            server->get("/ok").text("OK");
+            server->read_timeout(std::chrono::milliseconds{200});
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("The client sends a complete GET immediately") = [server] {
+                auto response = std::make_shared<std::string>("");
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    try
+                    {
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream.read_timeout(2s);
+                        stream << "GET /ok HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+
+                        std::string line;
+                        auto line_count = 0;
+                        while(line_count < 30 and stream and std::getline(stream, line))
+                        {
+                            *response += line;
+                            *response += '\n';
+                            line_count++;
+                        }
+                    }
+                    catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if(server_thread.joinable())
+                    server_thread.join();
+
+                tester::bdd::then("Response is 200 OK") = [response] {
+                    check_contains(*response, "200");
+                    check_contains(*response, "OK");
+                    check_false(response->contains("408"sv));
+                };
+            };
+        };
+    };
+
     tester::bdd::scenario("Connection header is echoed on successful responses, [net]") = [] {
         if(not network_tests_enabled()) return;
 
@@ -1935,6 +2328,9 @@ auto register_server_tests()
                         check_contains(*headers_raw, "Content-Type: text/event-stream");
                         check_contains(*headers_raw, "Cache-Control: no-cache");
                         check_contains(*headers_raw, "Access-Control-Allow-Origin: http://localhost:3000");
+                        check_contains(*headers_raw, "Vary: Origin");
+                        check_contains(*headers_raw, "Server: net\n");
+                        check_contains(*headers_raw, "X-Content-Type-Options: nosniff");
                         check_false(headers_raw->contains("Content-Length:"sv));
                         check_contains(*body, ": ok\n");
                         check_contains(*body, "event: tick\ndata: 1\nid: 1\n\n");
@@ -2292,6 +2688,478 @@ auto register_server_tests()
                         check_false(headers_raw->contains("X-Evil"sv));
                         check_false(headers_raw->contains("x-evil"sv));
                     };
+            };
+        };
+    };
+
+    tester::bdd::scenario("X-Frame-Options can be turned off, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("A server that omits the default DENY and a handler that sets SAMEORIGIN") = [] {
+            auto server = std::make_shared<http::server>();
+            check_true(server->frame_options());
+            server->frame_options(false);
+            server->get("/embed").response_handler("text/html",
+                [](std::string_view, std::string_view, http::headers&) {
+                    auto out = http::headers{};
+                    out.set("x-frame-options"s, "SAMEORIGIN"s);
+                    out.set("referrer-policy"s, "unsafe-url"s);
+                    return http::make_response(http::status_ok, "<p>hi</p>"s, std::make_optional(out));
+                });
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A client GETs the page") = [server] {
+                auto response_headers = std::make_shared<std::string>("");
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    try
+                    {
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream << "GET /embed HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+                        std::string line;
+                        auto line_count = 0;
+                        while(line_count < 30 and stream and std::getline(stream, line))
+                        {
+                            *response_headers += line + "\n";
+                            line_count++;
+                            if(line.empty() or line == "\r") break;
+                        }
+                    }
+                    catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if(server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("SAMEORIGIN is kept and the other browser headers stay") = [response_headers] {
+                    check_contains(*response_headers, "x-frame-options: SAMEORIGIN");
+                    check_false(response_headers->contains("X-Frame-Options: DENY"sv));
+                    check_contains(*response_headers, "Referrer-Policy: no-referrer");
+                    check_false(response_headers->contains("unsafe-url"sv));
+                    check_contains(*response_headers, "Permissions-Policy: camera=(), microphone=(), geolocation=()");
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("Expect 100-continue is answered before the body, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("A POST route that echoes the body") = [] {
+            auto server = std::make_shared<http::server>();
+            auto seen = std::make_shared<std::string>();
+            server->post("/echo").response_handler("text/plain",
+                [seen](std::string_view, std::string_view body, http::headers&) {
+                    *seen = std::string{body};
+                    return http::make_response(http::status_ok, std::string{body});
+                });
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("The client waits for 100 Continue before sending the body") = [server, seen] {
+                auto interim = std::make_shared<std::string>();
+                auto final_status = std::make_shared<std::string>();
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    try
+                    {
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream.read_timeout(2s);
+                        stream << "POST /echo HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
+                               << "Content-Length: 4" << net::crlf
+                               << "Expect: 100-continue" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+
+                        auto status_code = [](std::string line) {
+                            if(not line.empty() and line.back() == '\r')
+                                line.pop_back();
+                            const auto space1 = line.find(' ');
+                            if(space1 == std::string::npos)
+                                return std::string{};
+                            const auto space2 = line.find(' ', space1 + 1);
+                            return space2 == std::string::npos
+                                ? line.substr(space1 + 1)
+                                : line.substr(space1 + 1, space2 - space1 - 1);
+                        };
+
+                        std::string line;
+                        if(stream and std::getline(stream, line))
+                            *interim = status_code(line);
+                        auto skips = 0;
+                        while(skips < 10 and stream and std::getline(stream, line))
+                        {
+                            skips++;
+                            if(line.empty() or line == "\r") break;
+                        }
+
+                        stream << "ping" << net::flush;
+
+                        if(stream and std::getline(stream, line))
+                            *final_status = status_code(std::move(line));
+                    }
+                    catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if(server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("The handler sees the body after 100 and the final status is 200") = [interim, final_status, seen] {
+                    check_eq(*interim, "100");
+                    check_eq(*final_status, "200");
+                    check_eq(*seen, "ping");
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("unsupported Expect is 417 and the body is not read, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("A POST route") = [] {
+            auto server = std::make_shared<http::server>();
+            auto handled = std::make_shared<std::atomic<bool>>(false);
+            server->post("/echo").response_handler("text/plain",
+                [handled](std::string_view, std::string_view, http::headers&) {
+                    handled->store(true);
+                    return http::make_response(http::status_ok, "OK"s);
+                });
+            server->read_timeout(std::chrono::milliseconds{500});
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("The client sends Expect: deflate and no body") = [server, handled] {
+                auto response_status = std::make_shared<std::string>();
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    try
+                    {
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream.read_timeout(2s);
+                        stream << "POST /echo HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
+                               << "Content-Length: 4" << net::crlf
+                               << "Expect: deflate" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+
+                        std::string line;
+                        if(stream and std::getline(stream, line))
+                        {
+                            if(not line.empty() and line.back() == '\r')
+                                line.pop_back();
+                            const auto space1 = line.find(' ');
+                            if(space1 != std::string::npos)
+                            {
+                                const auto space2 = line.find(' ', space1 + 1);
+                                *response_status = space2 == std::string::npos
+                                    ? line.substr(space1 + 1)
+                                    : line.substr(space1 + 1, space2 - space1 - 1);
+                            }
+                        }
+                    }
+                    catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if(server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("Response is 417 and the handler is not invoked") = [response_status, handled] {
+                    check_eq(*response_status, "417");
+                    check_false(handled->load());
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("folded header lines are 400, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server with a GET route") = [] {
+            auto server = std::make_shared<http::server>();
+            auto handled = std::make_shared<std::atomic<bool>>(false);
+            server->get("/test").response_handler("text/plain",
+                [handled](std::string_view, std::string_view, http::headers&) {
+                    handled->store(true);
+                    return http::make_response(http::status_ok, "OK"s);
+                });
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A request folds a header onto the next line") = [server, handled] {
+                auto response_status = std::make_shared<std::string>();
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    try
+                    {
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream << "GET /test HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
+                               << "X-Folded: 1" << net::crlf
+                               << " folded" << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+
+                        std::string line;
+                        if(stream and std::getline(stream, line))
+                        {
+                            if(not line.empty() and line.back() == '\r')
+                                line.pop_back();
+                            const auto space1 = line.find(' ');
+                            if(space1 != std::string::npos)
+                            {
+                                const auto space2 = line.find(' ', space1 + 1);
+                                *response_status = space2 == std::string::npos
+                                    ? line.substr(space1 + 1)
+                                    : line.substr(space1 + 1, space2 - space1 - 1);
+                            }
+                        }
+                    }
+                    catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if(server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("Response is 400 and the handler is not invoked") = [response_status, handled] {
+                    check_eq(*response_status, "400");
+                    check_false(handled->load());
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("a control character in the status or content type is 500, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("Handlers that put CR into the status and the content type") = [] {
+            auto server = std::make_shared<http::server>();
+            server->get("/status").response_handler("text/plain",
+                [](std::string_view, std::string_view, http::headers&) {
+                    return http::make_response("200 OK\r\nX-Injected: yes"s, "OK"s);
+                });
+            server->get("/type").response_handler("text/plain\r\nX-Injected: yes",
+                [](std::string_view, std::string_view, http::headers&) {
+                    return http::make_response(http::status_ok, "OK"s);
+                });
+            server->timeout(std::chrono::seconds{1});
+
+            auto read_headers = [](std::uint16_t port, std::string_view path) {
+                auto headers = ""s;
+                const auto port_s = std::to_string(port);
+                auto stream = connect("127.0.0.1", port_s);
+                stream << "GET " << path << " HTTP/1.1" << net::crlf
+                       << "Host: 127.0.0.1:" << port_s << net::crlf
+                       << "Connection: close" << net::crlf
+                       << net::crlf
+                       << net::flush;
+                std::string line;
+                auto line_count = 0;
+                while(line_count < 30 and stream and std::getline(stream, line))
+                {
+                    headers += line + "\n";
+                    line_count++;
+                    if(line.empty() or line == "\r") break;
+                }
+                return headers;
+            };
+
+            tester::bdd::when("A client GETs both routes") = [server, read_headers] {
+                auto status_headers = std::make_shared<std::string>();
+                auto type_headers = std::make_shared<std::string>();
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    try
+                    {
+                        *status_headers = read_headers(port, "/status");
+                        *type_headers = read_headers(port, "/type");
+                    }
+                    catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if(server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("Both responses are stock 500s and the injected line is absent") = [status_headers, type_headers] {
+                    check_contains(*status_headers, "500");
+                    check_false(status_headers->contains("X-Injected"sv));
+                    check_contains(*status_headers, "Content-Type: text/plain; charset=utf-8");
+                    check_contains(*type_headers, "500");
+                    check_false(type_headers->contains("X-Injected"sv));
+                    check_contains(*type_headers, "Content-Type: text/plain; charset=utf-8");
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("default connection cap is 128, [net]") = [] {
+        tester::bdd::given("A new HTTP server") = [] {
+            auto server = std::make_shared<http::server>();
+
+            tester::bdd::when("The connection cap is read and cleared") = [server] {
+                const auto limit = server->max_connections();
+                server->max_connections(0);
+
+                tester::bdd::then("The default is 128 and zero means unlimited") = [limit, server] {
+                    check_eq(limit, http::default_max_connections);
+                    check_eq(limit, std::size_t{128});
+                    check_eq(server->max_connections(), std::size_t{0});
+                };
+            };
+        };
+    };
+
+    tester::bdd::scenario("connection cap answers 503 without another handler, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("A server whose cap is one held connection") = [] {
+            auto server = std::make_shared<http::server>();
+            auto entered = std::make_shared<std::atomic<bool>>(false);
+            auto release = std::make_shared<std::atomic<bool>>(false);
+            server->max_connections(1);
+            server->get("/hold").response_handler("text/plain",
+                [entered, release](std::string_view, std::string_view, http::headers&) {
+                    entered->store(true);
+                    while(not release->load())
+                        std::this_thread::sleep_for(std::chrono::milliseconds{10});
+                    return http::make_response(http::status_ok, "OK"s);
+                });
+            server->read_timeout(std::chrono::seconds{5});
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("A second client connects while the first handler is still running") = [server, entered, release] {
+                auto response_status = std::make_shared<std::string>();
+                auto response_headers = std::make_shared<std::string>();
+                auto held = std::make_shared<std::atomic<bool>>(false);
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                std::thread holder;
+                using namespace std::chrono_literals;
+                if(port != 0)
+                {
+                    std::this_thread::sleep_for(200ms);
+                    holder = std::thread{[port_s, held] {
+                        try
+                        {
+                            auto stream = connect("127.0.0.1", port_s);
+                            stream.read_timeout(3s);
+                            stream << "GET /hold HTTP/1.1" << net::crlf
+                                   << "Host: 127.0.0.1:" << port_s << net::crlf
+                                   << "Connection: close" << net::crlf
+                                   << net::crlf
+                                   << net::flush;
+                            std::string line;
+                            if(stream and std::getline(stream, line))
+                                held->store(true);
+                        }
+                        catch(...) {}
+                    }};
+
+                    auto spins = 0;
+                    while(not entered->load() and spins < 200)
+                    {
+                        std::this_thread::sleep_for(10ms);
+                        ++spins;
+                    }
+
+                    try
+                    {
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream.read_timeout(2s);
+                        stream << "GET /other HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
+                               << "Connection: close" << net::crlf
+                               << net::crlf
+                               << net::flush;
+                        std::string line;
+                        if(stream and std::getline(stream, line))
+                        {
+                            if(not line.empty() and line.back() == '\r')
+                                line.pop_back();
+                            const auto space1 = line.find(' ');
+                            if(space1 != std::string::npos)
+                            {
+                                const auto space2 = line.find(' ', space1 + 1);
+                                *response_status = space2 == std::string::npos
+                                    ? line.substr(space1 + 1)
+                                    : line.substr(space1 + 1, space2 - space1 - 1);
+                            }
+                        }
+                        auto line_count = 0;
+                        while(line_count < 20 and stream and std::getline(stream, line))
+                        {
+                            *response_headers += line + "\n";
+                            ++line_count;
+                            if(line.empty() or line == "\r")
+                                break;
+                        }
+                    }
+                    catch(...) {}
+
+                    release->store(true);
+                }
+
+                if(holder.joinable())
+                    holder.join();
+                if(port != 0)
+                {
+                    server->stop();
+                }
+                if(server_thread.joinable())
+                    server_thread.join();
+
+                tester::bdd::then("The second response is 503 and the first handler was the one in flight") = [response_status, response_headers, entered, held] {
+                    check_true(entered->load());
+                    check_eq(*response_status, "503");
+                    check_contains(*response_headers, "Retry-After: 1");
+                    check_true(held->load());
+                };
             };
         };
     };

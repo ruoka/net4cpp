@@ -41,27 +41,49 @@ auto register_header_access_tests()
 auto register_malformed_headers_tests()
 {
     test_case("Malformed HTTP headers parsing, [net]") = [] {
-        section("Parsing broken header lines") = [] {
+        section("Parsing valid header lines") = [] {
             auto raw = "Valid-Header: correct\r\n"
-                       "No-Colon-Line\r\n"           // Missing colon
                        "Multiple: Colons: Here\r\n"  // Multiple colons
-                       " Empty-Name: value\r\n"      // Leading space in name
                        "Name-Only:\r\n"              // Missing value
-                       ":Value-Only\r\n"             // Missing name
                        "Extra-Spaces:   value  \r\n" // Extra spaces
                        "\r\n"s;
-            
+
             auto is = std::istringstream{raw};
             http::headers hs;
             is >> hs;
 
             check_eq(hs["valid-header"], "correct");
-            check_false(hs.contains("no-colon-line"));
             check_eq(hs["multiple"], "Colons: Here");
-            check_eq(hs["empty-name"], "value");
             check_eq(hs["name-only"], "");
-            check_eq(hs[""], "Value-Only");
             check_eq(hs["extra-spaces"], "value");
+        };
+
+        auto rejected = [](std::string raw, std::string_view reason) {
+            auto is = std::istringstream{std::move(raw)};
+            http::headers hs;
+            auto threw = false;
+            try
+            {
+                is >> hs;
+            }
+            catch(const std::runtime_error& e)
+            {
+                threw = std::string_view{e.what()}.contains(reason);
+            }
+            check_true(threw);
+        };
+
+        section("A header line with no colon is rejected") = [rejected] {
+            rejected("Host: example\r\nNo-Colon-Line\r\n\r\n"s, "malformed header line");
+        };
+
+        section("Obsolete line folding is rejected") = [rejected] {
+            rejected("Content-Length: 5\r\n 0\r\n\r\n"s, "obsolete line folding");
+            rejected("Host: example\r\n\tfolded\r\n\r\n"s, "obsolete line folding");
+        };
+
+        section("An empty header name is rejected") = [rejected] {
+            rejected(":Value-Only\r\n\r\n"s, "malformed header line");
         };
 
         section("Line ending with LF only") = [] {
