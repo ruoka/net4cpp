@@ -1,12 +1,16 @@
 # Release Policy
 
-## Current status: v3.3.0
+## Current status: v3.4.0
 
-**[`v3.3.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.3.0)** (23 October 2026) is the
+**[`v3.4.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.4.0)** (23 October 2026) is the
 current SemVer tag for the Clang 21 + libc++ modules consume surface (`import net;`).
-It bounds how long one client can hold a connection, rejects smuggled and injected
-protocol fields, and adds `http::middleware::origin_gate` for browser-facing
-WebSocket and SSE routes.
+It adds `http::request` for handlers, WebSocket and SSE routes and gates, matches routes
+in registration order with each regex compiled once, keeps `controller&` references
+stable, and adds redirect and gateway status constants. Duplicate handler names are
+deprecated; see [HTTP server API improvements](http-server-api-improvements.md).
+[`v3.3.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.3.0) (23 October 2026) bounded
+how long one client can hold a connection, rejected smuggled and injected protocol
+fields, and added `http::middleware::origin_gate` for browser-facing WebSocket and SSE routes.
 [`v3.2.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.2.0) (23 October 2026) added
 `server::server_token()` so a product can replace or omit the `Server` header.
 [`v3.1.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.1.0) (23 October 2026) added the
@@ -16,7 +20,7 @@ a 128-connection cap, and browser policy headers.
 previous patch. [`v3.0.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.0.0) was the first
 modules-era cut. Prior tags `v1.0` / `v2.0` / `v2.1` are historical.
 
-Pin `v3.3.0` (or a later tag / deliberate commit). Nested `deps/tester` must match the
+Pin `v3.4.0` (or a later tag / deliberate commit). Nested `deps/tester` must match the
 parent tree’s tester pin — see
 [YarDB versioning](https://github.com/ruoka/YarDB/blob/master/docs/versioning.md).
 
