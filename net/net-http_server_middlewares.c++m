@@ -278,16 +278,18 @@ inline rate_limiter_ptr make_rate_limiter()
 inline auto default_rate_limit_key_extractor(std::string_view, const headers& hdr)
 {
     const auto trim = [](std::string_view s) {
-        const auto first = s.find_first_not_of(" \t");
-        if(first == std::string_view::npos)
-            return std::string_view{};
-        return s.substr(first, s.find_last_not_of(" \t") - first + 1);
+        const auto ows = [](char c) { return c == ' ' or c == '\t'; };
+        const auto first = std::ranges::find_if_not(s, ows);
+        const auto last = std::ranges::find_if_not(s | std::views::reverse, ows).base();
+        return first < last ? std::string_view{first, last} : std::string_view{};
     };
     if(const auto forwarded = hdr.try_get("x-forwarded-for"sv))
     {
-        // rfind npos + 1 == 0: a single entry is the whole value.
-        if(const auto last = trim(forwarded->substr(forwarded->rfind(',') + 1)); not last.empty())
-            return std::string{last};
+        auto last = std::string_view{};
+        for(const auto entry : *forwarded | std::views::split(','))
+            last = std::string_view{entry};
+        if(const auto client = trim(last); not client.empty())
+            return std::string{client};
     }
     if(const auto real_ip = hdr.try_get("x-real-ip"sv))
     {
