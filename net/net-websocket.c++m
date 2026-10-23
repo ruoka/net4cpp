@@ -246,18 +246,12 @@ inline bool header_token_contains(std::string value, std::string_view token)
     auto needle = std::string{token};
     utils::ascii_to_lower(needle);
 
-    auto rest = std::string_view{value};
-    while(true)
+    for(const auto part : std::string_view{value} | std::views::split(','))
     {
-        const auto comma = rest.find(',');
-        const auto part = utils::trim(
-            comma == std::string_view::npos ? rest : rest.substr(0, comma));
-        if(part == needle)
+        if(utils::trim(std::string_view{part}) == needle)
             return true;
-        if(comma == std::string_view::npos)
-            return false;
-        rest.remove_prefix(comma + 1);
     }
+    return false;
 }
 
 inline bool is_websocket_upgrade(const ::http::headers& hs)

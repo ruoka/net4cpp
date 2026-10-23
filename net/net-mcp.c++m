@@ -48,7 +48,7 @@ inline std::optional<std::string> query_param(std::string_view request_target, s
 inline std::string make_session_id()
 {
     auto id = net::generate_uuid_v4();
-    id.erase(std::remove(id.begin(), id.end(), '-'), id.end());
+    std::erase(id, '-');
     return id;
 }
 
@@ -95,11 +95,12 @@ namespace detail
 
 inline std::string_view trim_ws(std::string_view s)
 {
-    while(not s.empty() and (s.front() == ' ' or s.front() == '\t' or s.front() == '\n' or s.front() == '\r'))
-        s.remove_prefix(1);
-    while(not s.empty() and (s.back() == ' ' or s.back() == '\t' or s.back() == '\n' or s.back() == '\r'))
-        s.remove_suffix(1);
-    return s;
+    constexpr auto ws = " \t\r\n"sv;
+    const auto first = s.find_first_not_of(ws);
+    if(first == std::string_view::npos)
+        return {};
+    const auto last = s.find_last_not_of(ws);
+    return s.substr(first, last - first + 1);
 }
 
 // Decode one JSON string body (content between quotes) per RFC 8259.

@@ -47,8 +47,7 @@ inline void write_url_encoded(std::ostream& os, std::string_view value)
         if(url_unreserved(c))
             os.put(static_cast<char>(c));
         else
-            os << '%' << std::uppercase << std::hex << std::setw(2) << std::setfill('0')
-               << static_cast<int>(c) << std::nouppercase << std::dec;
+            os << '%' << std::format("{:02X}", static_cast<unsigned>(c));
     }
 }
 

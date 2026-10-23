@@ -6,6 +6,7 @@ export module net:http_server_middlewares;
 import std;
 import :http_headers;
 import :http_server;
+import :utils;
 import :uuid;
 
 export namespace http
@@ -348,26 +349,7 @@ inline auto rate_limiting_middleware(
 // Join header/method lists as a comma-separated string.
 inline auto join_cors_list(const std::vector<std::string>& values)
 {
-    if(values.empty())
-        return ""s;
-
-    auto view = values | std::views::transform([](const auto& v) { return std::string_view{v}; });
-    auto total_size = std::accumulate(
-        view.begin(),
-        view.end(),
-        std::size_t{0},
-        [](auto sum, auto v) { return sum + v.size() + 2; }) - 2;
-    auto joined = std::string{};
-    joined.reserve(total_size);
-    auto first = true;
-    std::ranges::for_each(view, [&](auto value)
-    {
-        if(not first)
-            joined += ", "s;
-        joined += value;
-        first = false;
-    });
-    return joined;
+    return values | std::views::join_with(", "sv) | std::ranges::to<std::string>();
 }
 
 // Resolve a reflected ACAO value. Disallowed or missing Origin must not fall
@@ -390,28 +372,13 @@ inline auto resolve_cors_origin(const headers& hdr, OriginValidatorFunc& allowed
 inline bool vary_lists_origin(std::string_view value)
 {
     auto lower = std::string{value};
-    for(auto& c : lower)
-    {
-        if(c >= 'A' and c <= 'Z')
-            c = static_cast<char>(c - 'A' + 'a');
-    }
+    utils::ascii_to_lower(lower);
 
-    auto rest = std::string_view{lower};
-    while(not rest.empty())
+    for(const auto token : std::string_view{lower} | std::views::split(','))
     {
-        const auto comma = rest.find(',');
-        const auto token = comma == std::string_view::npos ? rest : rest.substr(0, comma);
-        const auto begin = token.find_first_not_of(" \t"sv);
-        if(begin != std::string_view::npos)
-        {
-            const auto end = token.find_last_not_of(" \t"sv);
-            const auto trimmed = token.substr(begin, end - begin + 1);
-            if(trimmed == "origin"sv or trimmed == "*"sv)
-                return true;
-        }
-        if(comma == std::string_view::npos)
-            break;
-        rest.remove_prefix(comma + 1);
+        const auto trimmed = detail::trim_ows(std::string_view{token});
+        if(trimmed == "origin"sv or trimmed == "*"sv)
+            return true;
     }
     return false;
 }
@@ -472,18 +439,11 @@ inline auto cors_middleware(
     std::optional<int> max_age = std::nullopt)
 {
     // Use default methods/headers if not provided
+    const auto to_string = [](std::string_view name) { return std::string{name}; };
     if(allowed_methods.empty())
-    {
-        allowed_methods.reserve(default_cors_allowed_methods.size());
-        for(const auto& method : default_cors_allowed_methods)
-            allowed_methods.emplace_back(method);
-    }
+        allowed_methods.assign_range(default_cors_allowed_methods | std::views::transform(to_string));
     if(allowed_headers.empty())
-    {
-        allowed_headers.reserve(default_cors_allowed_headers.size());
-        for(const auto& header : default_cors_allowed_headers)
-            allowed_headers.emplace_back(header);
-    }
+        allowed_headers.assign_range(default_cors_allowed_headers | std::views::transform(to_string));
 
     return [allowed_origin = std::forward<OriginValidatorFunc>(allowed_origin),
             allowed_methods = std::move(allowed_methods),
