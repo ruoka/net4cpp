@@ -182,8 +182,8 @@ auto register_server_tests()
             server->get("/").html(view::index);
             server->get("/vk").html(view::get);
             server->get("/json").json(view::json);
-            server->get("/[a-z]*").response_handler("text/html", handler);
-            server->get("/[a-z]+/[0-9]+").response_handler("text/html", handler);
+            server->get("/[a-z]*").response("text/html", handler);
+            server->get("/[a-z]+/[0-9]+").response("text/html", handler);
             server->get("/foo/123").text("<p>/foo/123</p>");
 
             tester::bdd::when("Routes are rendered") = [server] {
@@ -226,6 +226,31 @@ auto register_server_tests()
             };
         };
     };
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    tester::bdd::scenario("Deprecated handler registration names still work, [net]") = [] {
+        tester::bdd::given("Handlers registered through each deprecated name") = [] {
+            auto server = http::server{};
+            auto make = [](std::string body) -> http::callback_with_headers {
+                return [body](auto, auto, auto&) { return http::make_response(http::status_ok, body); };
+            };
+            server.get("/a").response_handler("text/plain", make("a"));
+            server.get("/b").response_with_headers_handler("text/plain", make("b"));
+            server.get("/c").response_with_headers("text/plain", make("c")).cors([](std::string_view) { return true; });
+
+            tester::bdd::then("Each renders like response()") = [&server] {
+                auto hs = http::headers{};
+                for(const auto& [path, body] : {std::pair{"/a"s, "a"s}, {"/b"s, "b"s}, {"/c"s, "c"s}})
+                {
+                    auto [s, c, t, h] = server.get(path).render(path, "", hs);
+                    check_eq(c, body);
+                    check_eq(t, "text/plain"s);
+                }
+            };
+        };
+    };
+#pragma clang diagnostic pop
 
     tester::bdd::scenario("Invalid route regex fails at registration, [net]") = [] {
         tester::bdd::given("A server") = [] {
@@ -368,7 +393,7 @@ auto register_server_tests()
         using namespace std::chrono_literals;
         auto server = std::make_shared<http::server>();
         auto handler_done = std::make_shared<std::atomic<bool>>(false);
-        server->get("/slow").response_handler(
+        server->get("/slow").response(
             "text/plain"sv,
             [handler_done](std::string_view, std::string_view, http::headers&)
             {
@@ -689,7 +714,7 @@ auto register_server_tests()
     auto captured_output = std::make_shared<std::stringstream>();
 
             auto server = std::make_shared<http::server>();
-            server->get("/slow").response_handler("text/plain", [](auto&&, auto&&, auto&&) {
+            server->get("/slow").response("text/plain", [](auto&&, auto&&, auto&&) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         return http::make_response("200 OK"s, "Slow response"s);
     });
@@ -1190,7 +1215,7 @@ auto register_server_tests()
 
         tester::bdd::given("An HTTP server with a query-bearing GET route") = [] {
             auto server = std::make_shared<http::server>();
-            server->get(R"(/sell/[A-Z]+/[A-Z]{4}\?qty=[0-9]+&px=[0-9.]+)"s).response_with_headers(
+            server->get(R"(/sell/[A-Z]+/[A-Z]{4}\?qty=[0-9]+&px=[0-9.]+)"s).response(
                 "text/plain"sv,
                 [](auto, auto, auto&) {
                     return http::make_response(http::status_ok, "sell"s);
@@ -1714,7 +1739,7 @@ auto register_server_tests()
         tester::bdd::given("A server whose handler also sets Server") = [] {
             auto server = std::make_shared<http::server>();
             server->server_token("YarDB"sv);
-            server->get("/ok").response_handler("text/plain",
+            server->get("/ok").response("text/plain",
                 [](std::string_view, std::string_view, http::headers&) {
                     auto out = http::headers{};
                     out.set("Server"s, "spoofed"s);
@@ -2126,7 +2151,7 @@ auto register_server_tests()
         tester::bdd::given("An HTTP server with a POST route") = [] {
             auto server = std::make_shared<http::server>();
             auto handled = std::make_shared<std::atomic<bool>>(false);
-            server->post("/test").response_handler("text/plain",
+            server->post("/test").response("text/plain",
                 [handled](std::string_view, std::string_view, http::headers&) {
                     handled->store(true);
                     return http::make_response(http::status_ok, "OK"s);
@@ -2189,7 +2214,7 @@ auto register_server_tests()
         tester::bdd::given("An HTTP server with a POST route") = [] {
             auto server = std::make_shared<http::server>();
             auto handled = std::make_shared<std::atomic<bool>>(false);
-            server->post("/test").response_handler("text/plain",
+            server->post("/test").response("text/plain",
                 [handled](std::string_view, std::string_view, http::headers&) {
                     handled->store(true);
                     return http::make_response(http::status_ok, "OK"s);
@@ -2251,7 +2276,7 @@ auto register_server_tests()
         tester::bdd::given("An HTTP server with a GET route") = [] {
             auto server = std::make_shared<http::server>();
             auto handled = std::make_shared<std::atomic<bool>>(false);
-            server->get("/test").response_handler("text/plain",
+            server->get("/test").response("text/plain",
                 [handled](std::string_view, std::string_view, http::headers&) {
                     handled->store(true);
                     return http::make_response(http::status_ok, "OK"s);
@@ -2312,7 +2337,7 @@ auto register_server_tests()
         tester::bdd::given("An HTTP server with a POST route") = [] {
             auto server = std::make_shared<http::server>();
             auto handled = std::make_shared<std::atomic<bool>>(false);
-            server->post("/test").response_handler("text/plain",
+            server->post("/test").response("text/plain",
                 [handled](std::string_view, std::string_view, http::headers&) {
                     handled->store(true);
                     return http::make_response(http::status_ok, "OK"s);
@@ -2391,8 +2416,8 @@ auto register_server_tests()
                 return http::make_response(http::status_created, "Created"s, std::optional<http::headers>{});
             };
             auto wrapped = cors_mw(post_handler);
-            server->post("/api/data").response_with_headers("application/json", wrapped);
-            server->options("/api/data").response_with_headers("application/json", wrapped);
+            server->post("/api/data").response("application/json", wrapped);
+            server->options("/api/data").response("application/json", wrapped);
             server->timeout(std::chrono::seconds{1});
 
             tester::bdd::when("Browser-style OPTIONS preflight is sent to the route") = [server, handler_invoked] {
@@ -2467,7 +2492,7 @@ auto register_server_tests()
             auto server = std::make_shared<http::server>();
             auto handler_invoked = std::make_shared<std::atomic<bool>>(false);
 
-            server->post("/api/mutate").response_handler("application/json",
+            server->post("/api/mutate").response("application/json",
                 [handler_invoked](auto&&, auto&&, auto&&){
                     handler_invoked->store(true);
                     return http::make_response(http::status_created, "mutated"s);
@@ -2718,7 +2743,7 @@ auto register_server_tests()
 
         tester::bdd::given("A handler that copies request headers into the response") = [] {
             auto server = std::make_shared<http::server>();
-            server->get("/echo-hdrs").response_handler("text/plain",
+            server->get("/echo-hdrs").response("text/plain",
                 [](std::string_view, std::string_view, http::headers& hdr) {
                     auto out = http::headers{};
                     for(const auto& [name, value] : hdr)
@@ -2781,7 +2806,7 @@ auto register_server_tests()
 
         tester::bdd::given("A handler that returns a header value containing CR") = [] {
             auto server = std::make_shared<http::server>();
-            server->get("/split").response_handler("text/plain",
+            server->get("/split").response("text/plain",
                 [](std::string_view, std::string_view, http::headers&) {
                     auto out = http::headers{};
                     out.set("x-injected"s, "ok\rX-Evil: 1"s);
@@ -2840,7 +2865,7 @@ auto register_server_tests()
 
         tester::bdd::given("A handler that returns hop-by-hop custom headers") = [] {
             auto server = std::make_shared<http::server>();
-            server->get("/hop").response_handler("text/plain",
+            server->get("/hop").response("text/plain",
                 [](std::string_view, std::string_view, http::headers&) {
                     auto out = http::headers{};
                     out.set("Upgrade"s, "websocket"s);
@@ -2992,7 +3017,7 @@ auto register_server_tests()
             auto server = std::make_shared<http::server>();
             check_true(server->frame_options());
             server->frame_options(false);
-            server->get("/embed").response_handler("text/html",
+            server->get("/embed").response("text/html",
                 [](std::string_view, std::string_view, http::headers&) {
                     auto out = http::headers{};
                     out.set("x-frame-options"s, "SAMEORIGIN"s);
@@ -3053,7 +3078,7 @@ auto register_server_tests()
         tester::bdd::given("A POST route that echoes the body") = [] {
             auto server = std::make_shared<http::server>();
             auto seen = std::make_shared<std::string>();
-            server->post("/echo").response_handler("text/plain",
+            server->post("/echo").response("text/plain",
                 [seen](std::string_view, std::string_view body, http::headers&) {
                     *seen = std::string{body};
                     return http::make_response(http::status_ok, std::string{body});
@@ -3133,7 +3158,7 @@ auto register_server_tests()
         tester::bdd::given("A POST route") = [] {
             auto server = std::make_shared<http::server>();
             auto handled = std::make_shared<std::atomic<bool>>(false);
-            server->post("/echo").response_handler("text/plain",
+            server->post("/echo").response("text/plain",
                 [handled](std::string_view, std::string_view, http::headers&) {
                     handled->store(true);
                     return http::make_response(http::status_ok, "OK"s);
@@ -3200,7 +3225,7 @@ auto register_server_tests()
         tester::bdd::given("An HTTP server with a GET route") = [] {
             auto server = std::make_shared<http::server>();
             auto handled = std::make_shared<std::atomic<bool>>(false);
-            server->get("/test").response_handler("text/plain",
+            server->get("/test").response("text/plain",
                 [handled](std::string_view, std::string_view, http::headers&) {
                     handled->store(true);
                     return http::make_response(http::status_ok, "OK"s);
@@ -3264,11 +3289,11 @@ auto register_server_tests()
 
         tester::bdd::given("Handlers that put CR into the status and the content type") = [] {
             auto server = std::make_shared<http::server>();
-            server->get("/status").response_handler("text/plain",
+            server->get("/status").response("text/plain",
                 [](std::string_view, std::string_view, http::headers&) {
                     return http::make_response("200 OK\r\nX-Injected: yes"s, "OK"s);
                 });
-            server->get("/type").response_handler("text/plain\r\nX-Injected: yes",
+            server->get("/type").response("text/plain\r\nX-Injected: yes",
                 [](std::string_view, std::string_view, http::headers&) {
                     return http::make_response(http::status_ok, "OK"s);
                 });
@@ -3354,7 +3379,7 @@ auto register_server_tests()
             auto entered = std::make_shared<std::atomic<bool>>(false);
             auto release = std::make_shared<std::atomic<bool>>(false);
             server->max_connections(1);
-            server->get("/hold").response_handler("text/plain",
+            server->get("/hold").response("text/plain",
                 [entered, release](std::string_view, std::string_view, http::headers&) {
                     entered->store(true);
                     while(not release->load())

@@ -111,7 +111,7 @@ auto register_http_client_tests()
 
         auto server = std::make_shared<http::server>();
         server->get("/ping").json(R"({"ok":true})"s);
-        server->post("/echo").response_with_headers(
+        server->post("/echo").response(
             "application/json"sv,
             [](auto, auto body, auto&)
             {

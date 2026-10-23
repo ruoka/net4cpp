@@ -114,8 +114,7 @@ using body_view = std::string_view;
 // Unified callback type - all handlers return response_with_headers (with optional headers)
 // Note: headers is non-const to allow middlewares to modify headers in-place without copying
 using callback = std::function<response_with_headers(request_view, body_view, headers&)>;
-// Legacy alias for backwards compatibility
-using callback_with_headers = callback;
+using callback_with_headers [[deprecated("use http::callback")]] = callback;
 
 namespace detail
 {
@@ -256,32 +255,31 @@ public:
         m_callback = [c](auto&&...){ return make_response(status_ok, c); };
     }
 
-    void response_handler(std::string_view ct, callback cb)
+    controller& response(std::string_view ct, callback cb)
     {
         m_content_type = std::string{ct};
         m_callback = std::move(cb);
-    }
-
-    // Backwards compatible fluent API (used by YarDB)
-    controller& response(std::string_view ct, callback cb)
-    {
-        response_handler(ct, std::move(cb));
         return *this;
     }
 
-    // Legacy alias for backwards compatibility
-    using callback_with_headers = callback;
+    using callback_with_headers [[deprecated("use http::controller::callback")]] = callback;
 
-    void response_with_headers_handler(std::string_view ct, callback_with_headers cb)
+    [[deprecated("use response(content_type, callback)")]]
+    void response_handler(std::string_view ct, callback cb)
     {
-        response_handler(ct, std::move(cb));
+        response(ct, std::move(cb));
     }
 
-    // Backwards compatible fluent API (used by YarDB)
-    controller& response_with_headers(std::string_view ct, callback_with_headers cb)
+    [[deprecated("use response(content_type, callback)")]]
+    void response_with_headers_handler(std::string_view ct, callback cb)
     {
-        response_with_headers_handler(ct, std::move(cb));
-        return *this;
+        response(ct, std::move(cb));
+    }
+
+    [[deprecated("use response(content_type, callback)")]]
+    controller& response_with_headers(std::string_view ct, callback cb)
+    {
+        return response(ct, std::move(cb));
     }
 
     response_with_content_type render(request_view request, body_view body, headers& h) const

@@ -59,7 +59,7 @@ auto register_readme_examples_tests()
         auto middlewares = std::vector<http::middleware_factory>{auth_mw};
         auto wrapped_handler = http::middleware::wrap(protected_handler, middlewares);
         
-        server.get("/api/protected").response_with_headers("application/json"sv, wrapped_handler);
+        server.get("/api/protected").response("application/json"sv, wrapped_handler);
         
         // Public routes don't need middleware
         server.get("/").text("Public content"s);
@@ -83,7 +83,7 @@ auto register_readme_examples_tests()
         };
         
         auto middlewares = std::vector<http::middleware_factory>{body_size_mw};
-        server.post("/upload").response_with_headers("text/plain"sv, http::middleware::wrap(handler, middlewares));
+        server.post("/upload").response("text/plain"sv, http::middleware::wrap(handler, middlewares));
         
         succeed("Body Size Validation Middleware example compiles successfully");
     };
@@ -103,7 +103,7 @@ auto register_readme_examples_tests()
         };
         
         auto middlewares = std::vector<http::middleware_factory>{accept_mw};
-        server.get("/api/data").response_with_headers("application/json"sv, http::middleware::wrap(handler, middlewares));
+        server.get("/api/data").response("application/json"sv, http::middleware::wrap(handler, middlewares));
         
         succeed("Accept Header Validation Middleware example compiles successfully");
     };
@@ -135,7 +135,7 @@ auto register_readme_examples_tests()
             accept_mw       // Applied first (executes last)
         };
         
-        server.post("/api/secure").response_with_headers("application/json"sv, http::middleware::wrap(handler, middlewares));
+        server.post("/api/secure").response("application/json"sv, http::middleware::wrap(handler, middlewares));
         
         succeed("Combining Multiple Middlewares example compiles successfully");
     };
@@ -185,10 +185,10 @@ auto register_readme_examples_tests()
             return std::make_tuple(http::status_ok, R"({"oauth": "valid"})"s, std::optional<http::headers>{});
         };
         
-        server.get("/api/jwt").response_with_headers("application/json"sv, 
+        server.get("/api/jwt").response("application/json"sv, 
             http::middleware::wrap(jwt_handler, std::vector<http::middleware_factory>{jwt_auth}));
         
-        server.get("/api/oauth").response_with_headers("application/json"sv,
+        server.get("/api/oauth").response("application/json"sv,
             http::middleware::wrap(oauth_handler, std::vector<http::middleware_factory>{oauth_auth}));
         
         succeed("Custom Authentication Strategies example compiles successfully");
