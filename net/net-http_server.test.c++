@@ -1951,6 +1951,68 @@ auto register_server_tests()
         };
     };
 
+    // Regression: a `\r\r\n` line ended header parsing while the head reader went
+    // on, so a Transfer-Encoding after it skipped the TE rejection.
+    tester::bdd::scenario("400 when a stray CR line hides Transfer-Encoding, [net]") = [] {
+        if(not network_tests_enabled()) return;
+
+        tester::bdd::given("An HTTP server with a POST route") = [] {
+            auto server = std::make_shared<http::server>();
+            auto handled = std::make_shared<std::atomic<bool>>(false);
+            server->post("/test").response_handler("text/plain",
+                [handled](std::string_view, std::string_view, http::headers&) {
+                    handled->store(true);
+                    return http::make_response(http::status_ok, "OK"s);
+                });
+            server->timeout(std::chrono::seconds{1});
+
+            tester::bdd::when("Transfer-Encoding follows a line of a lone CR") = [server, handled] {
+                auto response_status = std::make_shared<std::string>("");
+
+                auto [server_thread, port, _http_listen_gate] = listen_ephemeral(server);
+                const auto port_s = std::to_string(port);
+
+                using namespace std::chrono_literals;
+                if (port != 0) {
+                    std::this_thread::sleep_for(200ms);
+
+                    try {
+                        auto stream = connect("127.0.0.1", port_s);
+                        stream << "POST /test HTTP/1.1" << net::crlf
+                               << "Host: 127.0.0.1:" << port_s << net::crlf
+                               << "\r\r\n"
+                               << "Transfer-Encoding: chunked" << net::crlf
+                               << net::crlf
+                               << "0" << net::crlf << net::crlf << net::flush;
+
+                        std::string line;
+                        if(stream and std::getline(stream, line)) {
+                            if(not line.empty() and line.back() == '\r')
+                                line.pop_back();
+                            auto space1 = line.find(' ');
+                            if(space1 != std::string::npos) {
+                                auto space2 = line.find(' ', space1 + 1);
+                                *response_status = space2 != std::string::npos
+                                    ? line.substr(space1 + 1, space2 - space1 - 1)
+                                    : line.substr(space1 + 1);
+                            }
+                        }
+                    } catch(...) {}
+
+                    std::this_thread::sleep_for(200ms);
+                    server->stop();
+                }
+
+                if (server_thread.joinable()) server_thread.join();
+
+                tester::bdd::then("Response is 400 and the handler is not invoked") = [response_status, handled] {
+                    check_eq(*response_status, "400");
+                    check_false(handled->load());
+                };
+            };
+        };
+    };
+
     // Regression: duplicate Host used to last-wins, so a proxy that honored the
     // first value could route to the victim while the app saw the attacker Host.
     tester::bdd::scenario("400 when Host is duplicated, [net]") = [] {
@@ -2681,9 +2743,10 @@ auto register_server_tests()
                 if(server_thread.joinable())
                     server_thread.join();
 
-                tester::bdd::then("ACAO is omitted and no injected header appears") =
+                // The header parser now rejects the bare CR before CORS runs.
+                tester::bdd::then("The request is rejected and no injected header appears") =
                     [headers_raw] {
-                        check_contains(*headers_raw, "Content-Type: text/event-stream");
+                        check_contains(*headers_raw, "400 Bad Request");
                         check_false(headers_raw->contains("Access-Control-Allow-Origin"sv));
                         check_false(headers_raw->contains("X-Evil"sv));
                         check_false(headers_raw->contains("x-evil"sv));
