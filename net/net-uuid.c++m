@@ -12,16 +12,32 @@ import std;
 
 export namespace net {
 
+// Unpredictable bytes for identifiers that act as credentials (session IDs).
+// Every byte comes from std::random_device, which libc++ backs with the OS
+// CSPRNG (arc4random on macOS, /dev/urandom on Linux). Seeding a Mersenne
+// Twister from it instead caps the output at 2^32 possibilities per seed,
+// and its output is predictable.
+template<std::size_t N>
+[[nodiscard]] std::array<std::uint8_t, N> random_bytes()
+{
+    static_assert(N % 4 == 0);
+    static_assert(sizeof(std::random_device::result_type) >= 4);
+    auto device = std::random_device{};
+    auto bytes = std::array<std::uint8_t, N>{};
+    for(auto i = 0uz; i < N; i += 4)
+    {
+        const auto word = static_cast<std::uint32_t>(device());
+        for(auto k = 0uz; k < 4; ++k)
+            bytes[i + k] = static_cast<std::uint8_t>(word >> (8 * k));
+    }
+    return bytes;
+}
+
 // Generate a UUIDv4 string
 // Returns a formatted UUID string in the standard format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
-// Uses thread-local random number generators for performance.
 // @return Formatted UUIDv4 string (e.g., "550e8400-e29b-41d4-a716-446655440000")
 [[nodiscard]] inline std::string generate_uuid_v4() {
-    thread_local std::mt19937_64 gen{std::random_device{}()};
-    thread_local std::uniform_int_distribution<std::uint16_t> dis{0, 255};
-
-    std::array<std::uint8_t, 16> bytes{};
-    for (auto& b : bytes) b = static_cast<std::uint8_t>(dis(gen));
+    auto bytes = random_bytes<16>();
 
     // Set version (4) : bits 12-15 of byte 6 => 0b0100 (RFC 4122/RFC 9562)
     bytes[6] = (bytes[6] & 0x0F) | 0x40;
