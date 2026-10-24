@@ -7,3 +7,5 @@ build-*/
 build*/
 tools/cb
 tools/cb.dSYM/
+compile_commands.json
+graph.json
