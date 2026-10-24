@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 // See the LICENSE file in the project root for full license text.
 
-// This test file ensures that all code examples in README.md compile correctly.
-// The examples are wrapped in test cases to verify compilation and basic functionality.
+// Compiles the README.md code examples, one test case per README section. Servers
+// are configured but never listen; client code sits in lambdas that are not called.
 
 import net;
 import std;
@@ -17,185 +17,96 @@ using namespace std::string_view_literals;
 
 auto register_readme_examples_tests()
 {
-    // Test: Basic HTTP Server Example (README.md lines 174-185)
-    test_case("README: Basic HTTP Server example compiles, [readme]") = [] {
-        using namespace net;
+    test_case("README: HTTP server, [readme]") = [] {
         using namespace tester::assertions;
-        
+
         auto server = http::server{};
-        server.get("/").text("Hello, World!"s);
-        server.get("/api/status").json(R"({"status": "ok"})"s);
-        
-        // Verify server was configured (don't actually listen in test)
-        succeed("Basic HTTP Server example compiles successfully");
+        server.get("/").text("Hello, World!");
+        server.get("/api/status").json(R"({"status": "ok"})");
+
+        succeed("HTTP server example compiles");
     };
 
-    // Test: Authentication Middleware Example (README.md lines 193-232)
-    test_case("README: Authentication Middleware example compiles, [readme]") = [] {
-        using namespace net;
+    test_case("README: Request handlers, [readme]") = [] {
         using namespace tester::assertions;
-        
+
         auto server = http::server{};
-        
-        // Define public paths (no authentication required)
-        auto is_public = [](std::string_view path) {
-            return path == "/"sv or path == "/health"sv or path.starts_with("/public/"sv);
-        };
-        
-        // Define token validation
-        auto valid_tokens = std::set<std::string>{"Bearer secret-token-123"s, "Bearer admin-key"s};
-        auto validate_token = [&valid_tokens](std::string_view token) {
-            return valid_tokens.contains(std::string{token});
-        };
-        
-        // Create authentication middleware
-        auto auth_mw = http::middleware::authentication_middleware(is_public, validate_token, "My API Realm"sv);
-        
-        // Apply middleware to protected routes
-        auto protected_handler = []([[maybe_unused]] auto&& req, [[maybe_unused]] auto&& body, [[maybe_unused]] auto&& hdr) {
-            return std::make_tuple(http::status_ok, R"({"message": "Protected resource"})"s, std::optional<http::headers>{});
-        };
-        
-        auto middlewares = std::vector<http::middleware_factory>{auth_mw};
-        auto wrapped_handler = http::middleware::wrap(protected_handler, middlewares);
-        
-        server.get("/api/protected").response("application/json"sv, wrapped_handler);
-        
-        // Public routes don't need middleware
-        server.get("/").text("Public content"s);
-        server.get("/health").text("OK"s);
-        
-        succeed("Authentication Middleware example compiles successfully");
+        server.get(R"(/orders/([0-9]+)(\?.*)?)").response("application/json",
+            [](const http::request& req, http::body_view, http::headers&) {
+                const auto id = req.capture(1);
+                const auto sort = req.query("sort").value_or("asc");
+                return http::make_response(http::status_ok,
+                    std::format(R"({{"id":{},"sort":"{}","from":"{}"}})", id, sort, req.peer));
+            });
+
+        const auto route = std::regex{R"(/orders/([0-9]+)(\?.*)?)"};
+        const auto target = "/orders/7?sort=desc"sv;
+        check_true(std::regex_match(target.begin(), target.end(), route));
+
+        auto hdr = http::headers{};
+        auto [status, content, type, custom_headers] = server.get(R"(/orders/([0-9]+)(\?.*)?)").render(
+            http::request{.method = "GET"sv, .target = target, .peer = "10.0.0.1"sv, .route = &route}, ""sv, hdr);
+        check_eq(status, http::status_ok);
+        check_eq(content, R"({"id":7,"sort":"desc","from":"10.0.0.1"})"s);
+        check_eq(type, "application/json"s);
     };
 
-    // Test: Body Size Validation Middleware Example (README.md lines 234-246)
-    test_case("README: Body Size Validation Middleware example compiles, [readme]") = [] {
-        using namespace net;
+    test_case("README: Middlewares, [readme]") = [] {
         using namespace tester::assertions;
-        
-        auto server = http::server{};
-        
-        // Limit request body size to 1MB
-        auto body_size_mw = http::middleware::body_size_validation_middleware(1024 * 1024);
-        
-        auto handler = []([[maybe_unused]] auto&& req, [[maybe_unused]] auto&& body, [[maybe_unused]] auto&& hdr) {
-            return std::make_tuple(http::status_ok, "OK"s, std::optional<http::headers>{});
+
+        auto is_public = [](std::string_view target) { return target == "/health"; };
+        auto validate = [](std::string_view authorization) { return authorization == "Bearer secret"; };
+
+        const auto common = std::vector<http::request_middleware_factory>{
+            http::middleware::correlation_id_middleware(),
+            http::middleware::authentication_middleware(is_public, validate, "orders"),
+            http::middleware::body_size_validation_middleware(64 * 1024),
         };
-        
-        auto middlewares = std::vector<http::middleware_factory>{body_size_mw};
-        server.post("/upload").response("text/plain"sv, http::middleware::wrap(handler, middlewares));
-        
-        succeed("Body Size Validation Middleware example compiles successfully");
+
+        auto order = [](const http::request& req, http::body_view, http::headers& hdr) {
+            return http::make_response(http::status_ok,
+                std::format(R"({{"id":"{}","correlation":"{}"}})", req.capture(1), hdr["x-correlation-id"]));
+        };
+
+        auto server = http::server{};
+        server.get("/orders/([0-9]+)").response("application/json", http::middleware::wrap(order, common));
+        server.get("/health").text("OK");
+
+        auto hdr = http::headers{};
+        auto [status, content, type, custom_headers] = server.get("/orders/([0-9]+)").render(http::request{.target = "/orders/7"sv}, ""sv, hdr);
+        check_eq(status, http::status_unauthorized);
+        check_true(hdr.contains("x-correlation-id"));
     };
 
-    // Test: Accept Header Validation Middleware Example (README.md lines 248-260)
-    test_case("README: Accept Header Validation Middleware example compiles, [readme]") = [] {
-        using namespace net;
+    test_case("README: HTTP client, [readme]") = [] {
         using namespace tester::assertions;
-        
-        auto server = http::server{};
-        
-        // Require JSON Accept header
-        auto accept_mw = http::middleware::accept_validation_middleware("application/json"sv);
-        
-        auto handler = []([[maybe_unused]] auto&& req, [[maybe_unused]] auto&& body, [[maybe_unused]] auto&& hdr) {
-            return std::make_tuple(http::status_ok, R"({"data": "value"})"s, std::optional<http::headers>{});
+
+        [[maybe_unused]] auto example = [] {
+            auto res = http::client::request("127.0.0.1", "8080", "GET", "/api/status");
+            if(res.ok())
+                std::clog << res.status_code << ' ' << res.body << '\n';
+
+            auto hdrs = http::headers{};
+            hdrs.set("authorization", "Bearer secret");
+            auto created = http::client::request("127.0.0.1", "8080", "POST", "/orders",
+                                                 hdrs, R"({"item":"book"})", std::chrono::seconds{5});
+            return created.ok();
         };
-        
-        auto middlewares = std::vector<http::middleware_factory>{accept_mw};
-        server.get("/api/data").response("application/json"sv, http::middleware::wrap(handler, middlewares));
-        
-        succeed("Accept Header Validation Middleware example compiles successfully");
+
+        [[maybe_unused]] auto raw = [] {
+            using namespace net;
+            auto s = connect("www.google.com", "http");
+            s << "GET / HTTP/1.1"                << crlf
+              << "Host: www.google.com"          << crlf
+              << "Connection: close"             << crlf
+              << crlf
+              << flush;
+        };
+
+        succeed("HTTP client examples compile");
     };
 
-    // Test: Combining Multiple Middlewares Example (README.md lines 262-282)
-    test_case("README: Combining Multiple Middlewares example compiles, [readme]") = [] {
-        using namespace net;
-        using namespace tester::assertions;
-        
-        auto server = http::server{};
-        
-        // Define public paths and token validation
-        auto is_public = [](std::string_view) { return false; };
-        auto validate_token = [](std::string_view) { return true; };
-        
-        // Combine authentication, body size validation, and Accept header validation
-        auto auth_mw = http::middleware::authentication_middleware(is_public, validate_token);
-        auto body_size_mw = http::middleware::body_size_validation_middleware(1024 * 1024);
-        auto accept_mw = http::middleware::accept_validation_middleware("application/json"sv);
-        
-        auto handler = []([[maybe_unused]] auto&& req, [[maybe_unused]] auto&& body, [[maybe_unused]] auto&& hdr) {
-            return std::make_tuple(http::status_ok, R"({"result": "success"})"s, std::optional<http::headers>{});
-        };
-        
-        // Middlewares are applied in reverse order (last in chain executes first)
-        auto middlewares = std::vector<http::middleware_factory>{
-            auth_mw,        // Applied third (executes first)
-            body_size_mw,   // Applied second
-            accept_mw       // Applied first (executes last)
-        };
-        
-        server.post("/api/secure").response("application/json"sv, http::middleware::wrap(handler, middlewares));
-        
-        succeed("Combining Multiple Middlewares example compiles successfully");
-    };
-
-    // Test: Custom Authentication Strategies Example (README.md lines 284-322)
-    test_case("README: Custom Authentication Strategies example compiles, [readme]") = [] {
-        using namespace net;
-        using namespace tester::assertions;
-        
-        auto server = http::server{};
-        
-        // JWT token validation example
-        auto validate_jwt = [](std::string_view token) {
-            // Extract Bearer token
-            if(not token.starts_with("Bearer "sv))
-                return false;
-            
-            auto jwt_token = token.substr(7); // Skip "Bearer "
-            // Validate JWT (simplified - use a proper JWT library in production)
-            return jwt_token.size() > 20; // Placeholder validation
-        };
-        
-        // OAuth token validation example
-        auto validate_oauth = [](std::string_view token) {
-            // Validate OAuth token against token store
-            return token.starts_with("oauth_token_"sv);
-        };
-        
-        // Use different authentication strategies per route
-        auto jwt_auth = http::middleware::authentication_middleware(
-            [](auto&&) { return false; }, // No public paths
-            validate_jwt,
-            "JWT Protected API"sv
-        );
-        
-        auto oauth_auth = http::middleware::authentication_middleware(
-            [](auto&&) { return false; },
-            validate_oauth,
-            "OAuth Protected API"sv
-        );
-        
-        auto jwt_handler = []([[maybe_unused]] auto&& req, [[maybe_unused]] auto&& body, [[maybe_unused]] auto&& hdr) {
-            return std::make_tuple(http::status_ok, R"({"jwt": "valid"})"s, std::optional<http::headers>{});
-        };
-        
-        auto oauth_handler = []([[maybe_unused]] auto&& req, [[maybe_unused]] auto&& body, [[maybe_unused]] auto&& hdr) {
-            return std::make_tuple(http::status_ok, R"({"oauth": "valid"})"s, std::optional<http::headers>{});
-        };
-        
-        server.get("/api/jwt").response("application/json"sv, 
-            http::middleware::wrap(jwt_handler, std::vector<http::middleware_factory>{jwt_auth}));
-        
-        server.get("/api/oauth").response("application/json"sv,
-            http::middleware::wrap(oauth_handler, std::vector<http::middleware_factory>{oauth_auth}));
-        
-        succeed("Custom Authentication Strategies example compiles successfully");
-    };
-
-    // Test: HTTP Escape Example (README.md lines 99-113)
-    test_case("README: HTTP Escape example compiles, [readme]") = [] {
+    test_case("README: HTML and URL escaping, [readme]") = [] {
         using namespace tester::assertions;
 
         auto symbol = "NOKIA"s;
@@ -207,100 +118,124 @@ auto register_readme_examples_tests()
 
         auto decoded = net::url_decode("ACC%2B%22%3Cx%3E");
         check_eq(decoded, reference);
-
-        succeed("HTTP Escape example compiles successfully");
     };
 
-    // Test: Syslog Stream Basic Usage Example (README.md lines 124-146)
-    test_case("README: Syslog Stream Basic Usage example compiles, [readme]") = [] {
+    test_case("README: Server-Sent Events, [readme]") = [] {
+        using namespace tester::assertions;
+
+        auto server = http::server{};
+        auto allow = [](std::string_view o) { return o == "http://localhost:3000"; };
+
+        server.options("/events/.*").response("text/plain",
+            http::middleware::cors_middleware(allow)([](auto&&, auto&&, auto&&) {
+                return http::make_response(http::status_no_content, "");
+            }));
+
+        server.sse(R"(/events/(\w+))")
+            .gate(http::middleware::origin_gate({"http://localhost:3000"}))
+            .cors(allow)
+            .sse([](http::sse::session& session, const http::request& req, http::headers& hdr) {
+                if(hdr.contains("last-event-id"))
+                {
+                }
+                session.send_comment("ok");
+                session.send_event("topic", req.capture(1), "1");
+            });
+
+        check_true(server.sse(R"(/events/(\w+))").has_sse());
+        check_true(server.sse(R"(/events/(\w+))").has_gate());
+    };
+
+    test_case("README: WebSocket, [readme]") = [] {
+        using namespace tester::assertions;
+
+        auto server = http::server{};
+        server.ws("/echo").ws([](std::string_view msg) {
+            return net::websocket::text_reply{std::string{msg}};
+        });
+        server.ws(R"(/rooms/(\w+))")
+            .gate(http::middleware::origin_gate({"http://localhost:3000"}))
+            .ws([](const http::request& req, std::string_view msg) {
+                return net::websocket::text_reply{std::format("{}: {}", req.capture(1), msg)};
+            });
+
+        [[maybe_unused]] auto client = [] {
+            auto ws = net::websocket::connect("127.0.0.1", "8080", "/echo");
+            if(ws.send("hello"))
+            {
+                if(auto reply = ws.recv())
+                {
+                }
+            }
+            ws.close();
+        };
+
+        check_true(server.ws("/echo").has_websocket());
+        check_true(server.ws(R"(/rooms/(\w+))").has_gate());
+    };
+
+    test_case("README: MCP over SSE, [readme]") = [] {
+        using namespace tester::assertions;
+
+        auto http = http::server{};
+        auto mcp = http::mcp::server{"/messages/"};
+        mcp.info({.name = "demo", .version = "1.0.0"})
+            .list_tools([] {
+                return std::vector<http::mcp::tool_spec>{
+                    {.name = "health", .description = "liveness"},
+                };
+            })
+            .call_tool([](std::string_view, std::string_view) {
+                return http::mcp::tool_result{.text = "ok"};
+            })
+            .attach(http, "/sse");
+
+        check_true(http.sse("/sse").has_sse());
+    };
+
+    test_case("README: Syslog stream, [readme]") = [] {
         using namespace net;
-        using namespace std;
-        // Don't use tester::assertions namespace here to avoid conflict with 'warning'
-        using tester::assertions::check_true;
         using tester::assertions::succeed;
-        
+
         slog.log_level(syslog::severity::info);
         slog.facility(syslog::facility::local0);
-        slog.app_name("example"s);  // Use non-deprecated method
-        
-        auto clothes = "shirts"s;
-        auto spouse = "wife"s;
-        auto wrong = false;
-        
-        // Use local alias for 'warning' to avoid conflict with tester::assertions::warning
-        constexpr auto& warning_severity = net::warning;
-        
-        // Use the manipulator objects
+        slog.app_name("example");
+
+        auto clothes = "shirts"s; auto spouse = "wife"; auto wrong = false;
+
         slog << debug   << "... " << 3 << ' ' << 2 << ' ' << 1 << " Liftoff" << flush;
         slog << info    << "The papers want to know whose " << clothes << " you wear..." << flush;
         slog << notice  << "Tell my " << spouse << " I love her very much!" << flush;
-        // Note: boolalpha manipulator removed from test to avoid compilation issues
-        // The README example uses it, but for compilation testing we simplify
-        slog << warning_severity << "Ground Control to Major Tom Your circuit's dead, there's something " << wrong << '?' << flush;
+        slog << net::warning << "Ground Control to Major Tom Your circuit's dead, there's something " << wrong << '?' << flush;
         slog << error   << "Planet Earth is blue and there's nothing I can do." << flush;
-        
-        succeed("Syslog Stream Basic Usage example compiles successfully");
-    };
 
-    // Test: Syslog Fluent Configuration API Example (README.md lines 152-158)
-    test_case("README: Syslog Fluent Configuration API example compiles, [readme]") = [] {
-        using namespace net;
-        using namespace tester::assertions;
-        
-        slog.format(net::log_format::jsonl)
-            .app_name("my-service"s)
-            .log_level(syslog::severity::info)
-            .sd_id("app"s)
-            .redirect("logs/app.log"s);
-        
-        succeed("Syslog Fluent Configuration API example compiles successfully");
-    };
+        [[maybe_unused]] auto fluent = [] {
+            slog.format(net::log_format::jsonl)
+                .app_name("my-service")
+                .log_level(syslog::severity::info)
+                .sd_id("app")
+                .redirect("logs/app.log");
+        };
 
-    // Test: Syslog Structured Logging with Fields Example (README.md lines 164-170)
-    test_case("README: Syslog Structured Logging with Fields example compiles, [readme]") = [] {
-        using namespace net;
-        using namespace tester::assertions;
-        
-        // Using pair syntax
-        slog << info << std::pair{"user_id"s, 42} << std::pair{"ip"s, "192.168.1.1"s} << "User logged in" << flush;
-        
-        succeed("Syslog Structured Logging with Fields example compiles successfully");
-    };
+        slog << info << std::pair{"user_id", 42} << std::pair{"ip", "192.168.1.1"} << "User logged in" << flush;
 
-    // Test: Syslog Source Location Support Example (README.md lines 176-185)
-    test_case("README: Syslog Source Location Support example compiles, [readme]") = [] {
-        using namespace net;
-        using namespace tester::assertions;
-        
         slog << info << std::source_location::current() << "Operation completed" << flush;
-        
-        // Or with structured fields
-        slog << error 
+        slog << error
              << std::source_location::current()
-             << std::pair{"duration_ms"sv, 127}
+             << std::pair{"duration_ms", 127}
              << "Request failed"
              << flush;
-        
-        succeed("Syslog Source Location Support example compiles successfully");
-    };
 
-    // Test: Syslog Check Log Level Before Logging Example (README.md lines 189-195)
-    test_case("README: Syslog Check Log Level Before Logging example compiles, [readme]") = [] {
-        using namespace net;
-        using namespace tester::assertions;
-        
         if(slog.is_enabled(syslog::severity::debug))
         {
-            // Expensive debug computation
             auto details = "debug info"s;
             slog << debug << details << flush;
         }
-        
-        succeed("Syslog Check Log Level Before Logging example compiles successfully");
+
+        succeed("Syslog stream examples compile");
     };
 
     return true;
 }
 
 const auto _ = register_readme_examples_tests();
-

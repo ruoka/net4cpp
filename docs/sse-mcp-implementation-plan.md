@@ -1,8 +1,7 @@
 # Implementation plan: SSE then MCP on `http::server`
 
-**Branch:** `feature/sse-mcp-server`  
 **Repo:** [ruoka/net4cpp](https://github.com/ruoka/net4cpp)  
-**Status:** M1–M5 on `feature/mcp-sse-transport` (SSE + MCP session + JSON-RPC); M6 is YarDB  
+**Status:** Done. M1–M5 (SSE, MCP session, JSON-RPC) are on `master`; M6 is in YarDB. Kept as design background; the README documents current usage.  
 **Date:** 2026-07-25
 
 ## Goal

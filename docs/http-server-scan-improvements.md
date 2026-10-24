@@ -1,6 +1,5 @@
 # HTTP server scan improvements
 
-**Branch:** `docs/http-server-scan-improvements`  
 **Repo:** [ruoka/net4cpp](https://github.com/ruoka/net4cpp)  
 **Status:** Items 1 through 4 and 6 through 10 are implemented. Item 2 includes a 30s idle read timeout, `Expect: 100-continue`, and a 128-connection cap. Item 5 is not a code change when a TLS proxy overwrites `X-Forwarded-For` and the origin port is private. `Content-Security-Policy` and `Strict-Transport-Security` stay off this server. Item 11 stays on the proxy.  
 **Date:** 2026-10-22

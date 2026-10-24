@@ -50,7 +50,6 @@ Open:
   `http::callback`, `http::middleware_factory` and the matching `wrap` overload once
   YarDB, fixer and 3xS have moved to `const http::request&`. Remove in the next major.
   `http::request_view` itself stays; it is used outside handlers.
-- `net-readme_examples.test.c++` does not compile the README "Request handlers" example.
 
 ## Middleware
 
@@ -63,11 +62,6 @@ Open:
 
 - `destroy()` registers DELETE handlers. Kept: `delete` is a keyword, and a second name
   would reintroduce the duplicate registration methods that were just deprecated.
-
-## Documentation
-
-- Each accepted connection runs on its own thread, bounded by `max_connections`.
-  The README does not state this as a scaling limit.
 
 ## Done in this round
 
@@ -90,4 +84,6 @@ Open:
 - Built-in middlewares take request headers by reference, so a header an inner
   middleware sets (e.g. `x-correlation-id`) reaches outer middlewares and the caller.
 - Status constants for 301, 302, 303, 307, 308, 415, 501, 502 and 504.
+- README: middlewares, the HTTP client, and the thread-per-connection model are
+  documented; `net-readme_examples.test.c++` compiles every README section.
 - `docs/release-policy.md`: response type contract and the deprecation rule.

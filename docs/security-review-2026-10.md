@@ -3,7 +3,11 @@
 **Repo:** [ruoka/net4cpp](https://github.com/ruoka/net4cpp)  
 **Reviewed:** v3.1.0, commit `55d6bca`  
 **Date:** 2026-10-23  
-**Status:** Findings only. Fixes land on separate branches; #1 is on `fix/connection-slot-exhaustion`.
+**Status:** The findings describe v3.1.0. Most were fixed in
+[`v3.3.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.3.0); route regex (#2) and
+lexicographic route precedence in [`v3.4.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.4.0).
+Still open: #10 (single-argument `listen` binds `0.0.0.0`), the key cap in #11, and the
+HTTP client items under Low / Informational.
 
 ## Scope and method
 

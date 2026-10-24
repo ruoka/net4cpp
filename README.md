@@ -40,7 +40,7 @@ Notes:
 - In Cursor sandbox environments, `tools/CB.sh` auto-sets `NET_DISABLE_NETWORK_TESTS=1` unless you override it.
 - Multicast tests depend on the host/network allowing multicast.
 
-# Echo Server Example
+## Echo server
 
 ```cpp
 import net;
@@ -68,12 +68,39 @@ catch(const exception& e)
 }
 ```
 
-# HTTP Server Example
+## HTTP server
 
 `http::server` maps a request path to a response body. `get("/").text(...)` answers
 `GET /` with status `200` and `text/plain`, and `listen` accepts connections on that
-address. Route paths are regular expressions matched against the whole request
-target, tried in registration order; the first route with a handler for the method wins.
+address. TLS is not built in; terminate it in a proxy in front of the server.
+
+```cpp
+import net;
+import std;
+
+try
+{
+    auto server = http::server{};
+    server.get("/").text("Hello, World!");
+    server.get("/api/status").json(R"({"status": "ok"})");
+    server.listen("127.0.0.1", "8080");
+}
+catch(const exception& e)
+{
+    cerr << "Exception: " << e.what() << endl;
+}
+```
+
+### Routes
+
+Route paths are regular expressions, compiled once at registration and matched
+against the whole request target, query string included: `/orders/[0-9]+` does not
+match `/orders/7?sort=asc`, and `/orders/[0-9]+(\?.*)?` does. WebSocket and SSE routes
+match the path only. Routes are tried in registration order; the first
+route that matches and has a handler for the method answers, and routes do not chain.
+A catch-all such as `get(".*")` registered last is a fallback, not a filter: it only
+sees requests no earlier route answered. Use [middlewares](#middlewares) for code that
+runs on every route.
 
 The target is client-controlled, so keep route patterns cheap to reject:
 
@@ -87,33 +114,24 @@ The target is client-controlled, so keep route patterns cheap to reject:
 A literal prefix alone does not make a pattern safe: `/(\w+/?)+` starts with `/`
 and still gives up on `/aaaaaaaaaaaaaa!`.
 
-```cpp
-import net;
-import std;
-
-try
-{
-    auto server = http::server{};
-    server.get("/").text("Hello, World!");
-    server.listen("127.0.0.1", "8080");
-}
-catch(const exception& e)
-{
-    cerr << "Exception: " << e.what() << endl;
-}
-```
-
-## Request handlers
+### Request handlers
 
 A handler that spells out `const http::request&` gets the method, target, peer
 address and matched route. Nothing is parsed until it asks: `path()`, `query()`,
 `query(key)` and `capture(n)` split the target or rerun the route regex on demand.
-Handlers taking `http::request_view` (the raw target) keep working unchanged, and
-the built-in middlewares wrap both kinds.
+`query(key)` returns the raw, still percent-encoded value; decode it with
+`net::url_decode`. Handlers taking `http::request_view` (the raw target) keep working
+unchanged.
+
+Return a response with `http::make_response(status, content, headers)` or
+`http::make_error_response(status, error, message)`, using the `http::status_*`
+constants. Read one with a structured binding, `auto [status, content, headers] = ...`.
+The response type is exported only so code can name it; brace construction,
+`std::get` and `std::tie` are not part of the API.
 
 ```cpp
 auto server = http::server{};
-server.get("/orders/([0-9]+)").response("application/json",
+server.get(R"(/orders/([0-9]+)(\?.*)?)").response("application/json",
     [](const http::request& req, http::body_view, http::headers&) {
         const auto id = req.capture(1);
         const auto sort = req.query("sort").value_or("asc");
@@ -123,7 +141,91 @@ server.get("/orders/([0-9]+)").response("application/json",
 server.listen("127.0.0.1", "8080");
 ```
 
-# Http Request Example
+WebSocket and SSE handlers and their gates take the request too; see
+[Server-Sent Events](#server-sent-events) and [WebSocket](#websocket).
+
+### Middlewares
+
+A middleware wraps a handler and can answer early or pass the request on.
+`http::middleware::wrap(handler, middlewares)` builds the chain for one route; the
+first middleware in the list is the outermost and runs first. There is no
+server-wide `use(...)`, so build the list once and wrap each route with it.
+
+| Middleware | Does |
+|------------|------|
+| `authentication_middleware(is_public, validate)` | `401` unless the path is public or `Authorization` validates |
+| `body_size_validation_middleware(max)` | `413` for larger bodies |
+| `accept_validation_middleware(type)` | `406` when `Accept` excludes `type` |
+| `correlation_id_middleware()` | Adds `x-correlation-id` to the request headers when missing |
+| `rate_limiting_middleware(max, window, key)` | `429` past `max` requests per `window` and key |
+| `cors_middleware(allowed_origin)` | Answers preflight and adds CORS headers for allowed origins |
+| `metrics_middleware()` | Prometheus counters and latency; answers `GET /metrics` |
+
+Middlewares take the request headers by reference, so a header one of them adds
+reaches the ones inside it, the handler, and the ones outside it. Both handler shapes
+work: wrap a `const http::request&` handler with `http::request_middleware_factory`
+entries, or a `request_view` handler with `http::middleware_factory` entries.
+
+```cpp
+auto is_public = [](std::string_view target) { return target == "/health"; };
+auto validate = [](std::string_view authorization) { return authorization == "Bearer secret"; };
+
+const auto common = std::vector<http::request_middleware_factory>{
+    http::middleware::correlation_id_middleware(),
+    http::middleware::authentication_middleware(is_public, validate, "orders"),
+    http::middleware::body_size_validation_middleware(64 * 1024),
+};
+
+auto order = [](const http::request& req, http::body_view, http::headers& hdr) {
+    return http::make_response(http::status_ok,
+        std::format(R"({{"id":"{}","correlation":"{}"}})", req.capture(1), hdr["x-correlation-id"]));
+};
+
+auto server = http::server{};
+server.get("/orders/([0-9]+)").response("application/json", http::middleware::wrap(order, common));
+server.get("/health").text("OK");
+```
+
+### Connections and threads
+
+Each accepted connection runs on its own thread for as long as the client keeps it
+open. `max_connections` (default 128) caps those threads; past the cap the accept
+thread answers `503` itself. WebSocket and SSE sessions hold their thread for the
+whole session, so `max_streaming_connections` (default 64) keeps them from taking
+every slot. `max_connections_per_client` is off by default, because behind a reverse
+proxy every connection comes from the proxy's address. This model suits internal
+services and dashboards; for many thousands of concurrent clients, put a proxy in
+front or use an event-driven server.
+
+The read, request and write timeouts, the request head and body caps, and the
+`Server` token have setters of the same name; every setter returns `server&`.
+
+## HTTP client
+
+`http::client::request` sends one HTTP/1.1 request on a new connection
+(`Connection: close`) and reads the whole response into `status_code`, `status`,
+`headers` and `body`. It sets `Host`, and defaults `Accept` and, when there is a body,
+`Content-Type` to `application/json`; headers you pass win. Connect, transport and
+parse failures throw. A non-2xx status is returned, not thrown: check `ok()`.
+
+There is no TLS. A `net::uri` overload takes host and port from the URI (`https`
+only changes the default port to 443), so reach HTTPS services through a proxy.
+
+```cpp
+import net;
+import std;
+
+auto res = http::client::request("127.0.0.1", "8080", "GET", "/api/status");
+if(res.ok())
+    std::clog << res.status_code << ' ' << res.body << '\n';
+
+auto hdrs = http::headers{};
+hdrs.set("authorization", "Bearer secret");
+auto created = http::client::request("127.0.0.1", "8080", "POST", "/orders",
+                                     hdrs, R"({"item":"book"})", std::chrono::seconds{5});
+```
+
+For a raw request, write to a `net::connect` stream directly:
 
 ```cpp
 import net;
@@ -157,7 +259,7 @@ catch(const exception& e)
 }
 ```
 
-# HTTP Escape Example
+## HTML and URL escaping
 
 When building HTML responses by hand, escape untrusted data at the point of output.
 `http::html_escaped` and `http::url_encoded` are stream adaptors — they write directly
@@ -184,35 +286,126 @@ Use `html_escaped` for text nodes and attribute values. Use `url_encoded` for qu
 parameter values in `href` and `action` URLs. The HTTP server does not escape
 response bodies automatically.
 
-# SSE Example
+## Server-Sent Events
 
-Server-Sent Events take over a `GET` on `http::server`. `sse("/events").sse(...)`
-returns `text/event-stream`, and the handler writes one event through
-`http::sse::session`.
+SSE takes over a `GET` on `http::server`, parallel to WebSocket. Register with
+`server.sse(path).sse(handler)`; a matching `GET` returns `200` with
+`Content-Type: text/event-stream` (no `Content-Length`), then runs
+`http::sse::session` until the handler returns or the write path fails.
+
+The handler receives the session, the request and the request headers. Spell out
+`const http::request&` to get method, peer and `capture(n)`; `auto` or
+`http::request_view` gets the raw target. SSE and WebSocket routes match the path
+without the query, and `capture(n)` follows that.
+
+Middlewares do not wrap takeovers, and browsers send cookies on cross-site
+`EventSource` requests without a preflight, so check `Origin` in a gate.
+`http::middleware::origin_gate(origins)` rejects a missing or unlisted `Origin` with
+`403`; install it only on routes browsers use. `.cors(allow)` reflects an allowed
+`Origin` on the response head.
 
 ```cpp
 import net;
 import std;
 
-try
-{
-    auto server = http::server{};
-    server.sse("/events").sse([](http::sse::session& session, auto, http::headers&) {
-        session.send_event("hello", "world", "1");
+auto server = http::server{};
+auto allow = [](std::string_view o) { return o == "http://localhost:3000"; };
+
+// Browser preflight (reuse cors_middleware).
+server.options("/events/.*").response("text/plain",
+    http::middleware::cors_middleware(allow)([](auto&&, auto&&, auto&&) {
+        return http::make_response(http::status_no_content, "");
+    }));
+
+server.sse(R"(/events/(\w+))")
+    .gate(http::middleware::origin_gate({"http://localhost:3000"}))
+    .cors(allow)
+    .sse([](http::sse::session& session, const http::request& req, http::headers& hdr) {
+        if(hdr.contains("last-event-id"))
+        {
+            // resume policy is application-defined
+        }
+        session.send_comment("ok");
+        session.send_event("topic", req.capture(1), "1");
     });
-    server.listen("127.0.0.1", "8080");
-}
-catch(const exception& e)
-{
-    cerr << "Exception: " << e.what() << endl;
-}
+server.listen("127.0.0.1", "8080");
 ```
 
-# MCP Example
+Notes:
 
-`http::mcp::server` serves MCP over SSE on an `http::server`. `list_tools` and
-`call_tool` supply the tools, and `attach` registers `GET /sse` and `POST /messages/`
-for the lifetime of `listen`.
+- The session flushes after each event and comment. Proxies that buffer SSE may
+  need `X-Accel-Buffering: no` (optional app header, not set by default).
+- After the SSE stream ends, the connection is closed (no keep-alive reuse).
+
+## WebSocket
+
+Upgrade is handled inside `http::server`, not as response middleware. Register a path
+with `server.ws(path).ws(handler)`; a matching `GET` with `Upgrade: websocket`
+returns `101` and runs a text-frame session (ping/pong/close plus optional text
+replies). The handler receives each text message, and optionally the request first;
+return `net::websocket::text_reply` to answer, or `std::nullopt` for no reply.
+`.gate(...)` works as for SSE.
+
+Clients use `net::websocket::connect` for the same text session (masked outbound
+frames, automatic ping/pong, `send` / `recv` / `read_loop` / `close`). Overloads take
+`(host, port, path)` or a `net::uri` (`ws://host:port/path`). The connect `timeout`
+bounds TCP connect and the full upgrade-response read (status line and headers).
+`close()` waits briefly for the peer close frame (including truncated frames), then
+force-closes (default 2s; RFC 6455 §7.1.1). No `wss://`; terminate TLS in front of
+the server if needed.
+
+Framing policy (fail closed with a close frame, no silent drops):
+
+- Client-to-server frames must be masked (`1002` if not).
+- Complete text frames only — `FIN=0`, `continuation`, and `binary` → `1003`.
+- Text payloads must be valid UTF-8 (`1007`).
+- Control frames must be FIN and ≤ 125 bytes; RSV bits must be 0 (`1002`).
+- Payloads larger than 1 MiB → `1009` (configurable with `server::websocket_limits`).
+
+```cpp
+import net;
+import std;
+
+// Server
+auto server = http::server{};
+server.ws("/echo").ws([](std::string_view msg) {
+    return net::websocket::text_reply{std::string{msg}};
+});
+server.ws(R"(/rooms/(\w+))")
+    .gate(http::middleware::origin_gate({"http://localhost:3000"}))
+    .ws([](const http::request& req, std::string_view msg) {
+        return net::websocket::text_reply{std::format("{}: {}", req.capture(1), msg)};
+    });
+server.listen("127.0.0.1", "8080");
+
+// Client
+auto ws = net::websocket::connect("127.0.0.1", "8080", "/echo");
+// or: auto ws = net::websocket::connect(net::uri{"ws://127.0.0.1:8080/echo"});
+if(ws.send("hello"))
+{
+    if(auto reply = ws.recv())
+    {
+        // …
+    }
+}
+// or: ws.read_loop([](std::string_view msg) { … });
+ws.close();
+```
+
+## MCP over SSE
+
+`http::mcp::server` serves the legacy MCP HTTP+SSE transport (compatible with
+`mcp.server.sse.SseServerTransport`) on an `http::server`:
+
+1. `GET /sse` → `event: endpoint` with `/messages/?session_id=<uuid4 hex>`
+2. `POST` JSON-RPC to that URI → `202 Accepted`
+3. Replies as SSE `event: message`
+
+It runs `initialize` / `ping` / `tools/list` / `tools/call` and applies Host/Origin
+allowlists (localhost defaults; disable with `dns_rebinding_protection(false)`).
+Apps supply the tool callbacks; `attach` registers the routes. Keep the `mcp` object
+alive for the lifetime of `listen`. Low-level `sse_transport` remains available for
+custom session loops.
 
 ```cpp
 import net;
@@ -240,159 +433,16 @@ catch(const exception& e)
 }
 ```
 
-# WebSocket Example
+JSON-RPC dispatch uses a small in-module scanner, not an external JSON library. Keys
+are matched only as top-level object members (depth-aware), so nested fields such as
+`params.arguments.name` cannot shadow `params.name` when clients serialize maps
+alphabetically. This keeps net4cpp network-only (plus `tester`); apps like YarDB
+already depend on `xson` and can parse richer payloads in tool callbacks. Background:
+[`docs/sse-mcp-implementation-plan.md`](docs/sse-mcp-implementation-plan.md).
 
-`ws(path).ws(handler)` upgrades a matching `GET` inside `http::server`. The handler
-receives a text frame and returns `net::websocket::text_reply` to echo it; clients
-open the same path with `net::websocket::connect`.
+## Syslog stream
 
-```cpp
-import net;
-import std;
-
-try
-{
-    auto server = http::server{};
-    server.ws("/echo").ws([](std::string_view msg) {
-        return net::websocket::text_reply{std::string{msg}};
-    });
-    server.listen("127.0.0.1", "8080");
-}
-catch(const exception& e)
-{
-    cerr << "Exception: " << e.what() << endl;
-}
-```
-
-# Server-Sent Events (v1)
-
-SSE is a connection takeover on `http::server`, parallel to WebSocket. Register with
-`server.sse(path).sse(handler)`; a matching `GET` returns `200` with
-`Content-Type: text/event-stream` (no `Content-Length`), then runs
-`http::sse::session` until the handler returns or the write path fails.
-
-```cpp
-import net;
-import std;
-
-auto server = http::server{};
-auto allow = [](std::string_view o) { return o == "http://localhost:3000"; };
-
-// Browser preflight (reuse cors_middleware). Reflect the same Origin allowlist
-// on the SSE response head via .cors(...).
-server.options("/events").response("text/plain",
-    http::middleware::cors_middleware(allow, [](auto&&, auto&&, auto&&) {
-        return http::make_response(http::status_no_content, "");
-    }));
-server.sse("/events").cors(allow).sse([](http::sse::session& session, auto, http::headers& hdr) {
-    if(hdr.contains("last-event-id"))
-    {
-        // resume policy is application-defined
-    }
-    session.send_comment("ok");
-    session.send_event("tick", "1", "1");
-});
-server.listen("127.0.0.1", "8080");
-```
-
-Notes:
-
-- Flush after each event/comment (session does this). Proxies that buffer SSE may
-  need `X-Accel-Buffering: no` (optional app header — not set by default).
-- After the SSE stream ends, the connection is closed (no keep-alive reuse).
-- MCP over SSE: see `# MCP SSE (v1 protocol)` below and
-  [`docs/sse-mcp-implementation-plan.md`](docs/sse-mcp-implementation-plan.md).
-
-# MCP SSE (v1 protocol)
-
-Legacy MCP HTTP+SSE (compatible with `mcp.server.sse.SseServerTransport`):
-
-1. `GET /sse` → `event: endpoint` with `/messages/?session_id=<uuid4 hex>`
-2. `POST` JSON-RPC to that URI → `202 Accepted`
-3. Replies as SSE `event: message`
-
-`http::mcp::server` runs `initialize` / `ping` / `tools/list` / `tools/call` and
-applies Host/Origin allowlists (localhost defaults; disable with
-`dns_rebinding_protection(false)`). Apps supply tool callbacks only.
-
-JSON-RPC dispatch uses a small in-module scanner (`find_key` / field helpers), not
-an external JSON library. Keys are matched only as top-level object members
-(depth-aware) so nested fields such as `params.arguments.name` cannot shadow
-`params.name` when clients serialize maps alphabetically. Keeping this
-self-contained avoids pulling json4cpp/`xson` into net4cpp — net stays
-network-only (plus `tester`); apps like YarDB already depend on `xson` and can
-parse richer payloads in tool callbacks if needed.
-
-```cpp
-import net;
-import std;
-
-auto http = http::server{};
-auto mcp = http::mcp::server{"/messages/"};
-mcp.info({.name = "demo", .version = "1.0.0"})
-    .list_tools([] {
-        return std::vector<http::mcp::tool_spec>{
-            {.name = "health", .description = "liveness"},
-        };
-    })
-    .call_tool([](std::string_view, std::string_view) {
-        return http::mcp::tool_result{.text = "ok"};
-    })
-    .attach(http, "/sse");
-http.listen("127.0.0.1", "8080");
-```
-
-Low-level `sse_transport` remains available for custom session loops. Keep the
-`mcp` / transport object alive for the lifetime of `listen`.
-
-# WebSocket (v1 spike)
-
-Upgrade is handled inside `http::server` (not as response middleware). Register a path
-with `server.ws(...).ws(handler)`; a matching `GET` with `Upgrade: websocket` returns
-`101` and runs a text-frame session (ping/pong/close + optional text replies).
-
-Clients use `websocket::connect` for the same text session (masked outbound frames,
-automatic ping/pong, `send` / `recv` / `read_loop` / `close`). Overloads take
-`(host, port, path)` or a `net::uri` (`ws://host:port/path`). The connect `timeout`
-bounds TCP connect and the full upgrade-response read (status line and headers).
-`close()` waits briefly for the peer close frame (including truncated frames), then
-force-closes (default 2s; RFC 6455 §7.1.1). No `wss://` — terminate TLS in front of
-the server if needed.
-
-v1 framing policy (fail closed with a close frame, no silent drops):
-
-- Client-to-server frames must be masked (`1002` if not).
-- Complete text frames only — `FIN=0`, `continuation`, and `binary` → `1003`.
-- Text payloads must be valid UTF-8 (`1007`); no xson dependency.
-- Control frames must be FIN and ≤ 125 bytes; RSV bits must be 0 (`1002`).
-- Payloads larger than 1 MiB → `1009`.
-
-```cpp
-import net;
-import std;
-
-// Server
-auto server = http::server{};
-server.ws("/events").ws([](std::string_view msg) {
-    return net::websocket::text_reply{std::string{msg}}; // echo
-});
-server.listen("127.0.0.1", "8080");
-
-// Client
-auto ws = net::websocket::connect("127.0.0.1", "8080", "/events");
-// or: auto ws = net::websocket::connect(net::uri{"ws://127.0.0.1:8080/events"});
-ws.send("hello");
-if(auto reply = ws.recv())
-{
-    // …
-}
-// or: ws.read_loop([](std::string_view msg) { … });
-ws.close();
-```
-
-# Syslog Stream Example
-
-## Basic Usage
+### Basic usage
 
 ```cpp
 import net;
@@ -401,9 +451,9 @@ import std;
 using namespace net;
 using namespace std::string_literals;
 
-slog.level(syslog::severity::info);
+slog.log_level(syslog::severity::info);
 slog.facility(syslog::facility::local0);
-slog.appname("example");
+slog.app_name("example");
 
 auto clothes = "shirts"s; auto spouse = "wife"; auto wrong = false;
 
@@ -413,12 +463,12 @@ slog << info    << "The papers want to know whose " << clothes << " you wear..."
 
 slog << notice  << "Tell my " << spouse << " I love her very much!" << flush;
 
-slog << warning << "Ground Control to Major Tom Your circuit's dead, there's something " << boolalpha << wrong << '?' << flush;
+slog << warning << "Ground Control to Major Tom Your circuit's dead, there's something " << wrong << '?' << flush;
 
 slog << error   << "Planet Earth is blue and there's nothing I can do." << flush;
 ```
 
-## Fluent Configuration API
+### Fluent configuration
 
 The structured log stream supports method chaining for convenient configuration:
 
@@ -432,17 +482,13 @@ slog.format(net::log_format::jsonl)
 
 All configuration methods return `structured_log_stream&` to enable fluent chaining.
 
-## Structured Logging with Fields
+### Structured fields
 
 ```cpp
-// Using pair syntax
 slog << info << std::pair{"user_id", 42} << std::pair{"ip", "192.168.1.1"} << "User logged in" << flush;
-
-// Using field() convenience method
-slog << info << slog.field("user_id", 42) << slog.field("ip", "192.168.1.1") << "User logged in" << flush;
 ```
 
-## Source Location Support (C++20)
+### Source location
 
 Automatically capture file, line, and function information:
 
@@ -450,17 +496,18 @@ Automatically capture file, line, and function information:
 slog << info << std::source_location::current() << "Operation completed" << flush;
 
 // Or with structured fields
-slog << error 
+slog << error
      << std::source_location::current()
-     << slog.field("duration_ms", 127)
+     << std::pair{"duration_ms", 127}
      << "Request failed"
      << flush;
 ```
 
-## Check Log Level Before Logging
+### Check the log level before logging
 
 ```cpp
-if (slog.is_enabled(syslog::severity::debug)) {
+if(slog.is_enabled(syslog::severity::debug))
+{
     // Expensive debug computation
     auto details = compute_debug_info();
     slog << debug << details << flush;
