@@ -1,13 +1,17 @@
 # Release Policy
 
-## Current status: v3.4.0
+## Current status: v3.4.1
 
-**[`v3.4.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.4.0)** (23 October 2026) is the
+**[`v3.4.1`](https://github.com/ruoka/net4cpp/releases/tag/v3.4.1)** (24 October 2026) is the
 current SemVer tag for the Clang 21 + libc++ modules consume surface (`import net;`).
-It adds `http::request` for handlers, WebSocket and SSE routes and gates, matches routes
-in registration order with each regex compiled once, keeps `controller&` references
-stable, and adds redirect and gateway status constants. Duplicate handler names are
-deprecated; see [HTTP server API improvements](http-server-api-improvements.md).
+It changes no library code. It fixes README examples that did not compile or did not
+match (`cors_middleware`, `ws.send`, syslog setters, a route that missed query strings),
+documents middlewares, the HTTP client and the thread-per-connection model, and compiles
+every README section in the tests.
+[`v3.4.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.4.0) (23 October 2026) added `http::request` for handlers, WebSocket and SSE routes and gates, matched routes
+in registration order with each regex compiled once, kept `controller&` references
+stable, and added redirect and gateway status constants. It deprecated the duplicate
+handler names; see [HTTP server API improvements](http-server-api-improvements.md).
 [`v3.3.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.3.0) (23 October 2026) bounded
 how long one client can hold a connection, rejected smuggled and injected protocol
 fields, and added `http::middleware::origin_gate` for browser-facing WebSocket and SSE routes.
@@ -20,7 +24,7 @@ a 128-connection cap, and browser policy headers.
 previous patch. [`v3.0.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.0.0) was the first
 modules-era cut. Prior tags `v1.0` / `v2.0` / `v2.1` are historical.
 
-Pin `v3.4.0` (or a later tag / deliberate commit). Nested `deps/tester` must match the
+Pin `v3.4.1` (or a later tag / deliberate commit). Nested `deps/tester` must match the
 parent tree’s tester pin — see
 [YarDB versioning](https://github.com/ruoka/YarDB/blob/master/docs/versioning.md).
 
