@@ -18,7 +18,7 @@ else
 fi
 
 echo "=== Submodules ==="
-git submodule update --init --depth 1 deps/tester
+git submodule update --init --depth 1 deps/tester deps/cryptic
 
 if [[ -f "$STAMP" && "$(cat "$STAMP")" == "$KEY" ]]; then
     echo "=== Build ==="
