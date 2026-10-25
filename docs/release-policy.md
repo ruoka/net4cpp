@@ -32,7 +32,7 @@ modules-era cut. Prior tags `v1.0` / `v2.0` / `v2.1` are historical.
 Pin `v3.5.0` (or a later tag / deliberate commit). Nested `deps/tester` must match the
 parent tree’s tester pin — see
 [YarDB versioning](https://github.com/ruoka/YarDB/blob/master/docs/versioning.md).
-`deps/cryptic` is pinned to cryptic [`v3.0.0`](https://github.com/ruoka/cryptic/releases/tag/v3.0.0)
+`deps/cryptic` is pinned to cryptic [`v3.0.2`](https://github.com/ruoka/cryptic/releases/tag/v3.0.2)
 for the WebSocket handshake. `import net` does not re-export it.
 
 ## What is public
