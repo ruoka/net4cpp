@@ -4,7 +4,7 @@ inputs:
   packages:
     description: "Space-separated apt packages to install (default includes libc++, clang, lld, lldb, jq)"
     required: false
-    default: "libc++-21-dev libc++abi-21-dev clang-21 lld-21 lldb-21 jq libssl-dev clang-tools-21"
+    default: "libc++-21-dev libc++abi-21-dev clang-21 lld-21 lldb-21 jq clang-tools-21"
 
 runs:
   using: "composite"
