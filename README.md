@@ -8,12 +8,14 @@ Network library based on **C++23 modules**.
 - Open in a dev container (`.devcontainer/`) for a reproducible Linux toolchain
 
 This subproject is designed to work both:
-- **Standalone** (as its own repo, with `deps/tester` available), and
-- **As a dependency inside YarDB** (reusing YarDB’s `deps/tester`).
+- **Standalone** (as its own repo, with `deps/tester` and `deps/cryptic` available), and
+- **As a dependency inside YarDB** (reusing YarDB’s `deps/tester` and `deps/cryptic`).
+
+The WebSocket handshake hashes with [cryptic](https://github.com/ruoka/cryptic) [`v3.0.0`](https://github.com/ruoka/cryptic/releases/tag/v3.0.0), pinned at `deps/cryptic`. That module is not re-exported by `import net`.
 
 ## Versioning & Releases
 
-**Current release: [`v3.4.1`](https://github.com/ruoka/net4cpp/releases/tag/v3.4.1)** — SemVer tag for the Clang 21 + libc++ modules consume surface. Prior `v1.0` / `v2.0` / `v2.1` tags are historical.
+**Current release: [`v3.5.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.5.0)** — SemVer tag for the Clang 21 + libc++ modules consume surface. Prior `v1.0` / `v2.0` / `v2.1` tags are historical.
 
 See [`docs/release-policy.md`](docs/release-policy.md) for the public surface, SemVer rules, and release criteria. Nested `deps/tester` must match sibling libraries and YarDB — [ecosystem versioning](https://github.com/ruoka/YarDB/blob/master/docs/versioning.md).
 

@@ -29,6 +29,9 @@
 				},
 				"ruoka/tester": {
 					"permissions": "write-all"
+				},
+				"ruoka/cryptic": {
+					"permissions": "write-all"
 				}
 			}
 		}

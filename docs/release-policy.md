@@ -1,12 +1,17 @@
 # Release Policy
 
-## Current status: v3.4.1
+## Current status: v3.5.0
 
-**[`v3.4.1`](https://github.com/ruoka/net4cpp/releases/tag/v3.4.1)** (24 October 2026) is the
+**[`v3.5.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.5.0)** (25 October 2026) is the
 current SemVer tag for the Clang 21 + libc++ modules consume surface (`import net;`).
-It changes no library code. It fixes README examples that did not compile or did not
+The WebSocket handshake uses cryptic v3.0.0 for the accept hash and the random key.
+`import net` does not re-export cryptic, and `http::base64` is unchanged.
+`http::client::request` takes an `io_timeout` that bounds reads and writes after
+connect; the default of zero waits as before.
+[`v3.4.1`](https://github.com/ruoka/net4cpp/releases/tag/v3.4.1) (24 October 2026) changed no
+library code. It fixed README examples that did not compile or did not
 match (`cors_middleware`, `ws.send`, syslog setters, a route that missed query strings),
-documents middlewares, the HTTP client and the thread-per-connection model, and compiles
+documented middlewares, the HTTP client and the thread-per-connection model, and compiled
 every README section in the tests.
 [`v3.4.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.4.0) (23 October 2026) added `http::request` for handlers, WebSocket and SSE routes and gates, matched routes
 in registration order with each regex compiled once, kept `controller&` references
@@ -24,9 +29,11 @@ a 128-connection cap, and browser policy headers.
 previous patch. [`v3.0.0`](https://github.com/ruoka/net4cpp/releases/tag/v3.0.0) was the first
 modules-era cut. Prior tags `v1.0` / `v2.0` / `v2.1` are historical.
 
-Pin `v3.4.1` (or a later tag / deliberate commit). Nested `deps/tester` must match the
+Pin `v3.5.0` (or a later tag / deliberate commit). Nested `deps/tester` must match the
 parent tree’s tester pin — see
 [YarDB versioning](https://github.com/ruoka/YarDB/blob/master/docs/versioning.md).
+`deps/cryptic` is pinned to cryptic [`v3.0.0`](https://github.com/ruoka/cryptic/releases/tag/v3.0.0)
+for the WebSocket handshake. `import net` does not re-export it.
 
 ## What is public
 

@@ -20,7 +20,27 @@ CB_SANDBOX_DISABLE_NETWORK_TESTS=1
 CB_RESPECT_CXX_ENV=0
 CB_LINK_FLAGS="-L/opt/homebrew/lib"
 
-CB_INCLUDE_DIRS=("$PROJECT_ROOT/net")
+# Prefer the pinned submodule. A sibling checkout is the YarDB layout
+# (deps/net next to deps/cryptic) when this tree has not initialized its own.
+CRYPTIC_ROOT=""
+if [[ -d "$PROJECT_ROOT/deps/cryptic/cryptic" ]]; then
+  CRYPTIC_ROOT="$(cd "$PROJECT_ROOT/deps/cryptic" && pwd)"
+elif [[ -d "$PROJECT_ROOT/../cryptic/cryptic" ]]; then
+  CRYPTIC_ROOT="$(cd "$PROJECT_ROOT/../cryptic" && pwd)"
+fi
+
+if [[ -z "$CRYPTIC_ROOT" ]]; then
+  echo "ERROR: cryptic dependency not found."
+  echo "Looked for:"
+  echo "  - $PROJECT_ROOT/deps/cryptic"
+  echo "  - $PROJECT_ROOT/../cryptic"
+  echo
+  echo "Fix by initializing submodules:"
+  echo "  git submodule update --init --recursive"
+  exit 1
+fi
+
+CB_INCLUDE_DIRS=("$PROJECT_ROOT/net" "$CRYPTIC_ROOT/cryptic")
 [[ -n "$TESTER_ROOT" && -d "$TESTER_ROOT/tester" ]] && CB_INCLUDE_DIRS+=("$TESTER_ROOT/tester")
 
 CB_CORE=""

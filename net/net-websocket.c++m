@@ -6,11 +6,11 @@ export module net:websocket;
 export import :websocket_frame;
 import :connector;
 import :endpointstream;
-import :http_base64;
 import :http_headers;
 import :uri;
 import :utils;
 import :uuid;
+import cryptic;
 import std;
 
 export namespace net::websocket {
@@ -22,99 +22,6 @@ using namespace std::string_view_literals;
 inline constexpr auto accept_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"sv;
 
 namespace detail {
-
-// Compact SHA-1 (FIPS 180-1) for the short WebSocket accept material only.
-inline std::array<std::byte, 20> sha1_digest(std::string_view message)
-{
-    auto left_rotate = [](std::uint32_t value, std::uint32_t bits) noexcept
-    {
-        return (value << bits) | (value >> (32u - bits));
-    };
-
-    auto h0 = 0x67452301u;
-    auto h1 = 0xEFCDAB89u;
-    auto h2 = 0x98BADCFEu;
-    auto h3 = 0x10325476u;
-    auto h4 = 0xC3D2E1F0u;
-
-    auto bytes = std::vector<std::uint8_t>(message.begin(), message.end());
-    const auto bit_len = static_cast<std::uint64_t>(bytes.size()) * 8ull;
-    bytes.push_back(0x80u);
-    while((bytes.size() % 64u) != 56u)
-        bytes.push_back(0u);
-    for(int shift = 56; shift >= 0; shift -= 8)
-        bytes.push_back(static_cast<std::uint8_t>((bit_len >> shift) & 0xFFu));
-
-    for(std::size_t offset = 0; offset < bytes.size(); offset += 64)
-    {
-        std::array<std::uint32_t, 80> w{};
-        for(std::size_t i = 0; i < 16; ++i)
-        {
-            w[i] = (static_cast<std::uint32_t>(bytes[offset + i * 4]) << 24)
-                | (static_cast<std::uint32_t>(bytes[offset + i * 4 + 1]) << 16)
-                | (static_cast<std::uint32_t>(bytes[offset + i * 4 + 2]) << 8)
-                | static_cast<std::uint32_t>(bytes[offset + i * 4 + 3]);
-        }
-        for(std::size_t i = 16; i < 80; ++i)
-            w[i] = left_rotate(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
-
-        auto a = h0;
-        auto b = h1;
-        auto c = h2;
-        auto d = h3;
-        auto e = h4;
-
-        for(std::size_t i = 0; i < 80; ++i)
-        {
-            std::uint32_t f = 0;
-            std::uint32_t k = 0;
-            if(i < 20)
-            {
-                f = (b & c) | ((~b) & d);
-                k = 0x5A827999u;
-            }
-            else if(i < 40)
-            {
-                f = b ^ c ^ d;
-                k = 0x6ED9EBA1u;
-            }
-            else if(i < 60)
-            {
-                f = (b & c) | (b & d) | (c & d);
-                k = 0x8F1BBCDCu;
-            }
-            else
-            {
-                f = b ^ c ^ d;
-                k = 0xCA62C1D6u;
-            }
-
-            const auto temp = left_rotate(a, 5) + f + e + k + w[i];
-            e = d;
-            d = c;
-            c = left_rotate(b, 30);
-            b = a;
-            a = temp;
-        }
-
-        h0 += a;
-        h1 += b;
-        h2 += c;
-        h3 += d;
-        h4 += e;
-    }
-
-    auto digest = std::array<std::byte, 20>{};
-    const auto words = std::array{h0, h1, h2, h3, h4};
-    for(std::size_t i = 0; i < words.size(); ++i)
-    {
-        digest[i * 4] = static_cast<std::byte>((words[i] >> 24) & 0xFFu);
-        digest[i * 4 + 1] = static_cast<std::byte>((words[i] >> 16) & 0xFFu);
-        digest[i * 4 + 2] = static_cast<std::byte>((words[i] >> 8) & 0xFFu);
-        digest[i * 4 + 3] = static_cast<std::byte>(words[i] & 0xFFu);
-    }
-    return digest;
-}
 
 // RFC 6455 §5.3 wants masking keys from a strong source of entropy. Drawn
 // straight from std::random_device (see net::random_bytes); thread_local
@@ -129,7 +36,7 @@ inline std::uint32_t random_u32()
 inline std::string random_websocket_key()
 {
     const auto bytes = net::random_bytes<16>();
-    return ::http::base64::encode(std::string_view{reinterpret_cast<const char*>(bytes.data()), bytes.size()});
+    return cryptic::base64::encode(std::as_bytes(std::span{bytes}));
 }
 
 inline frame mask_frame(frame f)
@@ -230,11 +137,9 @@ inline std::string read_upgrade_response_head(
 
 inline std::string sec_websocket_accept(std::string_view client_key)
 {
-    auto material = std::string{client_key};
-    material.append(accept_guid);
-    const auto digest = detail::sha1_digest(material);
-    return ::http::base64::encode(
-        std::string_view{reinterpret_cast<const char*>(digest.data()), digest.size()});
+    auto hasher = cryptic::sha1{};
+    hasher.update(client_key).update(accept_guid);
+    return hasher.digest().base64();
 }
 
 // RFC 7230 list / RFC 6455 §4.1: Upgrade and Connection carry comma-separated
