@@ -165,6 +165,29 @@ tester::bdd::scenario("Bulk Data Transfer, [net]") = [] {
         check_eq(sent_data, received_data);
     };
 
+    // Regression: wait_for polled only the socket, so a message that arrived in the
+    // same recv as the one before it sat in the get area until the peer sent more
+    // bytes (a FIX session read the second of two back-to-back reports one
+    // heartbeat late).
+    tester::bdd::scenario("wait_for sees a message already buffered, [net]") = [] {
+        using namespace std::chrono_literals;
+        using namespace std::string_literals;
+
+        acceptor acc{"127.0.0.1", "0"};
+        auto client = connect("127.0.0.1", std::to_string(acc.bound_port()));
+        auto [stream, peer_host, peer_port] = acc.accept();
+        client << "first\nsecond\n" << net::flush;
+
+        auto line = ""s;
+        require_true(stream.wait_for(2s));
+        require_true(static_cast<bool>(std::getline(stream, line)));
+        check_eq(line, "first"s);
+        // The client sends nothing more: "second" came with "first".
+        check_true(stream.wait_for(200ms));
+        require_true(static_cast<bool>(std::getline(stream, line)));
+        check_eq(line, "second"s);
+    };
+
     // Regression: after the TCP short-recv assemble fix, xsgetn looped recv for
     // every socket type when count >= N. udp_buffer_size == N, so the natural
     // max-datagram read waited forever for more bytes after the first message.

@@ -11,7 +11,7 @@ RUN apt-get update && \
 
 RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
     apt-get install -y --no-install-recommends \
-        git file jq libssl-dev \
+        git file jq \
         clang-21 libc++-21-dev libc++abi-21-dev lld-21 clang-tools-21 lldb-21 && \
     rm -rf /var/lib/apt/lists/*
 

@@ -11,7 +11,7 @@ This subproject is designed to work both:
 - **Standalone** (as its own repo, with `deps/tester` and `deps/cryptic` available), and
 - **As a dependency inside YarDB** (reusing YarDB’s `deps/tester` and `deps/cryptic`).
 
-The WebSocket handshake hashes with [cryptic](https://github.com/ruoka/cryptic) [`v3.0.0`](https://github.com/ruoka/cryptic/releases/tag/v3.0.0), pinned at `deps/cryptic`. That module is not re-exported by `import net`.
+The WebSocket handshake hashes with [cryptic](https://github.com/ruoka/cryptic) [`v3.0.2`](https://github.com/ruoka/cryptic/releases/tag/v3.0.2), pinned at `deps/cryptic`. That module is not re-exported by `import net`.
 
 ## Versioning & Releases
 

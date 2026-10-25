@@ -437,7 +437,7 @@ public:
                 break;
             auto incoming = frame{};
             const auto status = read_frame(m_stream, incoming, [&] {
-                // Prefer already-buffered bytes; wait_for only polls the socket.
+                // Bytes already buffered are read even once the deadline has passed.
                 if(m_stream.rdbuf() != nullptr and m_stream.rdbuf()->in_avail() > 0)
                     return true;
                 const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(

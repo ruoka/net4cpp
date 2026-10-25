@@ -15,8 +15,10 @@ public:
     explicit endpointbuf_base(socket&& s) noexcept : m_socket{std::move(s)} {}
     ~endpointbuf_base() override = default;
 
+    // Unread bytes in the get area count: the socket shows only what recv has
+    // not taken yet.
     bool wait_for(const std::chrono::milliseconds& timeout) const noexcept {
-        return m_socket.wait_for(timeout);
+        return gptr() < egptr() or m_socket.wait_for(timeout);
     }
 
     // Idle timeout for the next blocking recv. Zero (the default) blocks in
