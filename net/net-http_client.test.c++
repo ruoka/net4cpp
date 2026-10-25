@@ -154,6 +154,45 @@ auto register_http_client_tests()
         });
     };
 
+    test_case("http client io_timeout bounds the wait for the response, [net][http-client]") = []
+    {
+        if(not network_tests_enabled())
+            return;
+
+        auto server = std::make_shared<http::server>();
+        server->get("/slow").response(
+            "application/json"sv,
+            [](auto, auto, auto&)
+            {
+                std::this_thread::sleep_for(600ms);
+                return http::make_response(http::status_ok, R"({"ok":true})"s);
+            });
+
+        auto [listener, port] = listen_ephemeral(server);
+        require_true(port != 0);
+        const auto port_s = std::to_string(port);
+
+        // Gives up before the server answers.
+        {
+            const auto start = std::chrono::steady_clock::now();
+            auto error = ""s;
+            try
+            {
+                (void)http::client::request("127.0.0.1"sv, port_s, "GET"sv, "/slow"sv, {}, {}, 1s, 150ms);
+            }
+            catch(const std::runtime_error& e)
+            {
+                error = e.what();
+            }
+            require_true(error.contains("timed out"sv));
+            require_true(std::chrono::steady_clock::now() - start < 500ms);
+        }
+
+        // A longer io_timeout, or none, waits for the answer.
+        require_true(http::client::request("127.0.0.1"sv, port_s, "GET"sv, "/slow"sv, {}, {}, 1s, 3s).ok());
+        require_true(http::client::request("127.0.0.1"sv, port_s, "GET"sv, "/slow"sv).ok());
+    };
+
     return 0;
 }
 

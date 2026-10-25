@@ -102,6 +102,9 @@ struct response
     }
 };
 
+// `timeout` bounds the connect. Once connected, `io_timeout` bounds each wait for the
+// peer to accept request bytes or send response bytes; zero (the default) waits as
+// long as the peer takes. A timeout throws like any other transport failure.
 inline response request(
     std::string_view host,
     std::string_view port,
@@ -109,7 +112,8 @@ inline response request(
     std::string_view target,
     headers hdrs = {},
     std::string_view body = {},
-    const std::chrono::milliseconds& timeout = net::default_connect_timeout)
+    const std::chrono::milliseconds& timeout = net::default_connect_timeout,
+    std::chrono::milliseconds io_timeout = std::chrono::milliseconds::zero())
 {
     using namespace std::string_view_literals;
     using http::client_detail::ensure_header;
@@ -129,15 +133,22 @@ inline response request(
     }
 
     auto stream = net::connect(host, port, timeout);
+    if(io_timeout > std::chrono::milliseconds::zero())
+    {
+        stream.read_timeout(io_timeout);
+        stream.write_timeout(io_timeout);
+    }
     stream << method << ' ' << target << " HTTP/1.1" << net::crlf
            << hdrs
            << net::crlf
            << body
            << net::flush;
+    if(stream.write_timed_out())
+        throw std::runtime_error{"HTTP request timed out"};
 
     auto status_line = std::string{};
     if(not std::getline(stream, status_line))
-        throw std::runtime_error{"empty HTTP response"};
+        throw std::runtime_error{stream.read_timed_out() ? "HTTP response timed out" : "empty HTTP response"};
     auto parsed = parse_status_line(std::move(status_line));
     auto out = response{
         .status_line = std::move(parsed.status_line),
@@ -148,7 +159,18 @@ inline response request(
         .body = {},
     };
     stream >> out.headers >> net::crlf;
-    out.body = read_body(stream, out.headers);
+    try
+    {
+        out.body = read_body(stream, out.headers);
+    }
+    catch(const std::runtime_error&)
+    {
+        if(not stream.read_timed_out())
+            throw;
+    }
+    // Without Content-Length the body ends at EOF, which a timeout also looks like.
+    if(stream.read_timed_out())
+        throw std::runtime_error{"HTTP response timed out"};
     return out;
 }
 
@@ -158,7 +180,8 @@ inline response request(
     std::string_view target,
     headers hdrs = {},
     std::string_view body = {},
-    const std::chrono::milliseconds& timeout = net::default_connect_timeout)
+    const std::chrono::milliseconds& timeout = net::default_connect_timeout,
+    std::chrono::milliseconds io_timeout = std::chrono::milliseconds::zero())
 {
     using namespace std::string_literals;
     using namespace std::string_view_literals;
@@ -171,7 +194,7 @@ inline response request(
         const auto scheme = std::string{static_cast<std::string_view>(url.scheme)};
         port = (scheme == "https"sv) ? "443"s : "80"s;
     }
-    return request(host, port, method, target, std::move(hdrs), body, timeout);
+    return request(host, port, method, target, std::move(hdrs), body, timeout, io_timeout);
 }
 
 } // namespace http::client
