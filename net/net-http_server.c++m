@@ -9,6 +9,7 @@ import :structured_log_stream;
 import :http_headers;
 import :endpointstream;
 import :sse;
+import :trace;
 import :utils;
 import :uuid;
 import :websocket;
@@ -1252,6 +1253,7 @@ private:
         auto lower = std::string{name};
         utils::ascii_to_lower(lower);
         if(lower == "server"sv
+           or lower == "traceresponse"sv
            or lower == "x-content-type-options"sv
            or lower == "referrer-policy"sv
            or lower == "permissions-policy"sv)
@@ -1259,12 +1261,16 @@ private:
         return m_frame_options and lower == "x-frame-options"sv;
     }
 
-    // "Server: <token>\r\n", or empty when the token is empty.
+    // "Server: <token>\r\n", or empty when the token is empty. traceresponse names
+    // the span handling this request, when one is set.
     std::string server_header() const
     {
-        if(m_server_token.empty())
-            return {};
-        return "Server: " + m_server_token + "\r\n";
+        auto line = std::string{};
+        if(not m_server_token.empty())
+            line = "Server: " + m_server_token + "\r\n";
+        if(const auto trace = net::trace::current())
+            line += "traceresponse: " + net::trace::format_traceparent(*trace) + "\r\n";
+        return line;
     }
 
     void write_custom_response_headers(std::ostream& os, const headers& hdrs) const
@@ -1508,15 +1514,6 @@ private:
                     break;
                 }
 
-                net::slog << net::notice("HTTP_REQUEST") << "request \"" << method << ' ' << uri << ' ' << version << "\""
-                          << std::pair{"ip"sv, endpoint}
-                          << std::pair{"port", port}
-                          << std::pair{"method", method}
-                          << std::pair{"uri", std::string{uri}}
-                          << std::pair{"version", version}
-                          << std::pair{"request_id", request_id}
-                          << net::flush;
-
                 headers hs{};
                 try
                 {
@@ -1548,6 +1545,22 @@ private:
                            << net::crlf << net::flush;
                     break;
                 }
+
+                // One span for this request. A keep-alive connection's next request
+                // gets its own: this scope ends with the iteration.
+                const auto request_trace = net::trace::scope{net::trace::adopt(
+                    hs.try_get("traceparent"sv).value_or(""sv),
+                    hs.try_get("tracestate"sv).value_or(""sv))};
+                (void)request_trace;
+
+                net::slog << net::notice("HTTP_REQUEST") << "request \"" << method << ' ' << uri << ' ' << version << "\""
+                          << std::pair{"ip"sv, endpoint}
+                          << std::pair{"port", port}
+                          << std::pair{"method", method}
+                          << std::pair{"uri", std::string{uri}}
+                          << std::pair{"version", version}
+                          << std::pair{"request_id", request_id}
+                          << net::flush;
 
                 // HTTP/1.1 requires Host
                 if(not hs.contains("host") or hs["host"].empty())

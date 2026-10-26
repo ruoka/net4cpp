@@ -5,6 +5,7 @@
 export module net:structured_log_stream;
 import std;
 import :posix;
+import :trace;
 
 using namespace std::string_literals;
 
@@ -450,6 +451,12 @@ private:
 
             if (not local.entry_msg_id.empty()) {
                 full_line << ",\"msg_id\":\"" << json_escape(local.entry_msg_id) << "\"";
+            }
+
+            if(const auto trace = trace::current())
+            {
+                full_line << ",\"trace_id\":\"" << json_escape(trace->trace_id) << "\"";
+                full_line << ",\"span_id\":\"" << json_escape(trace->span_id) << "\"";
             }
 
             full_line << ",\"message\":\"" << json_escape(local.human_message.str()) << "\"";

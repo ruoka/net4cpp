@@ -10,6 +10,7 @@ export module net:http_client;
 import :connector;
 import :endpointstream;
 import :http_headers;
+import :trace;
 import :uri;
 import :utils;
 import std;
@@ -130,6 +131,16 @@ inline response request(
     {
         ensure_header(hdrs, "content-length"sv, std::format("{}", body.size()));
         ensure_header(hdrs, "content-type"sv, "application/json"sv);
+    }
+    // The caller's span is the parent. A header the caller already set is kept.
+    if(not hdrs.try_get("traceparent"sv))
+    {
+        if(const auto trace = net::trace::current())
+        {
+            hdrs.set("traceparent"sv, net::trace::format_traceparent(*trace));
+            if(not trace->tracestate.empty() and not hdrs.try_get("tracestate"sv))
+                hdrs.set("tracestate"sv, trace->tracestate);
+        }
     }
 
     auto stream = net::connect(host, port, timeout);

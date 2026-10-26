@@ -193,6 +193,58 @@ auto register_http_client_tests()
         require_true(http::client::request("127.0.0.1"sv, port_s, "GET"sv, "/slow"sv).ok());
     };
 
+    test_case("http client sends traceparent only from the current scope, [net][http-client]") = []
+    {
+        if(not network_tests_enabled())
+            return;
+
+        auto server = std::make_shared<http::server>();
+        server->get("/trace").response(
+            "text/plain"sv,
+            [](auto, auto, auto& hdr)
+            {
+                const auto inbound = hdr.try_get("traceparent"sv).value_or(""sv);
+                return http::make_response(http::status_ok, std::string{inbound});
+            });
+
+        auto [listener, port] = listen_ephemeral(server);
+        require_true(port != 0);
+        const auto port_s = std::to_string(port);
+        const auto known = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"s;
+
+        {
+            auto res = http::client::request("127.0.0.1"sv, port_s, "GET"sv, "/trace"sv);
+            require_true(res.ok());
+            require_eq(res.body, ""s);
+            const auto echoed = res.headers.try_get("traceresponse"sv).value_or(""sv);
+            require_true(trace::parse_traceparent(echoed).has_value());
+        }
+
+        {
+            const auto scope = trace::scope{trace::adopt(known, {})};
+            auto res = http::client::request("127.0.0.1"sv, port_s, "GET"sv, "/trace"sv);
+            require_true(res.ok());
+            const auto sent = trace::parse_traceparent(res.body);
+            require_true(sent.has_value());
+            require_eq(sent->trace_id, "0af7651916cd43dd8448eb211c80319c"s);
+            const auto echoed = trace::parse_traceparent(res.headers.try_get("traceresponse"sv).value_or(""sv));
+            require_true(echoed.has_value());
+            require_eq(echoed->trace_id, sent->trace_id);
+            require_true(echoed->span_id != sent->span_id);
+        }
+
+        {
+            auto hdrs = http::headers{};
+            hdrs.set("traceparent"s, "not-a-trace"s);
+            auto res = http::client::request("127.0.0.1"sv, port_s, "GET"sv, "/trace"sv, hdrs);
+            require_true(res.ok());
+            require_eq(res.body, "not-a-trace"s);
+            const auto echoed = trace::parse_traceparent(res.headers.try_get("traceresponse"sv).value_or(""sv));
+            require_true(echoed.has_value());
+            require_true(echoed->trace_id != "not-a-trace"s);
+        }
+    };
+
     return 0;
 }
 

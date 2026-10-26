@@ -51,8 +51,8 @@ inline constexpr std::array<std::string_view, 7> default_cors_allowed_methods = 
 };
 
 // Default CORS allowed headers (constexpr for compile-time optimization)
-inline constexpr std::array<std::string_view, 2> default_cors_allowed_headers = {
-    "Content-Type"sv, "Authorization"sv
+inline constexpr std::array<std::string_view, 3> default_cors_allowed_headers = {
+    "Content-Type"sv, "Authorization"sv, "traceparent"sv
 };
 
 // Helper function to compose middlewares into a single handler
@@ -440,6 +440,12 @@ inline void apply_cors_allow_headers(
 
     if(not allowed_headers.empty())
         out.set("access-control-allow-headers"s, join_cors_list(allowed_headers));
+
+    // The browser can read the span the server used.
+    if(not out.contains("access-control-expose-headers"s))
+        out.set("access-control-expose-headers"s, "traceresponse"s);
+    else if(not std::string_view{out["access-control-expose-headers"s]}.contains("traceresponse"sv))
+        out.set("access-control-expose-headers"s, out["access-control-expose-headers"s] + ", traceresponse"s);
 
     // Reflecting a concrete Origin is required when credentials are enabled
     // (wildcard ACAO is incompatible with Access-Control-Allow-Credentials).

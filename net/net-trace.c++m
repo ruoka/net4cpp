@@ -1,0 +1,210 @@
+// Copyright (c) 2025-2026 Kaius Ruokonen. All rights reserved.
+// SPDX-License-Identifier: MIT
+// See the LICENSE file in the project root for full license text.
+
+// W3C traceparent (https://www.w3.org/TR/trace-context/). One trace id joins the log
+// lines of one piece of work; each hop has its own span id. The current context is
+// per thread, so a request handler's slog lines pick it up without a field on each call.
+export module net:trace;
+
+import :uuid;
+import std;
+
+using namespace std::string_view_literals;
+
+export namespace net::trace
+{
+
+struct context
+{
+    std::string trace_id;   // 32 lowercase hex chars, not all zero
+    std::string span_id;    // 16 lowercase hex chars, not all zero
+    std::string tracestate; // forwarded, not logged
+};
+
+} // namespace net::trace
+
+namespace
+{
+
+std::optional<net::trace::context>& slot()
+{
+    thread_local std::optional<net::trace::context> current;
+    return current;
+}
+
+bool all_zero(std::string_view hex)
+{
+    return std::ranges::all_of(hex, [](char c) { return c == '0'; });
+}
+
+bool lowercase_hex(std::string_view text, std::size_t size)
+{
+    if(text.size() != size)
+        return false;
+    return std::ranges::all_of(text, [](unsigned char c)
+    {
+        return (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
+    });
+}
+
+std::string_view trim(std::string_view text)
+{
+    while(not text.empty() and (text.front() == ' ' or text.front() == '\t'))
+        text.remove_prefix(1);
+    while(not text.empty() and (text.back() == ' ' or text.back() == '\t'))
+        text.remove_suffix(1);
+    return text;
+}
+
+template<std::size_t N>
+std::string random_hex()
+{
+    for(auto attempt = 0; attempt < 4; ++attempt)
+    {
+        const auto bytes = net::random_bytes<N>();
+        auto hex = std::string(N * 2, '0');
+        auto zero = true;
+        for(std::size_t i = 0; i < N; ++i)
+        {
+            if(bytes[i] != 0)
+                zero = false;
+            constexpr char digits[] = "0123456789abcdef";
+            hex[i * 2] = digits[bytes[i] >> 4];
+            hex[i * 2 + 1] = digits[bytes[i] & 0x0f];
+        }
+        if(not zero)
+            return hex;
+    }
+    return std::string(N * 2, 'a');
+}
+
+} // namespace
+
+export namespace net::trace
+{
+
+// A new trace and its first span. Sampled.
+context begin()
+{
+    return context{random_hex<16>(), random_hex<8>(), {}};
+}
+
+// The same trace, a new span. An id that is not a trace id starts a new trace.
+context resume(std::string_view trace_id)
+{
+    if(not lowercase_hex(trace_id, 32) or all_zero(trace_id))
+        return begin();
+    return context{std::string{trace_id}, random_hex<8>(), {}};
+}
+
+// nullopt when the header is missing or not a traceparent we can continue.
+// The span id is the caller's. Version 00 rejects anything after the flags;
+// a later version may carry more, which is ignored.
+std::optional<context> parse_traceparent(std::string_view header)
+{
+    header = trim(header);
+    if(header.empty())
+        return std::nullopt;
+
+    std::array<std::string_view, 4> parts{};
+    auto count = 0;
+    auto rest = header;
+    while(count < 4)
+    {
+        const auto dash = rest.find('-');
+        if(dash == std::string_view::npos)
+        {
+            parts[count++] = rest;
+            rest = {};
+            break;
+        }
+        parts[count++] = rest.substr(0, dash);
+        rest.remove_prefix(dash + 1);
+    }
+    if(count != 4)
+        return std::nullopt;
+
+    const auto version = parts[0];
+    if(not lowercase_hex(version, 2) or version == "ff"sv)
+        return std::nullopt;
+    if(version == "00"sv and not rest.empty())
+        return std::nullopt;
+    if(not lowercase_hex(parts[1], 32) or all_zero(parts[1]))
+        return std::nullopt;
+    if(not lowercase_hex(parts[2], 16) or all_zero(parts[2]))
+        return std::nullopt;
+    if(not lowercase_hex(parts[3], 2))
+        return std::nullopt;
+    return context{std::string{parts[1]}, std::string{parts[2]}, {}};
+}
+
+// Continue an inbound traceparent: same trace id, a new span for this hop.
+// A missing or rejected header starts a new trace, and its tracestate is dropped.
+context adopt(std::string_view traceparent, std::string_view tracestate)
+{
+    if(auto parsed = parse_traceparent(traceparent))
+    {
+        parsed->span_id = random_hex<8>();
+        parsed->tracestate = std::string{tracestate};
+        return *parsed;
+    }
+    return begin();
+}
+
+// 00-{trace id}-{span id}-01. Always sampled.
+std::string format_traceparent(const context& ctx)
+{
+    return std::format("00-{}-{}-01", ctx.trace_id, ctx.span_id);
+}
+
+std::optional<context> current()
+{
+    return slot();
+}
+
+// Sets the thread's context and restores whatever was there, including none.
+class scope
+{
+public:
+    explicit scope(context next)
+        : m_previous{std::move(slot())}
+    {
+        slot() = std::move(next);
+    }
+
+    scope(const scope&) = delete;
+    scope& operator=(const scope&) = delete;
+
+    scope(scope&& other) noexcept
+        : m_previous{std::move(other.m_previous)}
+        , m_active{other.m_active}
+    {
+        other.m_active = false;
+    }
+
+    scope& operator=(scope&& other) noexcept
+    {
+        if(this != &other)
+        {
+            if(m_active)
+                slot() = std::move(m_previous);
+            m_previous = std::move(other.m_previous);
+            m_active = other.m_active;
+            other.m_active = false;
+        }
+        return *this;
+    }
+
+    ~scope()
+    {
+        if(m_active)
+            slot() = std::move(m_previous);
+    }
+
+private:
+    std::optional<context> m_previous;
+    bool m_active = true;
+};
+
+} // namespace net::trace
