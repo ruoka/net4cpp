@@ -61,6 +61,7 @@ auto register_http_escape_tests()
 
     tester::bdd::scenario("UrlEncoded unreserved characters, [net]") = [] {
         check_eq("ABCabc09-._~", stream_to_string(http::url_encoded{"ABCabc09-._~"}));
+        check_eq("%E9", stream_to_string(http::url_encoded{"\xE9"}));
     };
 
     tester::bdd::scenario("UrlEncoded reserved characters, [net]") = [] {
