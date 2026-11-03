@@ -139,6 +139,40 @@ auto register_http_client_tests()
         }
     };
 
+    test_case("http client reuses a connection and opens another after the peer closes it, [net][http-client]") = []
+    {
+        if(not network_tests_enabled())
+            return;
+
+        auto server = std::make_shared<http::server>();
+        server->read_timeout(200ms);
+        auto ports = std::vector<std::string>{};
+        auto peers_mutex = std::mutex{};
+        server->get("/ping").response(
+            "application/json"sv,
+            [&](http::request req, auto, auto&)
+            {
+                auto lock = std::lock_guard{peers_mutex};
+                ports.emplace_back(req.peer_port);
+                return http::make_response(http::status_ok, R"({"ok":true})"s);
+            });
+
+        auto [listener, port] = listen_ephemeral(server);
+        require_true(port != 0);
+        const auto port_s = std::to_string(port);
+
+        const auto first = http::client::request("127.0.0.1"sv, port_s, "GET"sv, "/ping"sv);
+        require_true(first.ok());
+        require_true(first.headers.value_or("connection"sv, ""s).contains("keep-alive"sv));
+        require_true(http::client::request("127.0.0.1"sv, port_s, "GET"sv, "/ping"sv).ok());
+        std::this_thread::sleep_for(400ms);
+        require_true(http::client::request("127.0.0.1"sv, port_s, "GET"sv, "/ping"sv).ok());
+        require_eq(ports.size(), 3uz);
+        require_true(not ports[0].empty());
+        require_eq(ports[0], ports[1]);
+        require_true(ports[0] != ports[2]);
+    };
+
     test_case("http client fail-fast on bad args and missing peer, [net][http-client]") = []
     {
         require_throws([]

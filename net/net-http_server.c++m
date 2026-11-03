@@ -139,6 +139,7 @@ struct request
     std::string_view method = {};
     std::string_view target = {};   // request-target as received (path + optional query)
     std::string_view peer = {};     // client address
+    std::string_view peer_port = {}; // client port, for the life of the handler
     const std::regex* route = nullptr;
 
     std::string_view path() const
@@ -1683,7 +1684,7 @@ private:
                     // clients that send no Origin still upgrade. A browser-facing
                     // route installs a gate that rejects a missing or unlisted Origin.
                     const auto& ws_ctrl = matched->methods.at(method_ws);
-                    const auto ws_req = request{.method = method, .target = uri, .peer = endpoint, .route = &matched->pattern};
+                    const auto ws_req = request{.method = method, .target = uri, .peer = endpoint, .peer_port = port, .route = &matched->pattern};
                     if(ws_ctrl.has_gate())
                     {
                         if(auto denied = ws_ctrl.m_gate(ws_req, hs))
@@ -1789,7 +1790,7 @@ private:
                     if(matched)
                     {
                         const auto& sse_ctrl = matched->methods.at(method_sse);
-                        const auto sse_req = request{.method = method, .target = uri, .peer = endpoint, .route = &matched->pattern};
+                        const auto sse_req = request{.method = method, .target = uri, .peer = endpoint, .peer_port = port, .route = &matched->pattern};
                         if(sse_ctrl.has_gate())
                         {
                             if(auto denied = sse_ctrl.m_gate(sse_req, hs))
@@ -2262,7 +2263,7 @@ private:
                                 {
                                     // Old-style handlers receive the URI only; expose method for metrics middleware.
                                     hs.set("x-http-method"s, method);
-                                    const auto req = request{.method = method, .target = uri, .peer = endpoint, .route = &pattern};
+                                    const auto req = request{.method = method, .target = uri, .peer = endpoint, .peer_port = port, .route = &pattern};
                                     std::tie(res_status, res_content, res_type, custom_headers) = it->second.render(req, body, hs);
                                     if(not res_type.empty())
                                         break;

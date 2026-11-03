@@ -63,6 +63,11 @@ endpointstream connect(std::string_view host,
         socket s{address.ai_family, address.ai_socktype, address.ai_protocol};
         if(not s) continue;
 
+        // A closed client port stays in TIME_WAIT. Without this, a fast book
+        // fills the ephemeral range and the next connect is EADDRNOTAVAIL.
+        auto reuse = 1;
+        if(posix::setsockopt(s, posix::sol_socket, posix::so_reuseaddr, &reuse, sizeof reuse) < 0) continue;
+
         if (posix::so_nosigpipe > 0) {
             // macOS: prevent SIGPIPE on broken pipe writes.
             auto yes = 1;

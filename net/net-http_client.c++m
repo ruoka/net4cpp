@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: MIT
 // See the LICENSE file in the project root for full license text.
 
-// Minimal HTTP/1.1 client: one request per connection (Connection: close).
+// Minimal HTTP/1.1 client. A connection to a host is kept and used for the next
+// request, so a fast caller does not leave every call in TIME_WAIT. A peer that
+// asks for close, or a kept connection that has already died, opens a new one.
 // Transport / parse failures throw (fail-fast). Non-2xx HTTP statuses are returned
 // to the caller — fail-closed policy belongs at the call site.
 export module net:http_client;
@@ -83,6 +85,60 @@ std::string read_body(std::istream& stream, const http::headers& hdrs)
     return std::string{std::istreambuf_iterator<char>{stream}, {}};
 }
 
+bool asks_close(const http::headers& hdrs)
+{
+    const auto value = hdrs.try_get("connection"sv);
+    if(not value)
+        return false;
+    auto lower = std::string{*value};
+    utils::ascii_to_lower(lower);
+    return lower.contains("close"sv);
+}
+
+// Idle connections, one checkout at a time. Enough for the threads that talk to
+// one peer at once; a burst beyond this closes the extra instead of pinning a
+// server thread per call.
+class connection_pool
+{
+public:
+    std::optional<net::endpointstream> take(const std::string& key)
+    {
+        auto lock = std::lock_guard{m_mutex};
+        const auto found = m_idle.find(key);
+        if(found == m_idle.end() or found->second.empty())
+            return std::nullopt;
+        auto stream = std::move(found->second.back());
+        found->second.pop_back();
+        return stream;
+    }
+
+    void put(const std::string& key, net::endpointstream stream)
+    {
+        auto lock = std::lock_guard{m_mutex};
+        auto& slots = m_idle[key];
+        if(slots.size() >= max_idle)
+        {
+            stream.close();
+            return;
+        }
+        slots.push_back(std::move(stream));
+    }
+
+private:
+    // The threads of one service that talk to one peer at once. A burst past
+    // this closes the extra, and that port sits in TIME_WAIT.
+    static constexpr std::size_t max_idle = 32;
+
+    std::mutex m_mutex;
+    std::map<std::string, std::vector<net::endpointstream>, std::less<>> m_idle;
+};
+
+connection_pool& connections()
+{
+    static connection_pool pool;
+    return pool;
+}
+
 } // namespace http::client_detail
 
 export namespace http::client
@@ -125,7 +181,6 @@ inline response request(
         throw std::invalid_argument{"http::client::request requires host, method, and target"};
 
     ensure_header(hdrs, "host"sv, std::format("{}:{}", host, port));
-    ensure_header(hdrs, "connection"sv, "close"sv);
     ensure_header(hdrs, "accept"sv, "application/json"sv);
     if(not body.empty())
     {
@@ -143,45 +198,84 @@ inline response request(
         }
     }
 
-    auto stream = net::connect(host, port, timeout);
-    if(io_timeout > std::chrono::milliseconds::zero())
+    const auto key = std::format("{}\n{}", host, port);
+    const auto caller_closes = http::client_detail::asks_close(hdrs);
+    auto exchange = [&](net::endpointstream& stream)
     {
+        stream.clear();
         stream.read_timeout(io_timeout);
         stream.write_timeout(io_timeout);
-    }
-    stream << method << ' ' << target << " HTTP/1.1" << net::crlf
-           << hdrs
-           << net::crlf
-           << body
-           << net::flush;
-    if(stream.write_timed_out())
-        throw std::runtime_error{"HTTP request timed out"};
+        stream << method << ' ' << target << " HTTP/1.1" << net::crlf
+               << hdrs
+               << net::crlf
+               << body
+               << net::flush;
+        if(stream.write_timed_out())
+            throw std::runtime_error{"HTTP request timed out"};
+        if(not stream)
+            throw std::runtime_error{"empty HTTP response"};
 
-    auto status_line = std::string{};
-    if(not std::getline(stream, status_line))
-        throw std::runtime_error{stream.read_timed_out() ? "HTTP response timed out" : "empty HTTP response"};
-    auto parsed = parse_status_line(std::move(status_line));
-    auto out = response{
-        .status_line = std::move(parsed.status_line),
-        .version = std::move(parsed.version),
-        .status = std::move(parsed.status),
-        .status_code = parsed.status_code,
-        .headers = {},
-        .body = {},
+        auto status_line = std::string{};
+        if(not std::getline(stream, status_line))
+            throw std::runtime_error{stream.read_timed_out() ? "HTTP response timed out" : "empty HTTP response"};
+        auto parsed = parse_status_line(std::move(status_line));
+        auto out = response{
+            .status_line = std::move(parsed.status_line),
+            .version = std::move(parsed.version),
+            .status = std::move(parsed.status),
+            .status_code = parsed.status_code,
+            .headers = {},
+            .body = {},
+        };
+        stream >> out.headers >> net::crlf;
+        try
+        {
+            out.body = read_body(stream, out.headers);
+        }
+        catch(const std::runtime_error&)
+        {
+            if(not stream.read_timed_out())
+                throw;
+        }
+        // Without Content-Length the body ends at EOF, which a timeout also looks like.
+        if(stream.read_timed_out())
+            throw std::runtime_error{"HTTP response timed out"};
+        return out;
     };
-    stream >> out.headers >> net::crlf;
+    auto keep = [&](const response& out, net::endpointstream& stream)
+    {
+        if(caller_closes or http::client_detail::asks_close(out.headers))
+            return false;
+        if(not out.headers.contains(std::string{"content-length"}))
+            return false;
+        // Reading the last buffered byte can set eofbit while the peer is
+        // still open. failbit means the body was short, so that socket is not kept.
+        stream.clear(stream.rdstate() & ~std::ios_base::eofbit);
+        return stream.good();
+    };
+
+    auto stream = http::client_detail::connections().take(key);
+    const auto reused = stream.has_value();
+    if(not stream)
+        stream = net::connect(host, port, timeout);
     try
     {
-        out.body = read_body(stream, out.headers);
+        auto out = exchange(*stream);
+        if(keep(out, *stream))
+            http::client_detail::connections().put(key, std::move(*stream));
+        return out;
     }
     catch(const std::runtime_error&)
     {
-        if(not stream.read_timed_out())
+        const auto timed_out = stream->read_timed_out() or stream->write_timed_out();
+        stream.reset();
+        if(not reused or timed_out)
             throw;
     }
-    // Without Content-Length the body ends at EOF, which a timeout also looks like.
-    if(stream.read_timed_out())
-        throw std::runtime_error{"HTTP response timed out"};
+    stream = net::connect(host, port, timeout);
+    auto out = exchange(*stream);
+    if(keep(out, *stream))
+        http::client_detail::connections().put(key, std::move(*stream));
     return out;
 }
 
