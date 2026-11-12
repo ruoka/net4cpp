@@ -40,6 +40,13 @@ public:
         return std::nullopt;
     }
 
+    void erase(std::string_view n)
+    {
+        auto key = std::string{n};
+        utils::ascii_to_lower(key);
+        m_values.erase(key);
+    }
+
     // Missing → default_value. Never invents auth/origin — callers choose the default.
     value value_or(std::string_view n, value default_value) const
     {

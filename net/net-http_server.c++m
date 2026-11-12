@@ -2321,6 +2321,16 @@ private:
 
                     if(not res_type.empty())
                     {
+                        // A handler may set Content-Type (e.g. application/problem+json);
+                        // that replaces the route media type instead of duplicating the header.
+                        if(custom_headers.has_value())
+                        {
+                            if(const auto override_type = custom_headers->try_get("content-type"sv))
+                            {
+                                res_type = std::string{*override_type};
+                                custom_headers->erase("content-type"sv);
+                            }
+                        }
                         // Same control-character rule as custom headers. A handler
                         // that copies request data into the status or content type
                         // would otherwise split the response. Stock 500 instead.
