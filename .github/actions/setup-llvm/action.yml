@@ -33,11 +33,15 @@ runs:
         sudo apt-get update -y
         sudo apt-get install -y wget gnupg ca-certificates lsb-release software-properties-common
 
-        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key \
-          | sudo gpg --dearmor -o /usr/share/keyrings/apt-llvm.gpg
-        echo "deb [signed-by=/usr/share/keyrings/apt-llvm.gpg] https://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-21 main" \
-          | sudo tee /etc/apt/sources.list.d/apt-llvm.org.list >/dev/null
-        sudo apt-get update -y
+        # Ubuntu 26.04 already publishes LLVM 21. apt.llvm.org's Release still
+        # carries SHA1, and apt on that image rejects the source (exit 100).
+        if ! apt-cache show clang-21 >/dev/null 2>&1; then
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo gpg --dearmor -o /usr/share/keyrings/apt-llvm.gpg
+          echo "deb [signed-by=/usr/share/keyrings/apt-llvm.gpg] https://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-21 main" \
+            | sudo tee /etc/apt/sources.list.d/apt-llvm.org.list >/dev/null
+          sudo apt-get update -y
+        fi
 
         # Fingerprint candidate versions so a LLVM apt bump invalidates the cache.
         fingerprint="$(
