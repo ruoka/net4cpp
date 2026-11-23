@@ -763,6 +763,33 @@ auto register_middleware_tests()
         };
     };
 
+    // A new key is an empty flat_map entry until its timestamp is stored. Cleanup
+    // runs first on every 1000th call and erases that entry, so the following
+    // size and push_back used a dangling reference. The assertions run before
+    // another call, which would insert the key again.
+    tester::bdd::scenario("rate_limiter check_limit survives periodic empty-key cleanup, [net]") = [] {
+        tester::bdd::given("A limiter one call short of its empty-key cleanup") = [] {
+            auto limiter = ::http::middleware::make_rate_limiter();
+            const auto window = std::chrono::seconds{60};
+
+            // max_requests == 0 denies without storing a timestamp, so the key stays empty.
+            check_false(limiter->check_limit("orphan", 0, window));
+            for(int i = 0; i < 998; ++i)
+                check_true(limiter->check_limit(std::format("k{}", i), 100, window));
+
+            tester::bdd::when("The 1000th check records a new key and then drops the empty one") = [limiter, window] {
+                check_true(limiter->check_limit("victim", 100, window));
+
+                tester::bdd::then("The new key is stored and the empty key is gone") = [limiter] {
+                    check_true(limiter->requests.contains("victim"));
+                    check_eq(limiter->requests.at("victim").size(), 1uz);
+                    check_false(limiter->requests.contains("orphan"));
+                    check_eq(limiter->requests.size(), 999uz);
+                };
+            };
+        };
+    };
+
     tester::bdd::scenario("rate_limiting_middleware - allows requests within limit, [net]") = [] {
         tester::bdd::given("A rate limiting middleware with limit of 5 requests per 60 seconds") = [] {
             auto key_extractor = [](std::string_view, const ::http::headers&) { return "test-key"s; };

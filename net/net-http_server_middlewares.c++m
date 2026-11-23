@@ -267,21 +267,17 @@ struct rate_limiter
             key_requests.end()
         );
 
-        // Periodic cleanup: remove empty key entries to prevent memory leak
+        // Decide and record before erase_if. flat_map erase invalidates every
+        // reference, and a new key is still empty here, so cleaning first frees
+        // the entry the following size and push_back use.
+        const auto allow = key_requests.size() < max_requests;
+        if(allow)
+            key_requests.push_back(now);
+
         if(++request_count % 1000 == 0)
-        {
             std::erase_if(requests, [](const auto& pair) { return pair.second.empty(); });
-        }
 
-        // Check if limit exceeded
-        if(key_requests.size() >= max_requests)
-        {
-            return false; // Rate limit exceeded
-        }
-
-        // Add current request
-        key_requests.push_back(now);
-        return true; // Within limit
+        return allow;
     }
 };
 
